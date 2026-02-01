@@ -1,6 +1,9 @@
 import sys
 import os
 
+# Add the project directory to the Python path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 # Add the mentormuni-api directory to the Python path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
