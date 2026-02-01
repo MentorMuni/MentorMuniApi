@@ -1,1 +1,1 @@
-web: cd mentormuni-api && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+web: cd mentormuni-api && PYTHONPATH=. uvicorn app.main:app --host 0.0.0.0 --port $PORT

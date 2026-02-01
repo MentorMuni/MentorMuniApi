@@ -2,7 +2,11 @@ import sys
 import os
 import logging
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Ensure parent dir (mentormuni-api) is on path so 'app' package is found (Railway, etc.)
+_here = os.path.dirname(os.path.abspath(__file__))
+_root = os.path.dirname(_here)
+if _root not in sys.path:
+    sys.path.insert(0, _root)
 
 logging.basicConfig(
     level=logging.INFO,
