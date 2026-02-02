@@ -54,7 +54,7 @@ class EvaluatorService:
             "readiness_percentage": readiness_percentage,
             "readiness_label": readiness_label,
             "strengths": strengths,
-            "gaps": gaps,
+            "gaps": gap_topics,
             "learning_recommendations": learning_recommendations,
         }
 
