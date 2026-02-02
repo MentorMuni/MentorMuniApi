@@ -37,7 +37,7 @@ No API key or auth header is required. Rate limiting is applied per IP:
 
 ## Endpoint 1: Generate Interview Plan
 
-Generates 15 role-specific Yes/No questions based on the user’s profile: 7 topic checks + 8 complex scenario-based interview questions.
+Generates 15 role-specific Yes/No questions based on the user’s profile: Each item has question, correct_answer, and study_topic.
 
 ### Request
 
@@ -73,14 +73,21 @@ Content-Type: application/json
 ```json
 {
   "evaluation_plan": [
-    "Can you explain React hooks (useState, useEffect)?",
-    "Have you worked with state management (Redux, Context)?",
-    "Can you optimize React performance (memoization, lazy loading)?"
+    {
+      "question": "Can you explain how dependency injection improves testability?",
+      "correct_answer": "Yes",
+      "study_topic": "Dependency Injection"
+    },
+    {
+      "question": "In React, state updates are always synchronous. Yes or No?",
+      "correct_answer": "No",
+      "study_topic": "React State Batching"
+    }
   ]
 }
 ```
 
-`evaluation_plan` is an array of 15 Yes/No questions in the same order you should display and collect answers. First 7 are topic checks; next 8 are scenario-based questions that require deeper knowledge.
+`evaluation_plan` is an array of 15 objects. Each has `question` (to display), `correct_answer` (Yes or No — do not show to user), and `study_topic` (short topic name for strengths/gaps/recommendations). Store all three for the Evaluate call.
 
 ### Error responses
 
@@ -122,21 +129,21 @@ Content-Type: application/json
 
 | Field | Type | Required | Constraints |
 |-------|------|----------|-------------|
-| `questions` | string[] | Yes | Non-empty; same length as `answers` |
-| `answers` | string[] | Yes | Each value is `"Yes"` or `"No"` |
+| `questions` | string[] | Yes | Same order as Plan response |
+| `answers` | string[] | Yes | User's answers: `"Yes"` or `"No"` each |
+| `correct_answers` | string[] | Yes | From Plan response; same order |
+| `study_topics` | string[] | Yes | From Plan response; same order (for strengths/gaps) |
 
-The order of `questions` and `answers` must match the order returned from `/interview-ready/plan`.
+All four arrays must have the same length.
 
 **Example:**
 
 ```json
 {
-  "questions": [
-    "Can you explain React hooks (useState, useEffect)?",
-    "Have you worked with state management (Redux, Context)?",
-    "Can you optimize React performance (memoization, lazy loading)?"
-  ],
-  "answers": ["Yes", "No", "Yes"]
+  "questions": ["Can you explain DI?", "In React, state updates are synchronous. Yes or No?"],
+  "answers": ["Yes", "No"],
+  "correct_answers": ["Yes", "No"],
+  "study_topics": ["Dependency Injection", "React State Batching"]
 }
 ```
 
@@ -148,18 +155,18 @@ The order of `questions` and `answers` must match the order returned from `/inte
 {
   "readiness_percentage": 67,
   "readiness_label": "Almost Ready",
-  "strengths": [
-    "Can explain React hooks (useState, useEffect)",
-    "Can optimize React performance (memoization, lazy loading)"
-  ],
-  "gaps": [
-    "State management (Redux, Context)"
-  ],
+  "strengths": ["Dependency Injection", "React Hooks"],
+  "gaps": ["React State Batching", "Singleton Thread Safety"],
   "learning_recommendations": [
     {
+      "priority": "Critical",
+      "topic": "React State Batching",
+      "why": "Core topic essential for your target role."
+    },
+    {
       "priority": "High",
-      "topic": "State management (Redux, Context)",
-      "why": "Core skill for frontend roles"
+      "topic": "Singleton Thread Safety",
+      "why": "Important for technical interviews."
     }
   ]
 }
@@ -167,11 +174,11 @@ The order of `questions` and `answers` must match the order returned from `/inte
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `readiness_percentage` | int | 0–100 score |
+| `readiness_percentage` | int | 0–100 score (correct answers / total) |
 | `readiness_label` | string | `"Not Ready"`, `"Almost Ready"`, or `"Interview Ready"` |
-| `strengths` | string[] | Topics the user answered “Yes” to |
-| `gaps` | string[] | Topics the user answered “No” to |
-| `learning_recommendations` | array | Items with `priority`, `topic`, `why` (e.g., Critical, High, Medium, Optional) |
+| `strengths` | string[] | Study topics the user got right |
+| `gaps` | string[] | Study topics the user got wrong (areas to improve) |
+| `learning_recommendations` | array | Prioritized topics to study (Critical, High, Medium, Optional) with `topic` and `why` |
 
 ### Error responses
 
@@ -208,7 +215,7 @@ async function getPlan(profile) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      user_type: profile.userType,      // "student" | "working professional"
+      user_type: profile.userType,
       experience_years: profile.years,
       primary_skill: profile.skill,
       target_role: profile.role,
@@ -216,15 +223,20 @@ async function getPlan(profile) {
   });
   if (!res.ok) throw new Error(await res.text());
   const data = await res.json();
-  return data.evaluation_plan; // array of questions
+  return data.evaluation_plan; // [{ question, correct_answer, study_topic }, ...]
 }
 
-// Step 2: Evaluate readiness
-async function evaluate(questions, answers) {
+// Step 2: Evaluate readiness (pass all arrays from Plan + user answers)
+async function evaluate(plan, userAnswers) {
   const res = await fetch(`${API_BASE}/interview-ready/evaluate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ questions, answers }),
+    body: JSON.stringify({
+      questions: plan.map((p) => p.question),
+      answers: userAnswers,
+      correct_answers: plan.map((p) => p.correct_answer),
+      study_topics: plan.map((p) => p.study_topic),
+    }),
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json();

@@ -44,9 +44,10 @@ class PlanRequest(BaseModel):
 
 
 class QuestionItem(BaseModel):
-    """Single question with its correct factual answer (Yes or No)."""
+    """Single question with its correct factual answer and study topic."""
     question: str = Field(..., min_length=1)
     correct_answer: Literal["Yes", "No"]
+    study_topic: str = Field(..., min_length=1, description="Short topic name for study/recommendations (e.g. 'Dependency Injection', 'Scoped Services')")
 
 
 class PlanResponse(BaseModel):
@@ -57,6 +58,7 @@ class EvaluateRequest(BaseModel):
     questions: List[str] = Field(..., min_length=1)
     answers: List[str] = Field(..., min_length=1)
     correct_answers: List[str] = Field(..., min_length=1, description="Expected answer per question from Plan")
+    study_topics: List[str] = Field(..., min_length=1, description="Study topic per question from Plan (for strengths/gaps/recommendations)")
 
     @field_validator("answers")
     @classmethod
@@ -70,6 +72,14 @@ class EvaluateRequest(BaseModel):
                 raise ValueError(f"answer at index {i} must be 'Yes' or 'No', got: {ans_stripped!r}")
             normalized.append(ans_stripped)
         return normalized
+
+    @field_validator("study_topics")
+    @classmethod
+    def validate_study_topics_no_empty(cls, v: List[str]) -> List[str]:
+        for i, t in enumerate(v):
+            if not (t and str(t).strip()):
+                raise ValueError(f"study_topics[{i}] cannot be empty")
+        return v
 
     @field_validator("correct_answers")
     @classmethod
@@ -95,4 +105,6 @@ class EvaluateRequest(BaseModel):
             raise ValueError("questions and answers must have the same length")
         if len(self.correct_answers) != n:
             raise ValueError("correct_answers must have the same length as questions")
+        if len(self.study_topics) != n:
+            raise ValueError("study_topics must have the same length as questions")
         return self

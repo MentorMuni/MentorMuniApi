@@ -9,7 +9,7 @@ logger = logging.getLogger("llm_service")
 
 # LLM timeout in seconds (for 10k users, avoid long-running requests)
 LLM_TIMEOUT = 30
-MAX_TOKENS_PLAN = 1200
+MAX_TOKENS_PLAN = 1500
 
 
 class LLMService:
@@ -113,8 +113,12 @@ Return ONLY a JSON array of exactly 15 objects.
 Each object:
 {{
   "question": "string",
-  "correct_answer": "Yes" | "No"
+  "correct_answer": "Yes" | "No",
+  "study_topic": "string"
 }}
+
+study_topic: SHORT topic name for study recommendations (2-5 words). NOT the question text.
+Examples: "Dependency Injection", "Scoped Services", "React State Batching", "Singleton Thread Safety", "Database Indexing"
 
 No explanation.
 No markdown.
@@ -139,7 +143,7 @@ No extra text.
         )
 
     def _parse_plan(self, content: str) -> list[dict]:
-        """Parse LLM response into list of {question, correct_answer}. Deterministic fallback."""
+        """Parse LLM response into list of {question, correct_answer, study_topic}. Deterministic fallback."""
         content = content.strip()
         json_match = re.search(r"\[[\s\S]*\]", content)
         if json_match:
@@ -158,12 +162,16 @@ No extra text.
                             a = "No"
                         else:
                             continue
+                        topic = str(x.get("study_topic", "")).strip()
+                        if not topic:
+                            topic = q[:60] + ("..." if len(q) > 60 else "")  # fallback
                         if q:
-                            out.append({"question": q, "correct_answer": a})
+                            out.append({"question": q, "correct_answer": a, "study_topic": topic})
                     elif isinstance(x, str) and x.strip():
-                        out.append({"question": x.strip(), "correct_answer": "Yes"})
+                        q = x.strip()
+                        out.append({"question": q, "correct_answer": "Yes", "study_topic": q[:60] + ("..." if len(q) > 60 else "")})
                 if out:
                     return out
             except (json.JSONDecodeError, ValueError):
                 pass
-        return [{"question": "Interview fundamentals", "correct_answer": "Yes"}]
+        return [{"question": "Interview fundamentals", "correct_answer": "Yes", "study_topic": "Interview fundamentals"}]

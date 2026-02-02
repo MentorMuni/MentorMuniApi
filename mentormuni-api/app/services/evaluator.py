@@ -33,16 +33,22 @@ class EvaluatorService:
         else:
             readiness_label = "Interview Ready"
 
+        # Use study_topics (not questions) for strengths/gaps - show topics to study
         strengths = [
-            q for q, u, c in zip(request.questions, request.answers, request.correct_answers)
+            t for t, u, c in zip(request.study_topics, request.answers, request.correct_answers)
             if u == c
         ]
-        gaps = [
-            q for q, u, c in zip(request.questions, request.answers, request.correct_answers)
+        gap_topics = [
+            t for t, u, c in zip(request.study_topics, request.answers, request.correct_answers)
             if u != c
         ]
+        # Deduplicate topics (preserve order)
+        seen = set()
+        strengths = [t for t in strengths if t not in seen and not seen.add(t)]
+        seen.clear()
+        gap_topics = [t for t in gap_topics if t not in seen and not seen.add(t)]
 
-        learning_recommendations = self._build_learning_roadmap(gaps)
+        learning_recommendations = self._build_learning_roadmap(gap_topics)
 
         return {
             "readiness_percentage": readiness_percentage,
