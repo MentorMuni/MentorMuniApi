@@ -20,8 +20,11 @@ class EvaluatorService:
                 "learning_recommendations": [],
             }
 
-        yes_answers = sum(1 for a in request.answers if a == "Yes")
-        readiness_percentage = int((yes_answers / total_questions) * 100)
+        # Score by matching user answer to correct_answer (not Yes=good)
+        correct_count = sum(
+            1 for u, c in zip(request.answers, request.correct_answers) if u == c
+        )
+        readiness_percentage = int((correct_count / total_questions) * 100)
 
         if readiness_percentage < 50:
             readiness_label = "Not Ready"
@@ -31,9 +34,13 @@ class EvaluatorService:
             readiness_label = "Interview Ready"
 
         strengths = [
-            q for q, a in zip(request.questions, request.answers) if a == "Yes"
+            q for q, u, c in zip(request.questions, request.answers, request.correct_answers)
+            if u == c
         ]
-        gaps = [q for q, a in zip(request.questions, request.answers) if a == "No"]
+        gaps = [
+            q for q, u, c in zip(request.questions, request.answers, request.correct_answers)
+            if u != c
+        ]
 
         learning_recommendations = self._build_learning_roadmap(gaps)
 

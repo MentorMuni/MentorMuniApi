@@ -43,13 +43,20 @@ class PlanRequest(BaseModel):
         return v_lower
 
 
+class QuestionItem(BaseModel):
+    """Single question with its correct factual answer (Yes or No)."""
+    question: str = Field(..., min_length=1)
+    correct_answer: Literal["Yes", "No"]
+
+
 class PlanResponse(BaseModel):
-    evaluation_plan: List[str]
+    evaluation_plan: List[QuestionItem]
 
 
 class EvaluateRequest(BaseModel):
     questions: List[str] = Field(..., min_length=1)
     answers: List[str] = Field(..., min_length=1)
+    correct_answers: List[str] = Field(..., min_length=1, description="Expected answer per question from Plan")
 
     @field_validator("answers")
     @classmethod
@@ -64,6 +71,15 @@ class EvaluateRequest(BaseModel):
             normalized.append(ans_stripped)
         return normalized
 
+    @field_validator("correct_answers")
+    @classmethod
+    def validate_correct_answers(cls, v: List[str]) -> List[str]:
+        for i, ans in enumerate(v):
+            a = str(ans).strip() if ans is not None else ""
+            if a not in VALID_ANSWERS:
+                raise ValueError(f"correct_answers[{i}] must be 'Yes' or 'No', got: {ans!r}")
+        return v
+
     @field_validator("questions")
     @classmethod
     def validate_questions_no_empty(cls, v: List[str]) -> List[str]:
@@ -74,6 +90,9 @@ class EvaluateRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_matching_length(self):
-        if len(self.questions) != len(self.answers):
-            raise ValueError("questions and answers must have the same length (no partial submissions)")
+        n = len(self.questions)
+        if len(self.answers) != n:
+            raise ValueError("questions and answers must have the same length")
+        if len(self.correct_answers) != n:
+            raise ValueError("correct_answers must have the same length as questions")
         return self
