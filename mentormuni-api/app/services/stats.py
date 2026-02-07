@@ -46,6 +46,22 @@ def get_stats() -> dict:
     return {"total_checks": _total_checks, "total_views": _total_views}
 
 
+def get_leads(limit: int = 1000) -> list:
+    """Read recent leads from JSONL file. Admin use only."""
+    path = _leads_file()
+    if not path.exists():
+        return []
+    lines = path.read_text(encoding="utf-8").strip().split("\n")
+    lines = [l for l in lines if l.strip()][-limit:]
+    out = []
+    for line in lines:
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return out[::-1]  # newest first
+
+
 def store_lead(email: Optional[str], phone: Optional[str], profile: Optional[dict]) -> None:
     """Append lead to JSONL file (non-blocking, best-effort)."""
     if not email and not phone:

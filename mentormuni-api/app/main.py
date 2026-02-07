@@ -118,3 +118,19 @@ async def evaluate_readiness(request: Request, body: EvaluateRequest):
 from slowapi.middleware import SlowAPIMiddleware
 
 app.add_middleware(SlowAPIMiddleware)
+
+
+# ---- Admin endpoints (backend only, no auth) ----
+
+@app.get("/admin/submissions")
+async def admin_submissions(limit: int = 100):
+    """Return contact form submissions."""
+    data = contact_storage.get_submissions(limit=limit)
+    return {"count": len(data), "submissions": data}
+
+
+@app.get("/admin/leads")
+async def admin_leads(limit: int = 100):
+    """Return Interview Ready leads (email/phone from plan)."""
+    data = stats_service.get_leads(limit=limit)
+    return {"count": len(data), "leads": data}

@@ -121,7 +121,23 @@ if (res.ok) {
 
 ---
 
-## 5. Checklist
+## 5. Admin Endpoints (View Stored Data)
+
+```
+GET /admin/submissions   → contact form submissions
+GET /admin/leads         → Interview Ready leads (email/phone from plan)
+?limit=100 (optional, default 100)
+```
+
+**Example:**
+```bash
+curl "https://your-api.railway.app/admin/submissions"
+curl "https://your-api.railway.app/admin/leads?limit=50"
+```
+
+---
+
+## 6. Checklist
 
 - [ ] Set `MENTORMUNI_API_BASE` (or equivalent) to your Railway API URL
 - [ ] Contact form: Change from Google Apps Script to `POST /contact/submit`
