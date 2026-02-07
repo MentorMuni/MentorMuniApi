@@ -1,17 +1,8 @@
 from pydantic import BaseModel, Field, field_validator, model_validator
-from typing import List, Literal
+from typing import List, Literal, Optional
 
 USER_TYPES = Literal["student", "working professional"]
 VALID_ANSWERS = {"Yes", "No"}
-
-
-class AIRequest(BaseModel):
-    prompt: str
-    use_case: str
-
-
-class AIResponse(BaseModel):
-    output: str
 
 
 class LearningRecommendation(BaseModel):
@@ -29,18 +20,59 @@ class EvaluateResponse(BaseModel):
 
 
 class PlanRequest(BaseModel):
-    user_type: str = Field(..., description="student or working professional")
-    experience_years: int = Field(..., ge=0, le=50)
+    user_type: str = Field(
+        ...,
+        description="e.g. 'student', 'working professional', '3rd Year Student', '4th Year Student'",
+    )
+    experience_years: Optional[int] = Field(
+        default=0,
+        ge=0,
+        le=50,
+        description="Optional. Default 0 for students, 1 for working professionals if omitted.",
+    )
     primary_skill: str = Field(..., min_length=1, max_length=100)
-    target_role: str = Field(..., min_length=1, max_length=100)
+    target_role: Optional[str] = Field(
+        default=None,
+        max_length=100,
+        description="Optional. Defaults to '{primary_skill} Developer' if omitted or empty.",
+    )
+
+    @field_validator("target_role")
+    @classmethod
+    def target_role_empty_to_none(cls, v):
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return None
+        return v.strip()
+    email: Optional[str] = Field(default=None, max_length=255, description="Optional. Omit or send null/empty if not collected.")
+    phone: Optional[str] = Field(default=None, max_length=20, description="Optional. Omit or send null/empty if not collected.")
+
+    @field_validator("email", "phone")
+    @classmethod
+    def empty_to_none(cls, v):
+        """Treat empty string, blank, or null as None."""
+        if v is None:
+            return None
+        s = str(v).strip()
+        return None if not s else s
 
     @field_validator("user_type")
     @classmethod
     def validate_user_type(cls, v: str) -> str:
         v_lower = v.lower().strip()
-        if v_lower not in ("student", "working professional"):
-            raise ValueError("user_type must be 'student' or 'working professional'")
-        return v_lower
+        if v_lower in ("working professional", "workingprofessional"):
+            return "working professional"
+        if v_lower in ("3rd year student", "4th year student", "final year student", "student"):
+            return "student"
+        raise ValueError(
+            "user_type must be one of: student, working professional, 3rd Year Student, 4th Year Student"
+        )
+
+    @model_validator(mode="after")
+    def set_target_role_default(self):
+        """Default target_role to '{primary_skill} Developer' when omitted."""
+        if not self.target_role or not str(self.target_role).strip():
+            object.__setattr__(self, "target_role", f"{self.primary_skill} Developer")
+        return self
 
 
 class QuestionItem(BaseModel):

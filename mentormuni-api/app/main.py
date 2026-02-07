@@ -20,8 +20,9 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
-from app.api.v1.routes import health, ai
 from app.schemas.ai import PlanRequest, PlanResponse, EvaluateRequest, EvaluateResponse
+from app.schemas.contact import ContactSubmitRequest
+from app.services import contact_storage, stats as stats_service
 from app.services.guard_layer import GuardLayer
 from app.services.llm import LLMService
 from app.services.evaluator import EvaluatorService
@@ -44,10 +45,6 @@ app.add_middleware(
 guard_layer = GuardLayer(timeout=30)
 llm_service = LLMService()
 evaluator_service = EvaluatorService()
-
-app.include_router(health.router, prefix="/api/v1/health", tags=["Health"])
-app.include_router(ai.router, prefix="/api/v1/ai", tags=["AI"])
-
 
 @app.get("/")
 async def root():
@@ -76,11 +73,32 @@ async def generate_plan(request: Request, body: PlanRequest):
         evaluation_plan = await guard_layer.run_with_timeout(
             llm_service.generate_evaluation_plan(body)
         )
+        if body.email or body.phone:
+            stats_service.store_lead(
+                body.email,
+                body.phone,
+                {
+                    "user_type": body.user_type,
+                    "primary_skill": body.primary_skill,
+                    "target_role": body.target_role,
+                },
+            )
         return PlanResponse(evaluation_plan=evaluation_plan)
     except TimeoutError as e:
         raise HTTPException(status_code=504, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail="Failed to generate plan. Please try again.")
+
+
+@app.post("/contact/submit")
+@limiter.limit("10/minute")
+async def contact_submit(request: Request, body: ContactSubmitRequest):
+    """Store contact/enroll details in file (no DB)."""
+    try:
+        contact_storage.store_submission(body.model_dump())
+        return {"status": "ok", "message": "Thank you! We'll get back to you."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Could not save your details. Please try again.")
 
 
 @app.post(

@@ -50,19 +50,34 @@ Content-Type: application/json
 
 | Field | Type | Required | Constraints |
 |-------|------|----------|-------------|
-| `user_type` | string | Yes | `"student"` or `"working professional"` |
-| `experience_years` | number | Yes | 0–50 |
-| `primary_skill` | string | Yes | 1–100 chars (e.g., `.NET`, `React`, `Data Science`) |
-| `target_role` | string | Yes | 1–100 chars (e.g., `Backend Developer`) |
+| `user_type` | string | Yes | `"student"`, `"working professional"`, `"3rd Year Student"`, `"4th Year Student"` |
+| `primary_skill` | string | Yes | 1–100 chars (e.g., `.NET`, `React`) |
+| `experience_years` | number | No | Default 0; 0–50 |
+| `target_role` | string | No | Defaults to `"{primary_skill} Developer"` |
+| `email` | string | No | Optional; stored for lead capture |
+| `phone` | string | No | Optional; stored for lead capture |
 
-**Example:**
+**Example (full):**
 
 ```json
 {
-  "user_type": "working professional",
-  "experience_years": 3,
+  "user_type": "Working Professional",
   "primary_skill": "React",
-  "target_role": "Frontend Developer"
+  "experience_years": 3,
+  "target_role": "Frontend Developer",
+  "email": "user@example.com",
+  "phone": "9146421302"
+}
+```
+
+**Example (minimal – matches UI form):**
+
+```json
+{
+  "user_type": "3rd Year Student",
+  "primary_skill": ".NET",
+  "email": "user@example.com",
+  "phone": "9146421302"
 }
 ```
 

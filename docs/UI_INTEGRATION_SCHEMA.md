@@ -10,10 +10,23 @@ Use these schemas to integrate the Interview Readiness APIs with your frontend.
 
 ```typescript
 interface PlanRequest {
-  user_type: "student" | "working professional";
-  experience_years: number;  // 0-50
-  primary_skill: string;     // e.g. "React", ".NET", "Data Science"
-  target_role: string;       // e.g. "Frontend Developer"
+  user_type: string;         // "3rd Year Student" | "4th Year Student" | "Working Professional" or "student" | "working professional"
+  primary_skill: string;     // required, e.g. "React", ".NET"
+  experience_years?: number; // optional, default 0 (0-50)
+  target_role?: string;      // optional, defaults to "{primary_skill} Developer"
+  email?: string | null;     // optional; omit, null, or "" = not provided (no lead capture)
+  phone?: string | null;     // optional; omit, null, or "" = not provided (no lead capture)
+}
+```
+
+**Minimal payload (matches UI):**
+
+```json
+{
+  "user_type": "Working Professional",
+  "primary_skill": ".NET",
+  "email": "user@example.com",
+  "phone": "9146421302"
 }
 ```
 
@@ -148,9 +161,43 @@ interface LearningRecommendation {
 
 ---
 
-## 4. Error Responses
+## 4. Contact Submit (File Storage)
 
-Both endpoints return `422` for validation errors:
+### Request: `POST /contact/submit`
+
+Stores contact/enroll details in a JSONL file (no database).
+
+```typescript
+interface ContactSubmitRequest {
+  name: string;      // required
+  email: string;     // required, valid email
+  phone: string;     // required, 8-20 chars
+  year?: string;     // optional, e.g. "3rd year", "Final year"
+  message?: string;  // optional
+}
+```
+
+**Example:**
+
+```json
+{
+  "name": "Rahul",
+  "email": "rahul@example.com",
+  "phone": "9146421302",
+  "year": "3rd year",
+  "message": "Interested in React course"
+}
+```
+
+**Response:** `200 OK` → `{ "status": "ok", "message": "Thank you! We'll get back to you." }`
+
+**Storage:** Data is appended to `contact_submissions.jsonl` (path: `DATA_DIR` env or `/tmp`).
+
+---
+
+## 5. Error Responses
+
+All endpoints return `422` for validation errors:
 
 ```typescript
 interface ValidationError {
