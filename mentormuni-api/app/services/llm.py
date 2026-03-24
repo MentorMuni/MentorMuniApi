@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+from typing import Tuple
 from openai import AsyncOpenAI
 from app.core.config import settings
 from app.services.guard_layer import GuardLayer
@@ -10,12 +11,43 @@ logger = logging.getLogger("llm_service")
 # LLM timeout in seconds (for 10k users, avoid long-running requests)
 LLM_TIMEOUT = 30
 MAX_TOKENS_PLAN = 1500
+MAX_TOKENS_VALIDATE = 20
 
 
 class LLMService:
     def __init__(self):
         self._client = AsyncOpenAI(api_key=settings.openai_api_key)
         self.guard_layer = GuardLayer(timeout=LLM_TIMEOUT)
+
+    async def validate_primary_skill(self, skill: str) -> Tuple[bool, str]:
+        """
+        Use OpenAI to check if skill is a valid technical skill.
+        Returns (is_valid, error_message). If valid, message is empty.
+        """
+        prompt = f"""Is "{skill}" a valid technical skill, programming language, framework, tool, or tech domain that developers/engineers would use for interview preparation?
+
+Answer with ONLY: YES or NO
+If NO, also add a brief reason after a pipe, e.g. NO|Not a technical skill
+If YES, respond with just: YES"""
+
+        try:
+            response = await self.guard_layer.run_with_timeout(
+                self._client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=MAX_TOKENS_VALIDATE,
+                )
+            )
+            content = (response.choices[0].message.content or "").strip().upper()
+            if content.startswith("YES"):
+                return True, ""
+            if content.startswith("NO"):
+                reason = content.split("|", 1)[1].strip() if "|" in content else "Not a recognized technical skill"
+                return False, reason
+            return False, "Could not validate. Please enter a technical skill like React, .NET, or Python."
+        except Exception as e:
+            logger.warning("Skill validation failed: %s", e)
+            return True, ""  # On error, allow (don't block due to API failure)
 
     async def generate_evaluation_plan(self, request) -> list[dict]:
         """Returns list of {question, correct_answer} where correct_answer is 'Yes' or 'No'."""

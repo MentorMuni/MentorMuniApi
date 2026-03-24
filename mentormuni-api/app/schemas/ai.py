@@ -30,7 +30,18 @@ class PlanRequest(BaseModel):
         le=50,
         description="Optional. Default 0 for students, 1 for working professionals if omitted.",
     )
-    primary_skill: str = Field(..., min_length=1, max_length=100)
+    primary_skill: str = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        description="Technical skill e.g. React, .NET, Python (any tech stack allowed)",
+    )
+
+    @field_validator("primary_skill")
+    @classmethod
+    def validate_primary_skill_is_safe(cls, v: str) -> str:
+        from app.validators.primary_skill import validate_primary_skill as _validate
+        return _validate(v)
     target_role: Optional[str] = Field(
         default=None,
         max_length=100,
