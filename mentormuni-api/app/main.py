@@ -38,6 +38,7 @@ from app.services.guard_layer import GuardLayer
 from app.services.llm import LLMService
 from app.services.evaluator import EvaluatorService
 from app.services import resume_ats as resume_ats_service
+from app.core.config import settings
 
 app = FastAPI(title="MentorMuni API", version="1.0.0")
 
@@ -54,7 +55,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-guard_layer = GuardLayer(timeout=30)
+guard_layer = GuardLayer(timeout=settings.llm_timeout_seconds)
 llm_service = LLMService()
 evaluator_service = EvaluatorService()
 

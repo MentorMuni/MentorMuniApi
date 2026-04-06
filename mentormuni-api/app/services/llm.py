@@ -5,7 +5,7 @@ import logging
 import re
 from typing import List, Optional, Tuple
 from openai import AsyncOpenAI
-from app.core.config import settings
+from app.core.config import settings as app_settings
 from app.services.guard_layer import GuardLayer
 from app.services.skill_readiness_prompt import render_skill_readiness_prompt
 from app.services.interview_readiness_prompt import render_interview_readiness_prompt
@@ -13,8 +13,6 @@ from app.schemas.ai import InterviewReadinessPlanRequest
 
 logger = logging.getLogger("llm_service")
 
-# LLM timeout in seconds (for 10k users, avoid long-running requests)
-LLM_TIMEOUT = 30
 MAX_TOKENS_LEGACY_PLAN = 1500
 MAX_TOKENS_MIXED_PLAN = 3200
 MAX_TOKENS_INTERVIEW_READINESS_PLAN = 10000
@@ -25,8 +23,8 @@ PLAN_QUESTION_COUNT = 15
 
 class LLMService:
     def __init__(self):
-        self._client = AsyncOpenAI(api_key=settings.openai_api_key)
-        self.guard_layer = GuardLayer(timeout=LLM_TIMEOUT)
+        self._client = AsyncOpenAI(api_key=app_settings.openai_api_key)
+        self.guard_layer = GuardLayer(timeout=app_settings.llm_timeout_seconds)
 
     async def validate_primary_skill(self, skill: str) -> Tuple[bool, str]:
         """
