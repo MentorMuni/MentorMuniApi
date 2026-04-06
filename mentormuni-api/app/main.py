@@ -20,10 +20,20 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
-from app.schemas.ai import PlanRequest, PlanResponse, EvaluateRequest, EvaluateResponse
-from app.schemas.contact import ContactSubmitRequest
+from app.schemas.ai import (
+    PlanRequest,
+    PlanResponse,
+    SkillReadinessPlanRequest,
+    SkillReadinessPlanResponse,
+    InterviewReadinessPlanRequest,
+    InterviewReadinessPlanResponse,
+    EvaluateRequest,
+    EvaluateResponse,
+)
+from app.schemas.inquiry import InquiryCreate
+from app.schemas.interview_lead import InterviewReadyLeadCreate
 from app.schemas.resume_ats import ResumeAtsResponse
-from app.services import contact_storage, stats as stats_service
+from app.services import contact_storage, interview_lead_build, stats as stats_service
 from app.services.guard_layer import GuardLayer
 from app.services.llm import LLMService
 from app.services.evaluator import EvaluatorService
@@ -68,6 +78,7 @@ async def health_check():
     "/interview-ready/plan",
     response_model=PlanResponse,
     responses={429: {"description": "Rate limit exceeded"}},
+    summary="Legacy plan (15 Yes/No questions only)",
 )
 @limiter.limit("20/minute")
 async def generate_plan(request: Request, body: PlanRequest):
@@ -82,16 +93,16 @@ async def generate_plan(request: Request, body: PlanRequest):
         evaluation_plan = await guard_layer.run_with_timeout(
             llm_service.generate_evaluation_plan(body)
         )
-        if body.email or body.phone:
-            stats_service.store_lead(
-                body.email,
-                body.phone,
-                {
-                    "user_type": body.user_type,
-                    "primary_skill": body.primary_skill,
-                    "target_role": body.target_role,
-                },
-            )
+        rec = interview_lead_build.lead_from_legacy_plan(
+            email=body.email,
+            phone=body.phone,
+            user_type_canonical=body.user_type,
+            primary_skill=body.primary_skill,
+            target_role=body.target_role,
+            experience_years=body.experience_years or 0,
+        )
+        if rec:
+            stats_service.append_interview_ready_lead(rec)
         return PlanResponse(evaluation_plan=evaluation_plan)
     except HTTPException:
         raise
@@ -99,6 +110,73 @@ async def generate_plan(request: Request, body: PlanRequest):
         raise HTTPException(status_code=504, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail="Failed to generate plan. Please try again.")
+
+
+@app.post(
+    "/interview-ready/skill-readiness/plan",
+    response_model=SkillReadinessPlanResponse,
+    responses={429: {"description": "Rate limit exceeded"}},
+    summary="Skill readiness plan (rigorous stack-only quiz: yes/no, MC, scenario, code MCQ + explanations)",
+)
+@limiter.limit("20/minute")
+async def skill_readiness_plan(request: Request, body: SkillReadinessPlanRequest):
+    try:
+        is_valid, error_msg = await llm_service.validate_primary_skill(body.primary_skill)
+        if not is_valid:
+            detail = error_msg if error_msg else "Please enter a valid technical skill (e.g. React, .NET, Python)"
+            if not detail.startswith("Please"):
+                detail = f"Please enter a valid technical skill. {detail}"
+            raise HTTPException(status_code=422, detail=detail)
+        evaluation_plan = await guard_layer.run_with_timeout(
+            llm_service.generate_skill_readiness_plan(body)
+        )
+        rec = interview_lead_build.lead_from_skill_readiness(
+            email=body.email,
+            phone=body.phone,
+            user_type_canonical=body.user_type,
+            primary_skill=body.primary_skill,
+            target_role=body.target_role,
+            experience_years=body.experience_years or 0,
+        )
+        if rec:
+            stats_service.append_interview_ready_lead(rec)
+        return SkillReadinessPlanResponse(evaluation_plan=evaluation_plan)
+    except HTTPException:
+        raise
+    except TimeoutError as e:
+        raise HTTPException(status_code=504, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to generate skill readiness plan. Please try again.")
+
+
+@app.post(
+    "/interview-ready/interview-readiness/plan",
+    response_model=InterviewReadinessPlanResponse,
+    responses={429: {"description": "Rate limit exceeded"}},
+    summary="Interview readiness plan (Yes/No + multiple choice, holistic)",
+)
+@limiter.limit("20/minute")
+async def interview_readiness_plan(request: Request, body: InterviewReadinessPlanRequest):
+    try:
+        is_valid, error_msg = await llm_service.validate_primary_skill(body.primary_skill)
+        if not is_valid:
+            detail = error_msg if error_msg else "Please enter a valid technical skill (e.g. React, .NET, Python)"
+            if not detail.startswith("Please"):
+                detail = f"Please enter a valid technical skill. {detail}"
+            raise HTTPException(status_code=422, detail=detail)
+        evaluation_plan = await guard_layer.run_with_timeout(
+            llm_service.generate_interview_readiness_plan(body)
+        )
+        rec = interview_lead_build.lead_from_interview_readiness(body)
+        if rec:
+            stats_service.append_interview_ready_lead(rec)
+        return InterviewReadinessPlanResponse(evaluation_plan=evaluation_plan)
+    except HTTPException:
+        raise
+    except TimeoutError as e:
+        raise HTTPException(status_code=504, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to generate interview readiness plan. Please try again.")
 
 
 @app.post(
@@ -146,14 +224,14 @@ async def resume_ats(
         )
 
 
-@app.post("/contact/submit")
+@app.post("/api/inquiries")
 @limiter.limit("10/minute")
-async def contact_submit(request: Request, body: ContactSubmitRequest):
-    """Store contact/enroll details in file (no DB)."""
+async def create_inquiry(request: Request, body: InquiryCreate):
+    """Waitlist + contact submissions (intent-branched); stored as JSONL."""
     try:
-        contact_storage.store_submission(body.model_dump())
+        contact_storage.store_submission(body.model_dump(mode="json", exclude_none=False))
         return {"status": "ok", "message": "Thank you! We'll get back to you."}
-    except Exception as e:
+    except Exception:
         raise HTTPException(status_code=500, detail="Could not save your details. Please try again.")
 
 
@@ -180,13 +258,21 @@ app.add_middleware(SlowAPIMiddleware)
 
 @app.get("/admin/submissions")
 async def admin_submissions(limit: int = 100):
-    """Return contact form submissions."""
+    """Return inquiry submissions (waitlist + contact JSONL)."""
     data = contact_storage.get_submissions(limit=limit)
     return {"count": len(data), "submissions": data}
 
 
 @app.get("/admin/leads")
 async def admin_leads(limit: int = 100):
-    """Return Interview Ready leads (email/phone from plan)."""
+    """Return Interview Ready leads (JSONL lines, newest first)."""
     data = stats_service.get_leads(limit=limit)
     return {"count": len(data), "leads": data}
+
+
+@app.post("/admin/leads")
+@limiter.limit("60/minute")
+async def admin_create_lead(request: Request, body: InterviewReadyLeadCreate):
+    """Append a lead row from the client (same shape as server-side plan capture)."""
+    stats_service.append_interview_ready_lead(body.to_storage_dict())
+    return {"status": "ok"}

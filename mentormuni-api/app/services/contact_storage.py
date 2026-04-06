@@ -5,7 +5,6 @@ Uses JSONL (one JSON object per line) for easy append and parsing.
 import json
 import logging
 import os
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -29,20 +28,20 @@ def _file_path() -> Path:
 
 def store_submission(data: dict) -> None:
     """
-    Append a submission to the JSONL file.
+    Append a submission to the JSONL file (full payload, including explicit nulls).
     Thread-safe for single-process; use file lock for multi-worker if needed.
     """
-    entry = {
-        "ts": datetime.now(timezone.utc).isoformat(),
-        **{k: v for k, v in data.items() if v is not None and str(v).strip()},
-    }
-    line = json.dumps(entry, ensure_ascii=False) + "\n"
+    line = json.dumps(data, ensure_ascii=False) + "\n"
     try:
         with open(_file_path(), "a", encoding="utf-8") as f:
             f.write(line)
-        logger.info("Contact stored: email=%s", data.get("email", ""))
+        logger.info(
+            "Inquiry stored: intent=%s source=%s",
+            data.get("intent"),
+            data.get("source"),
+        )
     except Exception as e:
-        logger.warning("Could not store contact: %s", e)
+        logger.warning("Could not store inquiry: %s", e)
         raise
 
 

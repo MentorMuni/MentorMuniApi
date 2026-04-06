@@ -13,7 +13,8 @@ BLOCKED_PATTERNS = [
     r"\bfuck", r"\bshit\b", r"\bdick\b", r"\bbitch\b", r"\bretard\b",
 ]
 
-VALID_PATTERN = re.compile(r"^[a-zA-Z0-9\.\-\s\/#\+]+$")
+# Comma allowed for multi-topic strings (e.g. "DSA, OOP, DBMS") on interview readiness
+VALID_PATTERN = re.compile(r"^[a-zA-Z0-9\.\-\s\/#\+,]+$")
 
 
 def validate_primary_skill(value: str) -> str:

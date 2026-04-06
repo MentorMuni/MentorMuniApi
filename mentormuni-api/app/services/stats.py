@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger("stats_service")
 
@@ -62,20 +62,16 @@ def get_leads(limit: int = 1000) -> list:
     return out[::-1]  # newest first
 
 
-def store_lead(email: Optional[str], phone: Optional[str], profile: Optional[dict]) -> None:
-    """Append lead to JSONL file (non-blocking, best-effort)."""
-    if not email and not phone:
-        return
+def append_interview_ready_lead(record: dict[str, Any]) -> None:
+    """Append one Interview Ready lead object (full JSON shape) to JSONL."""
     try:
-        line = json.dumps({
-            "email": (email or "").strip() or None,
-            "phone": (phone or "").strip() or None,
-            "user_type": profile.get("user_type") if profile else None,
-            "primary_skill": profile.get("primary_skill") if profile else None,
-            "target_role": profile.get("target_role") if profile else None,
-        }, ensure_ascii=False) + "\n"
+        line = json.dumps(record, ensure_ascii=False) + "\n"
         with open(_leads_file(), "a", encoding="utf-8") as f:
             f.write(line)
-        logger.info("Lead captured: email=%s phone=%s", bool(email), bool(phone))
+        logger.info(
+            "Lead captured: email=%s phone=%s",
+            bool(record.get("email")),
+            bool(record.get("phone")),
+        )
     except Exception as e:
         logger.warning("Could not store lead: %s", e)
