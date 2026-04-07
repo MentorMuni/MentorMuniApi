@@ -14,7 +14,9 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from typing import Optional
+
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -267,8 +269,15 @@ async def admin_submissions(limit: int = 100):
 
 
 @app.get("/admin/leads")
-async def admin_leads(limit: int = 100):
-    """Return Interview Ready leads (JSONL lines, newest first)."""
+async def admin_leads(
+    limit: Optional[int] = Query(
+        default=None,
+        ge=1,
+        le=500_000,
+        description="Optional max number of most recent leads. Omit to return all rows in the file.",
+    ),
+):
+    """Return Interview Ready leads (full JSON per row, newest first). POST /admin/leads appends the same shape."""
     data = stats_service.get_leads(limit=limit)
     return {"count": len(data), "leads": data}
 

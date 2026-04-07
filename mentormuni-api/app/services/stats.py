@@ -46,14 +46,22 @@ def get_stats() -> dict:
     return {"total_checks": _total_checks, "total_views": _total_views}
 
 
-def get_leads(limit: int = 1000) -> list:
-    """Read recent leads from JSONL file. Admin use only."""
+def get_leads(limit: Optional[int] = None) -> list:
+    """
+    Read leads from JSONL (each line = one JSON object). Newest first.
+    If limit is None or <= 0, returns every parseable row in the file.
+    If limit > 0, returns at most that many of the most recent rows.
+    """
     path = _leads_file()
     if not path.exists():
         return []
-    lines = path.read_text(encoding="utf-8").strip().split("\n")
-    lines = [l for l in lines if l.strip()][-limit:]
-    out = []
+    raw = path.read_text(encoding="utf-8")
+    if not raw.strip():
+        return []
+    lines = [ln for ln in raw.split("\n") if ln.strip()]
+    if limit is not None and limit > 0:
+        lines = lines[-limit:]
+    out: list = []
     for line in lines:
         try:
             out.append(json.loads(line))
