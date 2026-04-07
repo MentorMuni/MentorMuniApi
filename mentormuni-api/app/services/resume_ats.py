@@ -1,15 +1,24 @@
+from __future__ import annotations
+
+import asyncio
 import io
+import json
 import logging
 import re
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import List, Optional, Set, Tuple
+from typing import Any, List, Optional, Set, Tuple
 
+from openai import AsyncOpenAI
 from pypdf import PdfReader
 
 logger = logging.getLogger("resume_ats")
+
+# LLM enrichment: resume excerpt size and response cap (scores stay heuristic).
+RESUME_LLM_MAX_INPUT_CHARS = 14_000
+RESUME_LLM_MAX_TOKENS = 1_600
 
 ALLOWED_EXTENSIONS = {".pdf", ".doc", ".docx"}
 MAX_FILE_BYTES = 5 * 1024 * 1024
@@ -374,6 +383,25 @@ def _build_strengths(
     return strengths[:6]
 
 
+def _default_portal_tips(missing: List[str], target_role: str) -> List[str]:
+    """Baseline Naukri / LinkedIn tips when LLM is off or does not return portal_tips."""
+    tr = (target_role or "").strip() or "your target role"
+    tips = [
+        f"Naukri: use a headline/title that closely matches “{tr}” and repeat core skills from the job family in your key skills section.",
+        "Naukri: upload a text-friendly PDF or DOCX; avoid image-only CVs so keyword search can read your content.",
+        "LinkedIn: align your profile headline and About with the same role title and top skills as on this resume for consistent recruiter search.",
+        "LinkedIn: add the same tools and skills to your Skills section and keep work history dates aligned with the resume.",
+    ]
+    if missing:
+        tips.append(
+            "Where truthful, add these recruiter-search terms to resume skills, summary, and first experience bullet, "
+            "then mirror them on Naukri key skills and LinkedIn: "
+            + ", ".join(missing[:8])
+            + "."
+        )
+    return tips[:10]
+
+
 def analyze_resume(text: str, target_role: str) -> dict:
     tr = (target_role or "").strip() or "Software Developer"
     resume_lower = text.lower()
@@ -394,4 +422,154 @@ def analyze_resume(text: str, target_role: str) -> dict:
         "missing_keywords": missing,
         "fixes": _build_fixes(missing, fmt, imp, ats),
         "strengths": _build_strengths(matched, fmt, imp, text),
+        "portal_tips": _default_portal_tips(missing, tr),
     }
+
+
+def _parse_llm_coaching_json(content: str) -> Optional[dict[str, Any]]:
+    content = (content or "").strip()
+    if not content:
+        return None
+    m = re.search(r"\{[\s\S]*\}", content)
+    if not m:
+        return None
+    try:
+        obj = json.loads(m.group())
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    return obj
+
+
+def _sanitize_coaching(obj: dict[str, Any]) -> Optional[dict[str, str | list[str]]]:
+    out: dict[str, str | list[str]] = {}
+    s = obj.get("summary")
+    if isinstance(s, str) and s.strip():
+        out["summary"] = s.strip()[:2000]
+
+    fixes = obj.get("fixes")
+    if isinstance(fixes, list):
+        clean = []
+        for x in fixes[:8]:
+            if isinstance(x, str) and x.strip():
+                clean.append(x.strip()[:500])
+        if clean:
+            out["fixes"] = clean
+
+    strengths = obj.get("strengths")
+    if isinstance(strengths, list):
+        clean = []
+        for x in strengths[:6]:
+            if isinstance(x, str) and x.strip():
+                clean.append(x.strip()[:500])
+        if clean:
+            out["strengths"] = clean
+
+    portal = obj.get("portal_tips")
+    if isinstance(portal, list):
+        clean = []
+        for x in portal[:10]:
+            if isinstance(x, str) and x.strip():
+                clean.append(x.strip()[:500])
+        if clean:
+            out["portal_tips"] = clean
+
+    return out if out.get("summary") or out.get("fixes") or out.get("strengths") or out.get("portal_tips") else None
+
+
+async def enrich_analysis_with_llm(payload: dict, resume_text: str, target_role: str) -> dict:
+    """
+    Rewrite summary / fixes / strengths using OpenAI. Numeric scores and matched/missing keywords
+    stay from heuristics (factual). On any failure, returns payload unchanged.
+    """
+    from app.core.config import settings
+
+    if not settings.resume_ats_use_llm:
+        return payload
+
+    excerpt = resume_text[:RESUME_LLM_MAX_INPUT_CHARS]
+    if len(resume_text) > RESUME_LLM_MAX_INPUT_CHARS:
+        excerpt += "\n\n[… resume truncated for analysis …]"
+
+    timeout_sec = min(90, max(25, int(settings.llm_timeout_seconds)))
+
+    snapshot = (
+        f"Target role: {target_role.strip()}\n"
+        f"Overall score (heuristic): {payload.get('score')}/100\n"
+        f"Breakdown — keywords: {payload.get('keywords')}, formatting: {payload.get('formatting')}, "
+        f"impact: {payload.get('impact')}, ATS parse: {payload.get('ats')}\n"
+        f"Matched role keywords: {', '.join(payload.get('matched_keywords') or []) or '(none)'}\n"
+        f"Missing role keywords: {', '.join(payload.get('missing_keywords') or []) or '(none)'}\n"
+    )
+
+    prompt = f"""You are an expert technical recruiter focused on India job portals (Naukri) and LinkedIn shortlisting.
+
+Goal: help this candidate get MORE recruiter views and shortlists for their target role on Naukri and LinkedIn.
+
+Use ONLY the resume excerpt and the heuristic snapshot below. Do not invent employers, degrees, or skills not present in the resume.
+If the resume is thin, say so tactfully.
+
+HEURISTIC SCORES (0–100 each — reference them explicitly in your summary so the candidate sees what the numbers mean):
+- Overall shortlisting-style score: {payload.get('score')}
+- Keyword match vs target role title: {payload.get('keywords')}
+- Formatting / structure: {payload.get('formatting')}
+- Impact (metrics, action verbs): {payload.get('impact')}
+- Parseability / ATS-friendly text: {payload.get('ats')}
+
+{snapshot}
+
+RESUME TEXT:
+---
+{excerpt}
+---
+
+Return ONLY a JSON object with these keys (no markdown fences):
+{{
+  "summary": "4–6 sentences. MUST: (1) State the overall score and what it means for Naukri/LinkedIn visibility in plain language. (2) Mention keyword/formatting/impact briefly if useful. (3) One encouraging close.",
+  "strengths": ["3–6 bullets: what is ALREADY good for recruiter search and screening on Naukri/LinkedIn"],
+  "fixes": ["4–8 bullets: PRIORITIZED resume edits to improve shortlisting—most important first"],
+  "portal_tips": ["5–10 bullets: concrete Naukri-specific AND LinkedIn-specific actions (headline, key skills, About, job title, PDF upload, skill endorsements, consistency between resume and profile)."]
+}}
+
+Rules:
+- Ground every point in the resume text or the matched/missing keywords; use missing keywords in fixes/portal_tips where truthful.
+- strengths = what to keep or double down on; fixes = resume file improvements; portal_tips = what to do on Naukri.com and LinkedIn specifically.
+- Short bullet strings only; no nested objects.
+"""
+
+    async def _call() -> str:
+        client = AsyncOpenAI(api_key=settings.openai_api_key)
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=RESUME_LLM_MAX_TOKENS,
+            temperature=0.35,
+        )
+        return (response.choices[0].message.content or "").strip()
+
+    try:
+        raw = await asyncio.wait_for(_call(), timeout=timeout_sec)
+    except Exception as e:
+        logger.warning("Resume ATS LLM enrichment failed: %s", e)
+        return payload
+
+    parsed = _parse_llm_coaching_json(raw)
+    if not parsed:
+        logger.warning("Resume ATS LLM returned unparseable JSON")
+        return payload
+
+    coaching = _sanitize_coaching(parsed)
+    if not coaching:
+        return payload
+
+    merged = {**payload}
+    if "summary" in coaching:
+        merged["summary"] = coaching["summary"]
+    if "fixes" in coaching:
+        merged["fixes"] = coaching["fixes"]
+    if "strengths" in coaching:
+        merged["strengths"] = coaching["strengths"]
+    if "portal_tips" in coaching:
+        merged["portal_tips"] = coaching["portal_tips"]
+    return merged

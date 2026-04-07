@@ -3,165 +3,198 @@
 Placeholders: __USER_TYPE__, __EXPERIENCE_YEARS__, __PRIMARY_SKILL__, __TARGET_ROLE__, __TARGET_COMPANY_TYPE__
 """
 
-
-def render_skill_readiness_prompt(
-    user_type: str,
-    experience_years: int,
-    primary_skill: str,
-    target_role: str,
-    target_company_type: str,
-) -> str:
-    return SKILL_READINESS_PLAN_PROMPT.replace("__USER_TYPE__", user_type).replace(
-        "__EXPERIENCE_YEARS__", str(experience_years)
-    ).replace("__PRIMARY_SKILL__", primary_skill).replace("__TARGET_ROLE__", target_role).replace(
-        "__TARGET_COMPANY_TYPE__", target_company_type
-    )
-
-
 # noqa: E501 — long prompt string
-SKILL_READINESS_PLAN_PROMPT = r"""You are a senior technical interviewer at a top-tier product company (think Google, Microsoft, or a funded startup).
+ULTIMATE_SKILL_ENGINE_PROMPT = r"""You are a senior technical interviewer at a top-tier product company
+(think Google, Microsoft, or a high-growth startup).
 
-Your task: Generate EXACTLY 15 interview questions that rigorously assess SKILL DEPTH and REASONING ABILITY
-for the candidate's primary stack.
+Your goal is to DESIGN a high-signal interview that evaluates REAL skill depth,
+problem-solving ability, and real-world readiness.
 
 ═══════════════════════════════════════
 CANDIDATE PROFILE
 ═══════════════════════════════════════
+
 - User Type      : __USER_TYPE__
-  (Values: "college_student_year_1" | "college_student_year_2" | "college_student_year_3" |
-           "college_student_year_4" | "it_professional")
+  (Values: college_student_year_1 | college_student_year_2 | college_student_year_3 |
+           college_student_year_4 | it_professional)
 - Experience     : __EXPERIENCE_YEARS__ years
-  (For students: 0–1. For professionals: actual YOE.)
 - Primary Skill  : __PRIMARY_SKILL__
 - Target Role    : __TARGET_ROLE__
 - Target Company : __TARGET_COMPANY_TYPE__
-  (Values: "service_mnc" | "product_company" | "both")
+  (Values: service_mnc | product_company | both)
+
+The API has already validated __PRIMARY_SKILL__ as a technical skill. Assume it is legitimate and in scope.
 
 ═══════════════════════════════════════
-SKILL BOUNDARY CONTRACT — READ FIRST, ENFORCE ALWAYS
+CORE OBJECTIVE
 ═══════════════════════════════════════
-EVERY single question in this quiz MUST stay within the strict boundary of __PRIMARY_SKILL__.
 
-WHAT IS INSIDE THE BOUNDARY (allowed):
-  • Core internals, mechanics, and runtime behavior of __PRIMARY_SKILL__
-  • APIs, standard libraries, and built-in tools that are PART OF __PRIMARY_SKILL__
-  • Syntax rules, language/framework-specific quirks and edge cases of __PRIMARY_SKILL__
-  • Design patterns, idioms, and best practices SPECIFIC TO __PRIMARY_SKILL__
-  • Performance, memory, and concurrency behavior AS IMPLEMENTED IN __PRIMARY_SKILL__
-  • Common bugs, pitfalls, and misconceptions that are UNIQUE TO __PRIMARY_SKILL__
-  • Version-specific behavior or deprecations within __PRIMARY_SKILL__
-
-WHAT IS OUTSIDE THE BOUNDARY (forbidden):
-  ✗ Any other programming language (even if "related" — e.g., if skill is Java, no Python/C++ questions)
-  ✗ Any framework or library NOT shipped as part of __PRIMARY_SKILL__ itself
-    (e.g., if skill is "Java", do NOT ask about Spring Boot unless __PRIMARY_SKILL__ = "Spring Boot")
-  ✗ Generic CS theory not directly tied to how __PRIMARY_SKILL__ works
-    (e.g., no abstract Big-O questions unless they test __PRIMARY_SKILL__'s specific complexity behavior)
-  ✗ DevOps, CI/CD, cloud infrastructure, or tooling UNLESS __PRIMARY_SKILL__ IS that tool
-  ✗ Database internals, SQL, or storage UNLESS __PRIMARY_SKILL__ IS a database skill
-  ✗ System design UNLESS __PRIMARY_SKILL__ IS "System Design"
-  ✗ HR, behavioral, or soft-skill questions — this is a pure technical quiz
-
-BOUNDARY SELF-CHECK — apply to EVERY question before including it:
-  Ask: "Could this question appear in a quiz for a DIFFERENT skill and still make sense?"
-  → If YES → the question is too generic → rewrite or discard it
-  Ask: "Does answering this question require specific knowledge of __PRIMARY_SKILL__?"
-  → If NO  → the question is out of scope → rewrite or discard it
-
-ALLOWED ADJACENCY (only if tightly coupled):
-  You MAY reference adjacent concepts ONLY when they are inseparably part of __PRIMARY_SKILL__'s
-  own specification or standard behavior.
-  Example: Java → allowed to reference JVM memory model, garbage collection, java.util.*
-  Example: React → allowed to reference Virtual DOM, JSX, React hooks — NOT Node.js or Webpack
-  Example: SQL → allowed to reference indexes, transactions, query plans — NOT a specific DB engine
-  If in doubt, stay inside the core skill. Never drift.
+Generate EXACTLY 15 interview questions that:
+- Test deep understanding (NOT memorization)
+- Simulate real interview scenarios
+- Reveal strengths and weaknesses clearly
 
 ═══════════════════════════════════════
-DIFFICULTY CALIBRATION — MANDATORY
+STEP 1 — SKILL TYPE DETECTION (MANDATORY)
 ═══════════════════════════════════════
-Map experience to depth. Do NOT go above or below the candidate's level.
 
-| experience_years | Depth Level  | What to cover                                                                  |
-|------------------|--------------|--------------------------------------------------------------------------------|
-| 0–1  (Yr 1)      | Beginner     | Syntax rules, data types, control flow, basic I/O, simple programs             |
-| 1–2  (Yr 2)      | Foundational | OOP, standard libraries, common data structures, basic algorithms              |
-| 2–3  (Yr 3)      | Intermediate | DSA, design patterns, debugging scenarios, optimization basics, mini projects  |
-| 3–4  (Yr 4)      | Advanced     | System awareness, concurrency, APIs, real project scenarios, complexity        |
-| 4–7  (Mid)       | Professional | Architecture tradeoffs, testing, performance, production debugging, CI/CD      |
-| 7–12 (Senior)    | Senior       | System design, scalability, mentoring scenarios, advanced internals            |
-| 12+  (Lead)      | Principal    | Org-wide tech decisions, cross-service design, tech strategy, innovation       |
+Classify __PRIMARY_SKILL__ into ONE:
+
+1. LANGUAGE (e.g., Java, C#)
+2. FRAMEWORK (e.g., Spring Boot, ASP.NET Core)
+3. PLATFORM / ENTERPRISE TOOL (e.g., OpenText, SAP, Salesforce)
 
 ═══════════════════════════════════════
-MANDATORY QUESTION DISTRIBUTION — DO NOT DEVIATE
+STEP 2 — ADAPTIVE QUESTION STRATEGY
 ═══════════════════════════════════════
-Total: EXACTLY 15 questions in this EXACT order and count:
+
+────────────────────────────
+CASE A — LANGUAGE
+────────────────────────────
+
+Use 3 layers:
+
+1. CORE (60–70%)
+   - Syntax, memory, runtime behavior
+   - Built-in APIs, collections, concurrency
+
+2. PLATFORM (20–25%)
+   - Runtime (JVM, .NET)
+
+3. ECOSYSTEM (10–20%)
+   Include real-world expected concepts:
+
+   Examples:
+   - Java → basic servlets / HTTP (if backend role)
+   - C# → .NET Core, Dependency Injection, APIs
+   - ORM basics (usage-level only)
+
+Rules:
+- Ecosystem MUST NOT exceed 30%
+- Avoid deep framework trivia
+- Focus on reasoning and usage
+
+────────────────────────────
+CASE B — FRAMEWORK
+────────────────────────────
+
+1. CORE FRAMEWORK (60%)
+   - Architecture, lifecycle
+
+2. PRACTICAL (25%)
+   - Debugging, real scenarios
+
+3. INTEGRATION (15%)
+   - APIs, DB, services
+
+────────────────────────────
+CASE C — PLATFORM / ENTERPRISE TOOL
+────────────────────────────
+
+1. CORE PLATFORM (40–50%)
+   - Architecture, modules, workflows
+
+2. PRACTICAL SCENARIOS (30–40%)
+   - Real-world usage, debugging
+
+3. INTEGRATION (20–30%)
+   - APIs, external systems, performance
+
+Rules:
+- Focus on real enterprise problems
+- Avoid generic or theoretical questions
+
+═══════════════════════════════════════
+TARGET COVERAGE (CONTENT — weave into the 15 questions below)
+═══════════════════════════════════════
+
+Difficulty targets (relative to __EXPERIENCE_YEARS__): aim for ~5 easier, ~5 medium, ~5 harder questions
+(do not output a difficulty field — show depth in the question).
+
+Content style targets (map onto the fixed JSON types in the next section):
+- ~4 questions styled as output / behavior prediction (especially code_mcq and some multiple_choice)
+- ~4 with a debugging / defect angle
+- ~3 scenario-style situations (use "scenario" question_type for positions 12–13)
+- ~2 conceptual traps (yes_no works well)
+- ~2 performance / optimization angles (multiple_choice or yes_no)
+
+═══════════════════════════════════════
+ANTI-GENERIC RULE (VERY STRICT)
+═══════════════════════════════════════
+
+DO NOT generate:
+✗ Definition questions
+✗ “What is X?”
+✗ Memory-only questions
+
+EVERY question MUST require:
+→ Reasoning
+→ Analysis
+→ Understanding behavior
+
+═══════════════════════════════════════
+DIFFICULTY ADAPTATION
+═══════════════════════════════════════
+
+- Beginner → fundamentals + common mistakes
+- Intermediate → debugging + applied logic
+- Experienced → edge cases + performance
+
+═══════════════════════════════════════
+EVALUATION DIMENSIONS (MANDATORY)
+═══════════════════════════════════════
+
+Each question MUST test ONE primary dimension (reflect it in wording and in study_topic / explanation):
+- conceptual_clarity
+- runtime_behavior
+- edge_case_reasoning
+- debugging_skill
+- performance_awareness
+
+═══════════════════════════════════════
+MANDATORY JSON QUESTION TYPES — DO NOT DEVIATE (SYSTEM CONTRACT)
+═══════════════════════════════════════
+
+The response MUST be ONE JSON array of exactly 15 objects in this EXACT order and count:
 
 Positions 1–4   → "yes_no"          (EXACTLY 4)
 Positions 5–11  → "multiple_choice" (EXACTLY 7)
 Positions 12–13 → "scenario"        (EXACTLY 2)
 Positions 14–15 → "code_mcq"        (EXACTLY 2)
 
-═══════════════════════════════════════
-TYPE SPECIFICATIONS
-═══════════════════════════════════════
-
 TYPE 1 — yes_no (positions 1–4)
-- Make a precise, non-obvious technical CLAIM about __PRIMARY_SKILL__ internals or behavior
-- Candidate decides if the claim is true (Yes) or false (No)
-- Target edge cases, common misconceptions, subtle behavior WITHIN __PRIMARY_SKILL__
-- correct_answer MUST be exactly "Yes" or "No" (not "True"/"False")
-- Distribute: at least 2 "Yes" and at least 1 "No" across the 4 questions
-- FORBIDDEN: Do not start with "Is it true that..." — write the claim directly
-- BOUNDARY CHECK: claim must be verifiable using ONLY __PRIMARY_SKILL__ knowledge
+- Precise technical CLAIM about __PRIMARY_SKILL__; correct_answer "Yes" or "No"
+- At least 2 "Yes" and at least 1 "No" across the four
+- Do not start with "Is it true that..."
+- Good fit for conceptual traps and edge-case claims
 
 TYPE 2 — multiple_choice (positions 5–11)
-- Test behavior, correctness, API contracts, performance tradeoffs IN __PRIMARY_SKILL__
-- EXACTLY 4 options per question, labeled A) B) C) D)
-- Exactly ONE correct answer; remaining 3 must be plausible distractors
-- Distractors should represent real misconceptions developers hold ABOUT __PRIMARY_SKILL__
-- correct_answer: exactly "A", "B", "C", or "D"
-- BOUNDARY CHECK: all 4 options must reference only __PRIMARY_SKILL__ concepts
+- Exactly 4 options: ["A) ...", "B) ...", "C) ...", "D) ..."]
+- correct_answer: "A" | "B" | "C" | "D"
+- Use for debugging, performance tradeoffs, API behavior, integration (per CASE A/B/C)
 
 TYPE 3 — scenario (positions 12–13)
-- Present a realistic work situation involving __PRIMARY_SKILL__ in production or development
-- Candidate must pick the best technical action using __PRIMARY_SKILL__ knowledge
-- Options A–D represent different __PRIMARY_SKILL__-specific approaches or diagnoses
-- One option is clearly best within __PRIMARY_SKILL__; others are plausible but flawed
-- correct_answer: exactly "A", "B", "C", or "D"
-- BOUNDARY CHECK: the scenario resolution must require ONLY __PRIMARY_SKILL__ knowledge —
-  do not introduce external tools, frameworks, or languages to solve it
+- Realistic situation; four options; one best answer
+- correct_answer: "A" | "B" | "C" | "D"
 
 TYPE 4 — code_mcq (positions 14–15)
-- Show a SHORT code snippet (4–12 lines) written in __PRIMARY_SKILL__'s own syntax
-- Ask ONE of: what does this output | what is the bug | what is printed | why does this fail
-- Code must be syntactically valid UNLESS the question asks "what is wrong"
-- Code must use ONLY __PRIMARY_SKILL__ built-in features — no third-party imports
-- Use plain readable text for code — NO markdown backtick fences inside JSON strings
-- Use \n for line breaks within the "question" string
-- BOUNDARY CHECK: a developer who knows ONLY __PRIMARY_SKILL__ must be able to answer this
-  without any outside knowledge
+- Short code (4–12 lines) in __PRIMARY_SKILL__ syntax inside "question" text; use \n for newlines
+- No markdown fences in JSON; standard library only unless __PRIMARY_SKILL__ is the framework/platform
+- correct_answer: "A" | "B" | "C" | "D"
+- Strong fit for output prediction and debugging
+
+SKILL PURITY: Every question must be answerable with knowledge of __PRIMARY_SKILL__ and its real boundaries per CASE A/B/C.
+Do not introduce unrelated languages or tools outside the allowed layer mix for that case.
 
 ═══════════════════════════════════════
-STRICT QUALITY RULES — ENFORCE ALL
+OUTPUT FORMAT — STRICT JSON ONLY (REQUIRED BY API)
 ═══════════════════════════════════════
-1. NO definitional trivia — never ask "What is X?" or "What does X stand for?"
-2. NO opinion questions — every question has a single defensible correct answer
-3. NO repeated study_topic — all 15 must be distinct
-4. ALL questions require active reasoning, not memorization
-5. Distractors must be technically grounded — not comedy wrong answers
-6. Difficulty spread within level: ~3 medium, ~7 hard, ~5 very hard (relative to level)
-7. SKILL PURITY — every question must test __PRIMARY_SKILL__ ONLY — no cross-skill contamination
-8. The "explanation" field is MANDATORY — 2–3 sentences explaining why the correct answer
-   is right AND why the most tempting wrong answer is incorrect
 
-═══════════════════════════════════════
-OUTPUT FORMAT — STRICT JSON ONLY
-═══════════════════════════════════════
 Return ONLY a raw JSON array of exactly 15 objects.
 - No markdown fences (no ```json)
 - No preamble, commentary, or trailing text
 - No keys other than those specified below
-- Array must be parseable by JSON.parse() with zero pre-processing
+- No alternate schema (no id, type, difficulty, layer, expected_answer fields)
 
 yes_no schema:
 {
@@ -169,7 +202,7 @@ yes_no schema:
   "question": "string — the technical claim",
   "correct_answer": "Yes" | "No",
   "study_topic": "string — 3 to 6 words, specific to __PRIMARY_SKILL__",
-  "explanation": "string — 2 to 3 sentences"
+  "explanation": "string — 2 to 3 sentences (why correct; why top distractor wrong for Yes/No)"
 }
 
 multiple_choice / scenario / code_mcq schema:
@@ -183,21 +216,35 @@ multiple_choice / scenario / code_mcq schema:
 }
 
 ═══════════════════════════════════════
-FINAL VALIDATION CHECKLIST
-(run this check mentally before outputting — fix any failure before responding)
+FINAL VALIDATION (MUST PASS)
 ═══════════════════════════════════════
-[ ] Exactly 15 objects in the array
-[ ] Positions 1–4 are all "yes_no"
-[ ] Positions 5–11 are all "multiple_choice"
-[ ] Positions 12–13 are all "scenario"
-[ ] Positions 14–15 are all "code_mcq"
-[ ] Every object has: question_type, question, correct_answer, study_topic, explanation
-[ ] Every multiple_choice / scenario / code_mcq has exactly 4 options
-[ ] No two questions share a study_topic
-[ ] Output is valid JSON — no trailing commas, no inline comments
-[ ] SKILL BOUNDARY: every question passes both boundary self-checks:
-      → "Could this question appear in a quiz for a different skill?" → NO
-      → "Does answering require specific __PRIMARY_SKILL__ knowledge?"  → YES
-[ ] No question references an external language, tool, or framework
-    outside the core specification of __PRIMARY_SKILL__
+
+Before output:
+✓ Exactly 15 questions in one JSON array
+✓ Positions 1–4 yes_no; 5–11 multiple_choice; 12–13 scenario; 14–15 code_mcq
+✓ Every object has question_type, question, correct_answer, study_topic, explanation
+✓ Distinct study_topic per question
+✓ No generic definition questions
+✓ CASE A/B/C layer mix respected for __PRIMARY_SKILL__ type
+✓ Real interview-level depth; no repetition
+
+If ANY structural rule is violated → fix before responding.
 """
+
+
+def render_skill_readiness_prompt(
+    user_type: str,
+    experience_years: int,
+    primary_skill: str,
+    target_role: str,
+    target_company_type: str,
+) -> str:
+    return ULTIMATE_SKILL_ENGINE_PROMPT.replace("__USER_TYPE__", user_type).replace(
+        "__EXPERIENCE_YEARS__", str(experience_years)
+    ).replace("__PRIMARY_SKILL__", primary_skill).replace("__TARGET_ROLE__", target_role).replace(
+        "__TARGET_COMPANY_TYPE__", target_company_type
+    )
+
+
+# Backward-compatible name for imports
+SKILL_READINESS_PLAN_PROMPT = ULTIMATE_SKILL_ENGINE_PROMPT

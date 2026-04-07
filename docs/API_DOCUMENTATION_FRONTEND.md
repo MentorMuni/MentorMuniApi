@@ -265,6 +265,26 @@ if (!res.ok) {
 
 ---
 
+## Resume ATS (`POST /api/resume/ats`)
+
+**Request:** `multipart/form-data` — field `file` (PDF / DOC / DOCX), field `target_role` (string).
+
+**Response (JSON):** Numeric scores are **heuristic** (not from a real employer ATS). When `RESUME_ATS_USE_LLM` is enabled (default), **summary**, **strengths**, **fixes**, and **portal_tips** are enriched for **Naukri + LinkedIn** shortlisting.
+
+| Field | Meaning |
+|-------|---------|
+| `score` | Overall 0–100 (blend of sub-scores) |
+| `keywords`, `formatting`, `impact`, `ats` | Sub-scores 0–100 |
+| `matched_keywords` / `missing_keywords` | Tokens from `target_role` found or not in resume text |
+| `summary` | Narrative; should reference scores and portal context when LLM runs |
+| `strengths` | What already helps recruiter search / screening |
+| `fixes` | Prioritized resume edits |
+| `portal_tips` | **Naukri + LinkedIn** actions (headline, key skills, About, consistency, upload format) |
+
+Show **strengths**, **fixes**, and **portal_tips** as separate lists in the UI.
+
+---
+
 ## Summary
 
 | Page / Action | API to call |
@@ -273,5 +293,6 @@ if (!res.ok) {
 | Interview Readiness (holistic) | `POST /interview-ready/interview-readiness/plan` |
 | Interview Ready: user submits answers | `POST /interview-ready/evaluate` |
 | Waitlist or contact form | `POST /api/inquiries` |
+| Resume upload / ATS-style feedback | `POST /api/resume/ats` |
 
 **Tip:** Replace `https://your-api.railway.app` with your real API URL.

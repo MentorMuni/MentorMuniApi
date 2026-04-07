@@ -261,117 +261,15 @@ No extra text.
             "explanation": "Placeholder — model output was not valid JSON; retry the request.",
         }]
 
-    @staticmethod
-    def _prompt_user_category_for_interview_prompt(r: InterviewReadinessPlanRequest) -> str:
-        """Maps canonical user_type to prompt vocabulary (college_year_1 … working_professional)."""
-        m = {
-            "college_student_year_1": "college_year_1",
-            "college_student_year_2": "college_year_2",
-            "college_student_year_3": "college_year_3",
-            "college_student_year_4": "college_year_4",
-            "recent_graduate": "recent_graduate",
-            "it_professional": "working_professional",
-        }
-        return m.get(r.user_type, "college_year_4")
-
-    @staticmethod
-    def _target_company_for_interview_prompt(r: InterviewReadinessPlanRequest) -> str:
-        sm, pc = r.targets_service_mnc, r.targets_product_company
-        if sm is True and pc is True:
-            return "both"
-        if sm is True and pc is not True:
-            return "service_mnc"
-        if pc is True and sm is not True:
-            return "product_company"
-        return "both"
-
-    def _format_interview_readiness_profile(self, r: InterviewReadinessPlanRequest) -> str:
-        """Structured profile_block for interview_readiness_prompt (MODE A / MODE B)."""
-        uc = self._prompt_user_category_for_interview_prompt(r)
-        exp = r.experience_years if r.experience_years is not None else 0
-        tr = (r.target_role or "").strip() or f"{r.primary_skill} Developer"
-        lines: List[str] = [
-            f"- user_category: {uc}",
-            f"- experience_years: {exp}",
-            f"- primary_skill: {r.primary_skill}",
-            f"- target_role: {tr}",
-            f"- target_company: {self._target_company_for_interview_prompt(r)}",
-            "",
-            "ADDITIONAL CONTEXT (optional; use for tone and scenarios only — do not invent facts not listed):",
-        ]
-        extra: List[str] = []
-        if r.college_name:
-            extra.append(f"- college_name: {r.college_name}")
-        if r.assessment_focus:
-            extra.append(f"- assessment_focus: {r.assessment_focus}")
-        if r.current_organization:
-            extra.append(f"- current_organization: {r.current_organization}")
-        if r.user_category == "3rd_year":
-            extra.append(
-                "- placement_bucket_note: 1st–3rd year (fundamentals-heavy; no placement-company detail expected)"
-            )
-
-        if r.user_category in ("4th_year", "recent_graduate"):
-            extra.append("placement_context:")
-            if r.campus_or_off_campus:
-                extra.append(f"  - campus_or_off_campus: {r.campus_or_off_campus}")
-            if r.targets_service_mnc is not None:
-                extra.append(f"  - targets_service_mnc: {r.targets_service_mnc}")
-            if r.targets_product_company is not None:
-                extra.append(f"  - targets_product_company: {r.targets_product_company}")
-            if r.target_companies_notes:
-                extra.append(f"  - target_companies_notes: {r.target_companies_notes}")
-            if r.specific_role_requested is not None:
-                extra.append(f"  - specific_role_requested: {r.specific_role_requested}")
-            if r.specific_role:
-                extra.append(f"  - specific_role: {r.specific_role}")
-            if not any(
-                [
-                    r.campus_or_off_campus,
-                    r.targets_service_mnc is not None,
-                    r.targets_product_company is not None,
-                    r.target_companies_notes,
-                    r.specific_role_requested is not None,
-                    r.specific_role,
-                ]
-            ):
-                extra.append(
-                    "  - (no step-13 placement extras — assume generic campus + off-campus mix)"
-                )
-
-        if r.user_category == "working_professional" or r.user_type == "it_professional":
-            extra.append("professional_context:")
-            if r.core_skill:
-                extra.append(f"  - core_skill: {r.core_skill}")
-            if r.jd_provided is not None:
-                extra.append(f"  - jd_provided: {r.jd_provided}")
-            if r.job_description:
-                jd = r.job_description[:4000]
-                if len(r.job_description) > 4000:
-                    jd += " …[truncated]"
-                extra.append(f"  - job_description_excerpt: {jd}")
-            if r.target_company_name:
-                extra.append(f"  - target_company_name: {r.target_company_name}")
-            if not any([r.core_skill, r.jd_provided, r.job_description, r.target_company_name]):
-                extra.append(
-                    "  - (no JD/pro extras — use experience_years and primary_skill only)"
-                )
-
-        if not extra:
-            lines.append("- (none)")
-        else:
-            lines.extend(extra)
-
-        return "\n".join(lines)
-
     async def generate_interview_readiness_plan(self, request: InterviewReadinessPlanRequest) -> list[dict]:
-        """Holistic interview readiness: full simulation prompt; yes_no + MC + scenario + code_mcq + explanations."""
-        profile_block = self._format_interview_readiness_profile(request)
-        tr = (request.target_role or "").strip() or f"{request.primary_skill} Developer"
+        """Holistic interview readiness: REAL_INTERVIEW_GENERATOR prompt + full request JSON; same JSON output contract."""
+        full_user_json = json.dumps(
+            request.model_dump(mode="json"),
+            ensure_ascii=False,
+            indent=2,
+        )
         prompt = render_interview_readiness_prompt(
-            profile_block=profile_block,
-            primary_skill=request.primary_skill,
-            target_role=tr,
+            full_user_json=full_user_json,
             plan_question_count=PLAN_QUESTION_COUNT,
         )
 

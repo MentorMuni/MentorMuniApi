@@ -197,6 +197,7 @@ async def resume_ats(
     """
     Upload a resume (PDF, DOC, or DOCX) and receive ATS-style scores and keyword feedback.
     Multipart form fields: `file`, `target_role`.
+    Scores and keyword lists are heuristic; summary/fixes/strengths are enriched via OpenAI when enabled.
     """
     tr = (target_role or "").strip()
     if not tr:
@@ -213,6 +214,7 @@ async def resume_ats(
     try:
         text = resume_ats_service.extract_text(name, raw)
         payload = resume_ats_service.analyze_resume(text, tr)
+        payload = await resume_ats_service.enrich_analysis_with_llm(payload, text, tr)
         return ResumeAtsResponse(**payload)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e

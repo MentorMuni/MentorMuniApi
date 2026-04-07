@@ -13,5 +13,15 @@ class ResumeAtsResponse(BaseModel):
     summary: str
     matched_keywords: List[str] = Field(default_factory=list)
     missing_keywords: List[str] = Field(default_factory=list)
-    fixes: List[str] = Field(default_factory=list)
-    strengths: List[str] = Field(default_factory=list)
+    fixes: List[str] = Field(
+        default_factory=list,
+        description="Prioritized changes to improve shortlisting (resume content)",
+    )
+    strengths: List[str] = Field(
+        default_factory=list,
+        description="What already helps recruiter search and screening",
+    )
+    portal_tips: List[str] = Field(
+        default_factory=list,
+        description="Naukri + LinkedIn specific visibility and profile tips",
+    )
