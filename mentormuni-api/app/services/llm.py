@@ -16,10 +16,13 @@ logger = logging.getLogger("llm_service")
 
 MAX_TOKENS_LEGACY_PLAN = 1500
 MAX_TOKENS_MIXED_PLAN = 3200
-MAX_TOKENS_INTERVIEW_READINESS_PLAN = 14_000
-MAX_TOKENS_SKILL_READINESS_PLAN = 8000
+MAX_TOKENS_INTERVIEW_READINESS_PLAN = 3600
+MAX_TOKENS_SKILL_READINESS_PLAN = 3000
 MAX_TOKENS_VALIDATE = 20
 PLAN_QUESTION_COUNT = 15
+APTITUDE_SECTION_ORDER: list[str] = (
+    ["quantitative"] * 5 + ["logical"] * 5 + ["verbal"] * 5
+)
 
 
 class LLMService:
@@ -183,6 +186,7 @@ No extra text.
                 model="gpt-4o-mini",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=MAX_TOKENS_SKILL_READINESS_PLAN,
+                temperature=0.3,
             )
             content = response.choices[0].message.content or ""
             usage = getattr(response, "usage", None)
@@ -288,6 +292,7 @@ No extra text.
                 model="gpt-4o-mini",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=MAX_TOKENS_INTERVIEW_READINESS_PLAN,
+                temperature=0.3,
             )
             content = response.choices[0].message.content or ""
             usage = getattr(response, "usage", None)
@@ -301,7 +306,7 @@ No extra text.
         )
 
     async def generate_aptitude_readiness_plan(self, request) -> list[dict]:
-        """Aptitude readiness: placement-oriented quant/logical/verbal medium-level quiz."""
+        """Aptitude readiness: placement-oriented quant/logical/verbal medium-level MCQ quiz."""
         prompt = render_aptitude_readiness_prompt(
             user_type=request.user_type,
             experience_years=request.experience_years,
@@ -315,17 +320,81 @@ No extra text.
                 model="gpt-4o-mini",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=MAX_TOKENS_SKILL_READINESS_PLAN,
+                temperature=0.3,
             )
             content = response.choices[0].message.content or ""
             usage = getattr(response, "usage", None)
             if usage:
                 tokens = getattr(usage, "total_tokens", 0) or 0
                 logger.info("LLM tokens used: %d (aptitude readiness plan)", tokens)
-            return self._parse_skill_readiness_plan(content)
+            return self._parse_aptitude_readiness_plan(content)
 
         return await self.guard_layer.run_with_timeout(
             self.guard_layer.retry_with_fallback(call_openai)
         )
+
+    def _parse_aptitude_readiness_plan(self, content: str) -> list[dict]:
+        """Parse aptitude plan JSON into 15 multiple_choice questions with strict 5/5/5 sections."""
+        content = content.strip()
+        json_match = re.search(r"\[[\s\S]*\]", content)
+        if json_match:
+            try:
+                items = json.loads(json_match.group())
+                if not isinstance(items, list):
+                    raise ValueError("not a list")
+                out: List[dict] = []
+                for x in items:
+                    if len(out) >= PLAN_QUESTION_COUNT:
+                        break
+                    if not isinstance(x, dict) or "question" not in x:
+                        continue
+                    q = str(x["question"]).strip()
+                    if not q:
+                        continue
+                    opts = self._normalize_mc_options(x.get("options"))
+                    if opts is None:
+                        continue
+                    letter = self._normalize_mc_letter(x.get("correct_answer"), opts)
+                    if letter is None:
+                        continue
+                    topic = str(x.get("study_topic", "")).strip()
+                    if not topic:
+                        topic = q[:60] + ("..." if len(q) > 60 else "")
+                    expl = self._explanation_or_default(x.get("explanation"))
+                    section = APTITUDE_SECTION_ORDER[len(out)]
+                    out.append({
+                        "question_type": "multiple_choice",
+                        "section": section,
+                        "question": q,
+                        "options": opts,
+                        "correct_answer": letter,
+                        "study_topic": topic,
+                        "explanation": expl,
+                    })
+                if len(out) < PLAN_QUESTION_COUNT:
+                    logger.warning(
+                        "Parsed only %d/%d aptitude questions (dropped invalid rows or truncated JSON).",
+                        len(out),
+                        PLAN_QUESTION_COUNT,
+                    )
+                if len(out) == PLAN_QUESTION_COUNT:
+                    return out
+            except (json.JSONDecodeError, ValueError):
+                pass
+        return [{
+            "question_type": "multiple_choice",
+            "section": "quantitative",
+            "question": "Aptitude fundamentals",
+            "options": [
+                "A) Placeholder option A",
+                "B) Placeholder option B",
+                "C) Placeholder option C",
+                "D) Placeholder option D",
+            ],
+            "correct_answer": "A",
+            "study_topic": "Aptitude fundamentals",
+            "explanation": "Placeholder — model output was not valid JSON; retry the request.",
+        }]
 
     def _parse_yes_no_answer(self, raw) -> str | None:
         s = str(raw).strip().lower()

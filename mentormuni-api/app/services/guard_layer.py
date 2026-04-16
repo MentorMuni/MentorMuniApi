@@ -7,7 +7,7 @@ T = TypeVar("T")
 
 
 class GuardLayer:
-    def __init__(self, timeout: int = 30, max_retries: int = 3):
+    def __init__(self, timeout: int = 30, max_retries: int = 2):
         self.timeout = timeout
         self.max_retries = max_retries
 
@@ -20,7 +20,7 @@ class GuardLayer:
             raise TimeoutError("Request timed out. Please try again later.") from None
 
     async def retry_with_fallback(self, coro_func, *args, **kwargs):
-        """Retry an async call with exponential backoff."""
+        """Retry an async call with short exponential backoff."""
         last_error = None
         for attempt in range(self.max_retries):
             try:
@@ -30,6 +30,7 @@ class GuardLayer:
                 last_error = e
                 logger.warning("Attempt %d failed: %s", attempt + 1, e)
                 if attempt < self.max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)
+                    # Keep retries fast; large sleeps make users wait too long.
+                    await asyncio.sleep(0.5 * (2 ** attempt))
         logger.error("All retry attempts failed.")
         raise RuntimeError("Service unavailable. Please try again later.") from last_error

@@ -78,7 +78,7 @@ async function getQuestions(profile) {
 
 **Legacy plan only** (`POST /interview-ready/plan`): every row is Yes/No. There is no `question_type` on items — only `question`, `correct_answer`, `study_topic`.
 
-**Skill readiness** (`/interview-ready/skill-readiness/plan`), **Interview readiness** (`/interview-ready/interview-readiness/plan`), and **Aptitude readiness** (`/interview-ready/aptitude-readiness/plan`): each item has `question_type`:
+**Skill readiness** (`/interview-ready/skill-readiness/plan`) and **Interview readiness** (`/interview-ready/interview-readiness/plan`): each item has `question_type`:
 
 | `question_type` | UI | Store one value per question |
 |-----------------|-----|------------------------------|
@@ -178,8 +178,9 @@ Show the percentage, label, strengths list, gaps list, and recommendations on yo
 - `primary_skill` defaults to: `Quantitative, Logical and Verbal Reasoning`.
 - `target_role` defaults to: `Software Engineer`.
 - `target_company_type` defaults to: `both` (`service_mnc` | `product_company` | `both`).
-- Response shape is the same mixed-question contract: exactly 15 items in fixed order — 4× `yes_no`, 7× `multiple_choice`, 2× `scenario`, 2× `code_mcq`, each with `explanation`.
-- Prompt is tuned for medium-level placement aptitude style (TCS/Infosys-like patterns) with Quantitative, Logical, and Verbal coverage.
+- Response shape for this API is **15× `multiple_choice`** questions only (all with `section`, `options`, `correct_answer` as `A`-`D`, `study_topic`, `explanation`).
+- Section split is server-enforced: **exactly 5 Quantitative, 5 Logical, 5 Verbal** (`section` values: `quantitative`, `logical`, `verbal`).
+- Prompt is tuned for medium-level IT-company placement aptitude style (TCS/Infosys/Wipro/Cognizant/Capgemini/Accenture-like patterns).
 
 ---
 

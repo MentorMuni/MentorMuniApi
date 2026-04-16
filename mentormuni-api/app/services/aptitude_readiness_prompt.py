@@ -38,39 +38,29 @@ Distribution target:
 - 5 questions: Logical Reasoning
 - 5 questions: Verbal Reasoning
 
-Question style must resemble real placement aptitude tests used by service MNCs and similar companies.
+Question style must resemble real IT-company placement aptitude tests used by TCS, Infosys, Wipro, Cognizant, Capgemini, Accenture and similar service MNCs.
+
+Use common placement patterns:
+- percentages, ratio-proportion, averages, profit-loss, time-work, time-speed-distance
+- number/alphabet series, coding-decoding, blood relations, directions, syllogism
+- reading comprehension, para-jumbles, sentence correction, vocabulary-in-context
 
 ═══════════════════════════════════════
-MANDATORY JSON QUESTION TYPES — DO NOT DEVIATE
+MANDATORY JSON QUESTION TYPE — DO NOT DEVIATE
 ═══════════════════════════════════════
 
-The response MUST be ONE JSON array of exactly 15 objects in this EXACT order:
+The response MUST be ONE JSON array of exactly 15 objects.
 
-Positions 1–4   → "yes_no"          (EXACTLY 4)
-Positions 5–11  → "multiple_choice" (EXACTLY 7)
-Positions 12–13 → "scenario"        (EXACTLY 2)
-Positions 14–15 → "code_mcq"        (EXACTLY 2)
-
-TYPE 1 — yes_no (positions 1–4)
-- A precise claim related to aptitude logic/math/verbal correctness.
-- correct_answer: exactly "Yes" or "No"
-- At least 2 "Yes" and at least 1 "No"
-
-TYPE 2 — multiple_choice (positions 5–11)
+All 15 questions MUST be "multiple_choice" and follow this:
 - Exactly 4 options labeled A) B) C) D)
 - Exactly one correct option
 - correct_answer: exactly "A", "B", "C", or "D"
-- Use for arithmetic, percentages, ratios, time-work, syllogisms, sequences, grammar, vocabulary, sentence correction.
-
-TYPE 3 — scenario (positions 12–13)
-- Real placement-test style mini situation with four options and one best answer
-- correct_answer: exactly "A", "B", "C", or "D"
-
-TYPE 4 — code_mcq (positions 14–15)
-- Use pseudo-logic snippets / pattern-based reasoning snippets in plain text with \n (NOT programming-framework trivia)
-- Keep snippet 4–10 lines
-- Ask output/logic correctness-style question
-- correct_answer: exactly "A", "B", "C", or "D"
+- No yes_no, no scenario, no code_mcq types for aptitude-readiness.
+- Keep stems concise and exam-like; avoid verbose interview framing.
+- Use strict section order:
+  - Questions 1-5: section = "quantitative"
+  - Questions 6-10: section = "logical"
+  - Questions 11-15: section = "verbal"
 
 ═══════════════════════════════════════
 STRICT QUALITY RULES
@@ -81,8 +71,10 @@ STRICT QUALITY RULES
 3. Keep language clear and concise.
 4. All distractors must be plausible.
 5. Each question must have a short and specific study_topic.
-6. explanation is mandatory and must be 2-3 sentences.
+6. explanation is mandatory and must be 1-2 short sentences.
 7. Ensure topics are varied and not repeated.
+8. Keep calculations moderate; no very long or tricky arithmetic.
+9. Avoid software coding questions; this is aptitude-only.
 
 ═══════════════════════════════════════
 OUTPUT FORMAT — STRICT JSON ONLY
@@ -93,18 +85,10 @@ Return ONLY a raw JSON array of exactly 15 objects.
 - No preamble or trailing text
 - No extra keys
 
-yes_no schema:
+multiple_choice schema (for all 15 items):
 {
-  "question_type": "yes_no",
-  "question": "string",
-  "correct_answer": "Yes" | "No",
-  "study_topic": "string",
-  "explanation": "string"
-}
-
-multiple_choice / scenario / code_mcq schema:
-{
-  "question_type": "multiple_choice" | "scenario" | "code_mcq",
+  "question_type": "multiple_choice",
+  "section": "quantitative" | "logical" | "verbal",
   "question": "string",
   "options": ["A) ...", "B) ...", "C) ...", "D) ..."],
   "correct_answer": "A" | "B" | "C" | "D",

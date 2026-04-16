@@ -471,6 +471,11 @@ class SkillReadinessCodeMcqItem(SkillReadinessMcBase):
     question_type: Literal["code_mcq"] = "code_mcq"
 
 
+class AptitudeReadinessMultipleChoiceItem(SkillReadinessMcBase):
+    question_type: Literal["multiple_choice"] = "multiple_choice"
+    section: Literal["quantitative", "logical", "verbal"]
+
+
 SkillReadinessQuestionItem = Annotated[
     Union[
         SkillReadinessYesNoItem,
@@ -501,9 +506,9 @@ class InterviewReadinessPlanResponse(BaseModel):
 
 
 class AptitudeReadinessPlanResponse(BaseModel):
-    """Aptitude readiness: yes_no, multiple_choice, scenario, code_mcq with explanations."""
+    """Aptitude readiness: 15 placement-style MCQs with strict section distribution."""
 
-    evaluation_plan: List[SkillReadinessQuestionItem]
+    evaluation_plan: List[AptitudeReadinessMultipleChoiceItem]
 
 
 class EvaluateRequest(BaseModel):
