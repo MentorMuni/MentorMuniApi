@@ -9,13 +9,14 @@ from app.core.config import settings as app_settings
 from app.services.guard_layer import GuardLayer
 from app.services.skill_readiness_prompt import render_skill_readiness_prompt
 from app.services.interview_readiness_prompt import render_interview_readiness_prompt
+from app.services.aptitude_readiness_prompt import render_aptitude_readiness_prompt
 from app.schemas.ai import InterviewReadinessPlanRequest
 
 logger = logging.getLogger("llm_service")
 
 MAX_TOKENS_LEGACY_PLAN = 1500
 MAX_TOKENS_MIXED_PLAN = 3200
-MAX_TOKENS_INTERVIEW_READINESS_PLAN = 10000
+MAX_TOKENS_INTERVIEW_READINESS_PLAN = 14_000
 MAX_TOKENS_SKILL_READINESS_PLAN = 8000
 MAX_TOKENS_VALIDATE = 20
 PLAN_QUESTION_COUNT = 15
@@ -211,7 +212,10 @@ No extra text.
                 if not isinstance(items, list):
                     raise ValueError("not a list")
                 out: List[dict] = []
-                for x in items[:PLAN_QUESTION_COUNT]:
+                # Consume all array items until we have 15 valid (model may send extras if some rows are bad).
+                for x in items:
+                    if len(out) >= PLAN_QUESTION_COUNT:
+                        break
                     if not isinstance(x, dict) or "question" not in x:
                         continue
                     q = str(x["question"]).strip()
@@ -249,6 +253,12 @@ No extra text.
                             "study_topic": topic,
                             "explanation": expl,
                         })
+                if len(out) < PLAN_QUESTION_COUNT:
+                    logger.warning(
+                        "Parsed only %d/%d plan questions (dropped invalid rows or truncated JSON).",
+                        len(out),
+                        PLAN_QUESTION_COUNT,
+                    )
                 if out:
                     return out
             except (json.JSONDecodeError, ValueError):
@@ -290,6 +300,33 @@ No extra text.
             self.guard_layer.retry_with_fallback(call_openai)
         )
 
+    async def generate_aptitude_readiness_plan(self, request) -> list[dict]:
+        """Aptitude readiness: placement-oriented quant/logical/verbal medium-level quiz."""
+        prompt = render_aptitude_readiness_prompt(
+            user_type=request.user_type,
+            experience_years=request.experience_years,
+            primary_skill=request.primary_skill,
+            target_role=request.target_role or "Software Engineer",
+            target_company_type=request.target_company_type,
+        )
+
+        async def call_openai():
+            response = await self._client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=MAX_TOKENS_SKILL_READINESS_PLAN,
+            )
+            content = response.choices[0].message.content or ""
+            usage = getattr(response, "usage", None)
+            if usage:
+                tokens = getattr(usage, "total_tokens", 0) or 0
+                logger.info("LLM tokens used: %d (aptitude readiness plan)", tokens)
+            return self._parse_skill_readiness_plan(content)
+
+        return await self.guard_layer.run_with_timeout(
+            self.guard_layer.retry_with_fallback(call_openai)
+        )
+
     def _parse_yes_no_answer(self, raw) -> str | None:
         s = str(raw).strip().lower()
         if s in ("yes", "y"):
@@ -301,12 +338,13 @@ No extra text.
     def _normalize_mc_options(self, raw_opts) -> Optional[List[str]]:
         if not isinstance(raw_opts, list):
             return None
-        opts = []
-        for o in raw_opts[:4]:
+        opts: List[str] = []
+        for o in raw_opts:
+            if len(opts) >= 4:
+                break
             t = str(o).strip() if o is not None else ""
-            if not t:
-                return None
-            opts.append(t[:400])
+            if t:
+                opts.append(t[:400])
         if len(opts) != 4:
             return None
         return opts
@@ -316,8 +354,15 @@ No extra text.
         if not s:
             return None
         u = s.upper()
-        if len(s) == 1 and u in "ABCD":
+        if len(u) == 1 and u in "ABCD":
             return u
+        # "B)", "B.", "Answer: C", "option A"
+        m = re.match(r"^[\s\(]*([ABCD])[\s\)\.:]", u)
+        if m:
+            return m.group(1)
+        m2 = re.search(r"\b([ABCD])\b", u)
+        if m2:
+            return m2.group(1)
         for i, opt in enumerate(options):
             if opt.strip().lower() == s.lower():
                 return chr(ord("A") + i)

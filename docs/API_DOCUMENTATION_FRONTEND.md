@@ -78,7 +78,7 @@ async function getQuestions(profile) {
 
 **Legacy plan only** (`POST /interview-ready/plan`): every row is Yes/No. There is no `question_type` on items — only `question`, `correct_answer`, `study_topic`.
 
-**Skill readiness** (`/interview-ready/skill-readiness/plan`) and **Interview readiness** (`/interview-ready/interview-readiness/plan`): each item has `question_type`:
+**Skill readiness** (`/interview-ready/skill-readiness/plan`), **Interview readiness** (`/interview-ready/interview-readiness/plan`), and **Aptitude readiness** (`/interview-ready/aptitude-readiness/plan`): each item has `question_type`:
 
 | `question_type` | UI | Store one value per question |
 |-----------------|-----|------------------------------|
@@ -166,6 +166,20 @@ Show the percentage, label, strengths list, gaps list, and recommendations on yo
 - **Working professional:** optional `current_organization`, `core_skill`, `jd_provided`, `job_description`, `target_company_name`.
 
 `primary_skill` may be a comma-separated list (up to 400 chars). **Response:** exactly 15 items in fixed order: 4× `yes_no`, 7× `multiple_choice`, 2× `scenario`, 2× `code_mcq` — each includes `explanation` (same shapes as skill-readiness plan; see OpenAPI `/docs`).
+
+---
+
+## Aptitude Readiness Plan (placement aptitude — engineering 4th year style)
+
+**URL:** `POST your-api-url/interview-ready/aptitude-readiness/plan`
+
+**Body:** `AptitudeReadinessPlanRequest` — required: `user_type`. Optional: `experience_years`, `primary_skill`, `target_role`, `target_company_type`, `email`, `phone`.
+
+- `primary_skill` defaults to: `Quantitative, Logical and Verbal Reasoning`.
+- `target_role` defaults to: `Software Engineer`.
+- `target_company_type` defaults to: `both` (`service_mnc` | `product_company` | `both`).
+- Response shape is the same mixed-question contract: exactly 15 items in fixed order — 4× `yes_no`, 7× `multiple_choice`, 2× `scenario`, 2× `code_mcq`, each with `explanation`.
+- Prompt is tuned for medium-level placement aptitude style (TCS/Infosys-like patterns) with Quantitative, Logical, and Verbal coverage.
 
 ---
 
@@ -265,23 +279,104 @@ if (!res.ok) {
 
 ---
 
-## Resume ATS (`POST /api/resume/ats`)
+## Resume ATS check — overview for frontend (`POST /api/resume/ats`)
 
-**Request:** `multipart/form-data` — field `file` (PDF / DOC / DOCX), field `target_role` (string).
+Use this for the **resume upload / ATS feedback** flow. The API returns **scores**, **keyword match lists**, and **coaching text** tuned for **Naukri + LinkedIn** visibility (when the server has LLM enrichment enabled).
+#
+### Purpose
 
-**Response (JSON):** Numeric scores are **heuristic** (not from a real employer ATS). When `RESUME_ATS_USE_LLM` is enabled (default), **summary**, **strengths**, **fixes**, and **portal_tips** are enriched for **Naukri + LinkedIn** shortlisting.
+- User picks a **target role** (e.g. “Software Engineer”) and uploads a **resume file**.
+- Backend extracts text, computes **rule-based scores**, then (by default) calls **OpenAI** to write **summary**, **strengths**, **fixes**, and **portal_tips**.
+- **Numeric scores are not from a real Greenhouse/Workday ATS** — treat them as directional (weak / OK / strong), not exact percentages.
 
-| Field | Meaning |
-|-------|---------|
-| `score` | Overall 0–100 (blend of sub-scores) |
-| `keywords`, `formatting`, `impact`, `ats` | Sub-scores 0–100 |
-| `matched_keywords` / `missing_keywords` | Tokens from `target_role` found or not in resume text |
-| `summary` | Narrative; should reference scores and portal context when LLM runs |
-| `strengths` | What already helps recruiter search / screening |
-| `fixes` | Prioritized resume edits |
-| `portal_tips` | **Naukri + LinkedIn** actions (headline, key skills, About, consistency, upload format) |
+### Request
 
-Show **strengths**, **fixes**, and **portal_tips** as separate lists in the UI.
+| Item | Value |
+|------|--------|
+| **Method** | `POST` |
+| **URL** | `{API_BASE}/api/resume/ats` |
+| **Content-Type** | `multipart/form-data` (do **not** send JSON body) |
+| **Rate limit** | 30 requests / minute / IP (see 429 handling below) |
+
+**Form fields (required):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `file` | File | Resume: **.pdf**, **.doc**, or **.docx** (use `file.name` as filename) |
+| `target_role` | string | Selected role label, e.g. `"Software Engineer"`, `"Frontend Developer"` |
+
+**Example (browser):**
+
+```javascript
+const formData = new FormData();
+formData.append("file", file, file.name);
+formData.append("target_role", roleLabel);
+
+const res = await fetch(`${API_BASE}/api/resume/ats`, {
+  method: "POST",
+  body: formData,
+});
+const data = await res.json();
+```
+
+### Success response (`200`)
+
+JSON object **shape**:
+
+| Field | Type | What to show |
+|-------|------|----------------|
+| `score` | number (0–100) | Main overall score / gauge |
+| `keywords` | number (0–100) | How well resume text matches **target_role** tokens |
+| `formatting` | number (0–100) | Structure, sections, bullets, length signals |
+| `impact` | number (0–100) | Metrics, action verbs, quantified outcomes |
+| `ats` | number (0–100) | Parseability / ATS-friendly text signals |
+| `summary` | string | Short narrative (often mentions scores + Naukri/LinkedIn when LLM is on) |
+| `matched_keywords` | string[] | Terms from **target_role** found in the resume |
+| `missing_keywords` | string[] | Terms from **target_role** **not** found (suggest adding where truthful) |
+| `strengths` | string[] | **What’s already working** for recruiter search / screening |
+| `fixes` | string[] | **Prioritized resume edits** (document content) |
+| `portal_tips` | string[] | **Naukri + LinkedIn** checklist (headline, key skills, About, profile consistency, file format) |
+
+**UI suggestion:** four sub-scores + overall `score`; separate sections for **Summary**, **Strengths**, **Fixes (resume)**, **Portal tips (Naukri & LinkedIn)**; chips for matched/missing keywords.
+
+**Example (truncated):**
+
+```json
+{
+  "score": 72,
+  "keywords": 65,
+  "formatting": 80,
+  "impact": 70,
+  "ats": 78,
+  "summary": "...",
+  "matched_keywords": ["software", "engineering"],
+  "missing_keywords": ["react"],
+  "strengths": ["..."],
+  "fixes": ["..."],
+  "portal_tips": ["..."]
+}
+```
+
+### Errors
+
+| Status | Meaning |
+|--------|---------|
+| **422** | Bad file type, unreadable file, empty `target_role`, or almost no extractable text |
+| **413** | File larger than **5 MB** |
+| **429** | Too many requests — show “try again in a minute” |
+| **500** | Server error — generic retry message |
+
+Read `detail` from JSON error body when present.
+
+### Backend notes (for transparency)
+
+- **Scores** (`score`, `keywords`, `formatting`, `impact`, `ats`) are **computed on the server** (heuristics), not by the LLM.
+- **`server` env `RESUME_ATS_USE_LLM`:** when `true` (default), **summary / strengths / fixes / portal_tips** are LLM-enriched; if the LLM fails, the API still returns **200** with heuristic text + default portal tips.
+- **`portal_tips`** is always present (may be rule-based only if LLM is off or fails).
+
+### OpenAPI
+
+Interactive docs: **`GET /docs`** on the API host → **`POST /api/resume/ats`**.
 
 ---
 
@@ -291,6 +386,7 @@ Show **strengths**, **fixes**, and **portal_tips** as separate lists in the UI.
 |---------------|-------------|
 | Interview Ready: user submits profile | `POST /interview-ready/plan` |
 | Interview Readiness (holistic) | `POST /interview-ready/interview-readiness/plan` |
+| Aptitude Readiness (placement aptitude) | `POST /interview-ready/aptitude-readiness/plan` |
 | Interview Ready: user submits answers | `POST /interview-ready/evaluate` |
 | Waitlist or contact form | `POST /api/inquiries` |
 | Resume upload / ATS-style feedback | `POST /api/resume/ats` |

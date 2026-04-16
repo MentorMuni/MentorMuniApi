@@ -361,6 +361,73 @@ class SkillReadinessPlanRequest(BaseModel):
         return self
 
 
+class AptitudeReadinessPlanRequest(BaseModel):
+    """Request body for POST /interview-ready/aptitude-readiness/plan."""
+
+    user_type: str = Field(
+        ...,
+        description=(
+            'One of: college_student_year_1, college_student_year_2, college_student_year_3, '
+            "college_student_year_4, it_professional"
+        ),
+    )
+    experience_years: Optional[int] = Field(default=0, ge=0, le=50)
+    primary_skill: str = Field(
+        default="Quantitative, Logical and Verbal Reasoning",
+        min_length=1,
+        max_length=200,
+        description="Defaults to aptitude tracks: Quantitative, Logical and Verbal Reasoning.",
+    )
+    target_role: Optional[str] = Field(default="Software Engineer", max_length=100)
+    target_company_type: str = Field(
+        default="both",
+        description='One of: "service_mnc", "product_company", "both". Defaults to "both".',
+    )
+    email: Optional[str] = Field(default=None, max_length=255)
+    phone: Optional[str] = Field(default=None, max_length=20)
+
+    @field_validator("target_role")
+    @classmethod
+    def target_role_empty_to_none(cls, v):
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return None
+        return v.strip()
+
+    @field_validator("email", "phone")
+    @classmethod
+    def empty_to_none(cls, v):
+        if v is None:
+            return None
+        s = str(v).strip()
+        return None if not s else s
+
+    @field_validator("user_type")
+    @classmethod
+    def validate_skill_user_type(cls, v: str) -> str:
+        from app.validators.user_type import normalize_user_type
+
+        return normalize_user_type(v)
+
+    @field_validator("target_company_type", mode="before")
+    @classmethod
+    def validate_target_company_type(cls, v) -> str:
+        if v is None or (isinstance(v, str) and not str(v).strip()):
+            return "both"
+        key = str(v).lower().strip().replace(" ", "_").replace("-", "_")
+        allowed = {"service_mnc", "product_company", "both"}
+        if key not in allowed:
+            raise ValueError('target_company_type must be one of: service_mnc, product_company, both')
+        return key
+
+    @model_validator(mode="after")
+    def set_target_role_default(self):
+        if not self.target_role or not str(self.target_role).strip():
+            object.__setattr__(self, "target_role", "Software Engineer")
+        if not self.primary_skill or not str(self.primary_skill).strip():
+            object.__setattr__(self, "primary_skill", "Quantitative, Logical and Verbal Reasoning")
+        return self
+
+
 class SkillReadinessYesNoItem(BaseModel):
     question_type: Literal["yes_no"] = "yes_no"
     question: str = Field(..., min_length=1)
@@ -429,6 +496,12 @@ class SkillReadinessPlanResponse(BaseModel):
 
 class InterviewReadinessPlanResponse(BaseModel):
     """Holistic interview readiness: yes_no, multiple_choice, scenario, code_mcq with explanations."""
+
+    evaluation_plan: List[SkillReadinessQuestionItem]
+
+
+class AptitudeReadinessPlanResponse(BaseModel):
+    """Aptitude readiness: yes_no, multiple_choice, scenario, code_mcq with explanations."""
 
     evaluation_plan: List[SkillReadinessQuestionItem]
 

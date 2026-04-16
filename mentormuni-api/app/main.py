@@ -27,6 +27,8 @@ from app.schemas.ai import (
     PlanResponse,
     SkillReadinessPlanRequest,
     SkillReadinessPlanResponse,
+    AptitudeReadinessPlanRequest,
+    AptitudeReadinessPlanResponse,
     InterviewReadinessPlanRequest,
     InterviewReadinessPlanResponse,
     EvaluateRequest,
@@ -180,6 +182,37 @@ async def interview_readiness_plan(request: Request, body: InterviewReadinessPla
         raise HTTPException(status_code=504, detail=str(e))
     except Exception:
         raise HTTPException(status_code=500, detail="Failed to generate interview readiness plan. Please try again.")
+
+
+@app.post(
+    "/interview-ready/aptitude-readiness/plan",
+    response_model=AptitudeReadinessPlanResponse,
+    responses={429: {"description": "Rate limit exceeded"}},
+    summary="Aptitude readiness plan (placement-style quant/logical/verbal medium-level quiz)",
+)
+@limiter.limit("20/minute")
+async def aptitude_readiness_plan(request: Request, body: AptitudeReadinessPlanRequest):
+    try:
+        evaluation_plan = await guard_layer.run_with_timeout(
+            llm_service.generate_aptitude_readiness_plan(body)
+        )
+        rec = interview_lead_build.lead_from_skill_readiness(
+            email=body.email,
+            phone=body.phone,
+            user_type_canonical=body.user_type,
+            primary_skill=body.primary_skill,
+            target_role=body.target_role,
+            experience_years=body.experience_years or 0,
+        )
+        if rec:
+            stats_service.append_interview_ready_lead(rec)
+        return AptitudeReadinessPlanResponse(evaluation_plan=evaluation_plan)
+    except HTTPException:
+        raise
+    except TimeoutError as e:
+        raise HTTPException(status_code=504, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to generate aptitude readiness plan. Please try again.")
 
 
 @app.post(
