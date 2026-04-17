@@ -14,11 +14,13 @@ from typing import Any, List, Optional, Set, Tuple
 from openai import AsyncOpenAI
 from pypdf import PdfReader
 
+from app.services.resume_ats_llm_prompt import render_resume_ats_enrich_prompt
+
 logger = logging.getLogger("resume_ats")
 
 # LLM enrichment: resume excerpt size and response cap (scores stay heuristic).
 RESUME_LLM_MAX_INPUT_CHARS = 14_000
-RESUME_LLM_MAX_TOKENS = 1_600
+RESUME_LLM_MAX_TOKENS = 4_500
 
 ALLOWED_EXTENSIONS = {".pdf", ".doc", ".docx"}
 MAX_FILE_BYTES = 5 * 1024 * 1024
@@ -427,9 +429,19 @@ def analyze_resume(text: str, target_role: str) -> dict:
 
 
 def _parse_llm_coaching_json(content: str) -> Optional[dict[str, Any]]:
+    """Extract first JSON object from model output (strip ```json fences when present)."""
     content = (content or "").strip()
     if not content:
         return None
+    stripped = re.sub(r"^```(?:json)?\s*", "", content, flags=re.IGNORECASE | re.MULTILINE)
+    stripped = re.sub(r"\s*```\s*$", "", stripped, flags=re.MULTILINE).strip()
+    for candidate in (stripped, content):
+        try:
+            obj = json.loads(candidate)
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            pass
     m = re.search(r"\{[\s\S]*\}", content)
     if not m:
         return None
@@ -442,46 +454,105 @@ def _parse_llm_coaching_json(content: str) -> Optional[dict[str, Any]]:
     return obj
 
 
-def _sanitize_coaching(obj: dict[str, Any]) -> Optional[dict[str, str | list[str]]]:
-    out: dict[str, str | list[str]] = {}
+def _sanitize_resume_ats_llm_output(obj: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Map LLM JSON to merge keys for ResumeAtsResponse (does not touch heuristic scores)."""
+    if not isinstance(obj, dict):
+        return None
+    if obj.get("error"):
+        return None
+
+    out: dict[str, Any] = {}
+
     s = obj.get("summary")
     if isinstance(s, str) and s.strip():
-        out["summary"] = s.strip()[:2000]
+        out["summary"] = s.strip()[:4000]
 
-    fixes = obj.get("fixes")
-    if isinstance(fixes, list):
-        clean = []
-        for x in fixes[:8]:
+    ct = obj.get("candidate_type")
+    if isinstance(ct, str) and ct.strip():
+        out["candidate_type"] = ct.strip()[:120]
+
+    ir = obj.get("inferred_role")
+    if isinstance(ir, str) and ir.strip():
+        out["inferred_role"] = ir.strip()[:300]
+
+    def _str_list(key: str, max_n: int, max_len: int) -> None:
+        raw = obj.get(key)
+        if not isinstance(raw, list):
+            return
+        clean: List[str] = []
+        for x in raw[:max_n]:
             if isinstance(x, str) and x.strip():
-                clean.append(x.strip()[:500])
+                clean.append(x.strip()[:max_len])
         if clean:
-            out["fixes"] = clean
+            out[key] = clean
 
-    strengths = obj.get("strengths")
-    if isinstance(strengths, list):
-        clean = []
-        for x in strengths[:6]:
-            if isinstance(x, str) and x.strip():
-                clean.append(x.strip()[:500])
-        if clean:
-            out["strengths"] = clean
+    _str_list("top_resume_killers", 5, 600)
+    _str_list("strengths", 8, 800)
+    _str_list("fixes", 12, 800)
+    _str_list("keyword_gaps", 12, 600)
+    _str_list("rewrite_examples", 8, 1200)
+    _str_list("positioning_improvement", 10, 800)
+    _str_list("portal_tips", 12, 800)
+    _str_list("priority_action_plan", 8, 600)
 
-    portal = obj.get("portal_tips")
-    if isinstance(portal, list):
-        clean = []
-        for x in portal[:10]:
-            if isinstance(x, str) and x.strip():
-                clean.append(x.strip()[:500])
-        if clean:
-            out["portal_tips"] = clean
+    sr = obj.get("section_rewrites")
+    if isinstance(sr, dict):
+        section: dict[str, Any] = {}
+        for k, maxlen in (("headline", 800), ("summary", 2500), ("skills", 2500)):
+            v = sr.get(k)
+            if isinstance(v, str) and v.strip():
+                section[k] = v.strip()[:maxlen]
+        pe = sr.get("project_or_experience")
+        if isinstance(pe, list):
+            bullets = []
+            for x in pe[:8]:
+                if isinstance(x, str) and x.strip():
+                    bullets.append(x.strip()[:1200])
+            if bullets:
+                section["project_or_experience"] = bullets
+        if section:
+            out["section_rewrites"] = section
 
-    return out if out.get("summary") or out.get("fixes") or out.get("strengths") or out.get("portal_tips") else None
+    sb = obj.get("score_breakdown")
+    if isinstance(sb, dict):
+        sb_out: dict[str, str] = {}
+        for k, maxlen in (
+            ("keyword_match", 24),
+            ("impact", 24),
+            ("structure", 24),
+            ("ats_readability", 24),
+        ):
+            v = sb.get(k)
+            if isinstance(v, str) and v.strip():
+                sb_out[k] = v.strip()[:maxlen]
+        if sb_out:
+            out["score_breakdown"] = sb_out
+
+    est = obj.get("ats_score_estimate")
+    if isinstance(est, dict):
+        score_s = est.get("score")
+        reason_s = est.get("reason")
+        label_s = est.get("label")
+        est_out: dict[str, str] = {}
+        if isinstance(score_s, str) and score_s.strip():
+            est_out["score"] = score_s.strip()[:40]
+        if isinstance(label_s, str) and label_s.strip():
+            est_out["label"] = label_s.strip()[:200]
+        if isinstance(reason_s, str) and reason_s.strip():
+            est_out["reason"] = reason_s.strip()[:2000]
+        if est_out:
+            out["ats_score_estimate"] = est_out
+
+    if out:
+        return out
+    return None
 
 
 async def enrich_analysis_with_llm(payload: dict, resume_text: str, target_role: str) -> dict:
     """
-    Rewrite summary / fixes / strengths using OpenAI. Numeric scores and matched/missing keywords
-    stay from heuristics (factual). On any failure, returns payload unchanged.
+    Enrich resume ATS response via OpenAI (transformation / coaching JSON).
+    Numeric scores and matched/missing keywords stay from heuristics.
+    On any failure or LLM error-only response, returns payload unchanged.
     """
     from app.core.config import settings
 
@@ -494,49 +565,30 @@ async def enrich_analysis_with_llm(payload: dict, resume_text: str, target_role:
 
     timeout_sec = min(90, max(25, int(settings.llm_timeout_seconds)))
 
+    tr = (target_role or "").strip() or "Software Developer"
+    matched = payload.get("matched_keywords") or []
+    missing = payload.get("missing_keywords") or []
     snapshot = (
-        f"Target role: {target_role.strip()}\n"
+        f"Target role (form): {tr}\n"
         f"Overall score (heuristic): {payload.get('score')}/100\n"
         f"Breakdown — keywords: {payload.get('keywords')}, formatting: {payload.get('formatting')}, "
         f"impact: {payload.get('impact')}, ATS parse: {payload.get('ats')}\n"
-        f"Matched role keywords: {', '.join(payload.get('matched_keywords') or []) or '(none)'}\n"
-        f"Missing role keywords: {', '.join(payload.get('missing_keywords') or []) or '(none)'}\n"
+        f"Matched role keywords: {', '.join(matched) or '(none)'}\n"
+        f"Missing role keywords: {', '.join(missing) or '(none)'}\n"
     )
 
-    prompt = f"""You are an expert technical recruiter focused on India job portals (Naukri) and LinkedIn shortlisting.
+    experience_years = str(payload.get("experience_years") or "not provided — infer from resume")
+    candidate_type_hint = str(
+        payload.get("candidate_type") or "not provided — infer college_student vs experienced from resume"
+    )
 
-Goal: help this candidate get MORE recruiter views and shortlists for their target role on Naukri and LinkedIn.
-
-Use ONLY the resume excerpt and the heuristic snapshot below. Do not invent employers, degrees, or skills not present in the resume.
-If the resume is thin, say so tactfully.
-
-HEURISTIC SCORES (0–100 each — reference them explicitly in your summary so the candidate sees what the numbers mean):
-- Overall shortlisting-style score: {payload.get('score')}
-- Keyword match vs target role title: {payload.get('keywords')}
-- Formatting / structure: {payload.get('formatting')}
-- Impact (metrics, action verbs): {payload.get('impact')}
-- Parseability / ATS-friendly text: {payload.get('ats')}
-
-{snapshot}
-
-RESUME TEXT:
----
-{excerpt}
----
-
-Return ONLY a JSON object with these keys (no markdown fences):
-{{
-  "summary": "4–6 sentences. MUST: (1) State the overall score and what it means for Naukri/LinkedIn visibility in plain language. (2) Mention keyword/formatting/impact briefly if useful. (3) One encouraging close.",
-  "strengths": ["3–6 bullets: what is ALREADY good for recruiter search and screening on Naukri/LinkedIn"],
-  "fixes": ["4–8 bullets: PRIORITIZED resume edits to improve shortlisting—most important first"],
-  "portal_tips": ["5–10 bullets: concrete Naukri-specific AND LinkedIn-specific actions (headline, key skills, About, job title, PDF upload, skill endorsements, consistency between resume and profile)."]
-}}
-
-Rules:
-- Ground every point in the resume text or the matched/missing keywords; use missing keywords in fixes/portal_tips where truthful.
-- strengths = what to keep or double down on; fixes = resume file improvements; portal_tips = what to do on Naukri.com and LinkedIn specifically.
-- Short bullet strings only; no nested objects.
-"""
+    prompt = render_resume_ats_enrich_prompt(
+        candidate_type=candidate_type_hint,
+        experience_years=experience_years,
+        target_role=tr,
+        snapshot=snapshot,
+        excerpt=excerpt,
+    )
 
     async def _call() -> str:
         client = AsyncOpenAI(api_key=settings.openai_api_key)
@@ -559,17 +611,12 @@ Rules:
         logger.warning("Resume ATS LLM returned unparseable JSON")
         return payload
 
-    coaching = _sanitize_coaching(parsed)
+    if parsed.get("error"):
+        logger.warning("Resume ATS LLM returned error object; keeping heuristic payload")
+        return payload
+
+    coaching = _sanitize_resume_ats_llm_output(parsed)
     if not coaching:
         return payload
 
-    merged = {**payload}
-    if "summary" in coaching:
-        merged["summary"] = coaching["summary"]
-    if "fixes" in coaching:
-        merged["fixes"] = coaching["fixes"]
-    if "strengths" in coaching:
-        merged["strengths"] = coaching["strengths"]
-    if "portal_tips" in coaching:
-        merged["portal_tips"] = coaching["portal_tips"]
-    return merged
+    return {**payload, **coaching}

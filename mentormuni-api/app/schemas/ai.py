@@ -474,6 +474,20 @@ class SkillReadinessCodeMcqItem(SkillReadinessMcBase):
 class AptitudeReadinessMultipleChoiceItem(SkillReadinessMcBase):
     question_type: Literal["multiple_choice"] = "multiple_choice"
     section: Literal["quantitative", "logical", "verbal"]
+    difficulty: Literal["easy", "moderate", "tricky"] = Field(
+        default="moderate",
+        description="Placement-style difficulty: easy / moderate / tricky",
+    )
+    asked_in: str = Field(
+        default="Common pattern",
+        max_length=200,
+        description="Company or pattern label (e.g. TCS, Infosys, Common pattern)",
+    )
+    why_students_fail: str = Field(
+        default="Common mistakes under time pressure.",
+        max_length=500,
+        description="Short reason why students often miss this",
+    )
 
 
 SkillReadinessQuestionItem = Annotated[

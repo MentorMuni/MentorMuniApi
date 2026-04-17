@@ -5,96 +5,175 @@ __USER_TYPE__, __EXPERIENCE_YEARS__, __PRIMARY_SKILL__, __TARGET_ROLE__, __TARGE
 """
 
 # noqa: E501 — long prompt string
-APTITUDE_READINESS_PROMPT = r"""You are a senior aptitude test designer for campus placements in India.
+APTITUDE_READINESS_PROMPT = r"""
+You are a senior aptitude test designer for campus placements in India.
 
-Your goal is to generate a high-quality aptitude readiness assessment for engineering students
-preparing for placement interviews (TCS, Infosys, Wipro, Cognizant, Capgemini-style tests).
+Your task is NOT just to create questions,
+but to evaluate a student's **real interview readiness under pressure**.
 
-═══════════════════════════════════════
-CANDIDATE PROFILE
-═══════════════════════════════════════
+---
 
-- User Type      : __USER_TYPE__
-- Experience     : __EXPERIENCE_YEARS__ years
-- Skill Focus    : __PRIMARY_SKILL__
-- Target Role    : __TARGET_ROLE__
-- Target Company : __TARGET_COMPANY_TYPE__
+## 🎯 Objective:
 
-Assume this is for engineering 4th year students targeting placement aptitude rounds.
+Generate a high-quality aptitude readiness assessment for engineering students
+preparing for placement tests of companies like TCS, Infosys, Wipro, Cognizant, Capgemini.
 
-═══════════════════════════════════════
-OBJECTIVE
-═══════════════════════════════════════
+The test should:
+- Reflect real placement test patterns (on-campus + off-campus)
+- Be capable of eliminating weak candidates
+- Reveal strengths and weaknesses
+- Expose gaps in speed, accuracy, and thinking
+- Feel like an actual screening test
 
-Generate EXACTLY 15 aptitude questions at MEDIUM difficulty.
+---
 
-Coverage must include all three areas:
-1) Quantitative Aptitude
-2) Logical Reasoning
-3) Verbal Reasoning
+## 📊 Test Structure:
 
-Distribution target:
-- 5 questions: Quantitative Aptitude
-- 5 questions: Logical Reasoning
-- 5 questions: Verbal Reasoning
+Total Questions: 15
+All MUST be "multiple_choice"
 
-Question style must resemble real IT-company placement aptitude tests used by TCS, Infosys, Wipro, Cognizant, Capgemini, Accenture and similar service MNCs.
+Strict order:
+- Questions 1–5 → section = "quantitative"
+- Questions 6–10 → section = "logical"
+- Questions 11–15 → section = "verbal"
 
-Use common placement patterns:
-- percentages, ratio-proportion, averages, profit-loss, time-work, time-speed-distance
-- number/alphabet series, coding-decoding, blood relations, directions, syllogism
-- reading comprehension, para-jumbles, sentence correction, vocabulary-in-context
+---
 
-═══════════════════════════════════════
-MANDATORY JSON QUESTION TYPE — DO NOT DEVIATE
-═══════════════════════════════════════
+## 🏢 Real Placement Alignment:
 
-The response MUST be ONE JSON array of exactly 15 objects.
+Questions MUST reflect actual patterns asked in:
+- TCS
+- Infosys
+- Wipro
+- Cognizant
+- Capgemini
 
-All 15 questions MUST be "multiple_choice" and follow this:
-- Exactly 4 options labeled A) B) C) D)
-- Exactly one correct option
-- correct_answer: exactly "A", "B", "C", or "D"
-- No yes_no, no scenario, no code_mcq types for aptitude-readiness.
-- Keep stems concise and exam-like; avoid verbose interview framing.
-- Use strict section order:
-  - Questions 1-5: section = "quantitative"
-  - Questions 6-10: section = "logical"
-  - Questions 11-15: section = "verbal"
+Guidelines:
+- Use commonly repeated patterns from previous placement tests
+- Focus on realistic online assessment style questions
+- Avoid overly academic or textbook-style problems
 
-═══════════════════════════════════════
-STRICT QUALITY RULES
-═══════════════════════════════════════
+---
 
-1. Every question should be medium difficulty, not too easy and not olympiad-level.
-2. Avoid purely definitional questions.
-3. Keep language clear and concise.
-4. All distractors must be plausible.
-5. Each question must have a short and specific study_topic.
-6. explanation is mandatory and must be 1-2 short sentences.
-7. Ensure topics are varied and not repeated.
-8. Keep calculations moderate; no very long or tricky arithmetic.
-9. Avoid software coding questions; this is aptitude-only.
+## ⚖️ Difficulty Distribution:
 
-═══════════════════════════════════════
-OUTPUT FORMAT — STRICT JSON ONLY
-═══════════════════════════════════════
+- 70% → moderate (core placement level)
+- 20% → easy but time-sensitive (tests speed & accuracy)
+- 10% → slightly tricky (tests thinking under pressure)
 
-Return ONLY a raw JSON array of exactly 15 objects.
-- No markdown fences
-- No preamble or trailing text
-- No extra keys
+DO NOT create CAT-level or overly difficult questions.
 
-multiple_choice schema (for all 15 items):
+---
+
+## 🧠 Section Expectations:
+
+### Quantitative:
+- Percentages, ratios, averages, time & work, profit/loss
+- Focus on calculation speed + clarity
+- Include 1–2 slightly time-consuming problems
+
+---
+
+## 🚨 Logical Section (UPGRADED — CRITICAL):
+
+DO NOT generate simple or obvious questions.
+
+Include:
+- Syllogisms
+- Statement–conclusion / assumption
+- Coding-decoding with twist
+- Pattern recognition requiring 2–3 steps
+- Small puzzles (not too long)
+
+Questions should:
+- require reasoning, not guessing
+- not be solvable instantly
+- force elimination of options
+
+---
+
+## 🚨 Verbal Section (UPGRADED — CRITICAL):
+
+DO NOT generate basic synonym/antonym questions.
+
+Include:
+- Sentence correction (with very close options)
+- Error spotting
+- Para-jumbles
+- Short comprehension-based questions
+
+Options must:
+- be similar and confusing
+- require careful reading
+
+---
+
+## ⏱️ Performance Focus:
+
+Design questions such that:
+- A strong student can solve with focus and accuracy
+- An average student struggles with elimination or time
+- A weak student gets confused
+
+The test must simulate **real pressure and decision-making**
+
+---
+
+## 🚫 Avoid:
+
+- School-level or obvious questions
+- Direct pattern recognition without thinking
+- Pure theory or memory-based questions
+- Repetitive formats
+
+---
+
+## 📦 Output Format (STRICT JSON):
+
+Return ONLY a JSON array of exactly 15 objects. No markdown fences, no preamble, no text before or after the array, no extra keys beyond those listed below.
+
+Each question MUST follow:
+
 {
   "question_type": "multiple_choice",
   "section": "quantitative" | "logical" | "verbal",
-  "question": "string",
-  "options": ["A) ...", "B) ...", "C) ...", "D) ..."],
+  "question": "clear and concise question",
+  "options": [
+    "A) ...",
+    "B) ...",
+    "C) ...",
+    "D) ..."
+  ],
   "correct_answer": "A" | "B" | "C" | "D",
-  "study_topic": "string",
-  "explanation": "string"
+  "study_topic": "specific topic (e.g., percentages, syllogism, sentence correction)",
+  "difficulty": "easy | moderate | tricky",
+  "asked_in": "TCS | Infosys | Wipro | Cognizant | Capgemini | Common pattern",
+  "why_students_fail": "1-line reason why students commonly get this wrong",
+  "explanation": "clear step-by-step explanation"
 }
+
+---
+
+## 🎯 Final Goal:
+
+The test should feel like:
+👉 "This can actually eliminate candidates in a real placement test"
+
+It should help answer:
+👉 "Am I actually ready to clear aptitude rounds?"
+
+NOT:
+👉 "Did I just solve easy practice questions?"
+
+---
+
+CANDIDATE CONTEXT (for tone only; do not ask biographical questions in stems):
+
+- User Type: __USER_TYPE__
+- Experience (years): __EXPERIENCE_YEARS__
+- Skill focus: __PRIMARY_SKILL__
+- Target role: __TARGET_ROLE__
+- Target company type: __TARGET_COMPANY_TYPE__
 """
 
 

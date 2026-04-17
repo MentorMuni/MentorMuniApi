@@ -178,9 +178,9 @@ Show the percentage, label, strengths list, gaps list, and recommendations on yo
 - `primary_skill` defaults to: `Quantitative, Logical and Verbal Reasoning`.
 - `target_role` defaults to: `Software Engineer`.
 - `target_company_type` defaults to: `both` (`service_mnc` | `product_company` | `both`).
-- Response shape for this API is **15× `multiple_choice`** questions only (all with `section`, `options`, `correct_answer` as `A`-`D`, `study_topic`, `explanation`).
+- Response shape for this API is **15× `multiple_choice`** questions only. Each item includes: `section`, `options`, `correct_answer` (`A`–`D`), `study_topic`, `difficulty` (`easy` \| `moderate` \| `tricky`), `asked_in` (company/pattern label), `why_students_fail`, and `explanation`.
 - Section split is server-enforced: **exactly 5 Quantitative, 5 Logical, 5 Verbal** (`section` values: `quantitative`, `logical`, `verbal`).
-- Prompt is tuned for medium-level IT-company placement aptitude style (TCS/Infosys/Wipro/Cognizant/Capgemini/Accenture-like patterns).
+- Prompt targets real placement-test feel (TCS/Infosys/Wipro/Cognizant/Capgemini-style), with difficulty mix ~70% moderate / ~20% easy / ~10% tricky.
 
 ---
 

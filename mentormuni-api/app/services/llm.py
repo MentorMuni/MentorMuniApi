@@ -362,6 +362,21 @@ No extra text.
                         topic = q[:60] + ("..." if len(q) > 60 else "")
                     expl = self._explanation_or_default(x.get("explanation"))
                     section = APTITUDE_SECTION_ORDER[len(out)]
+                    diff_raw = str(x.get("difficulty", "")).strip().lower()
+                    if diff_raw in ("easy", "moderate", "tricky"):
+                        difficulty = diff_raw
+                    elif diff_raw in ("slightly tricky", "hard", "difficult"):
+                        difficulty = "tricky"
+                    else:
+                        difficulty = "moderate"
+                    asked_in = str(x.get("asked_in", "")).strip() or "Common pattern"
+                    if len(asked_in) > 200:
+                        asked_in = asked_in[:200]
+                    why_fail = str(x.get("why_students_fail", "")).strip() or (
+                        "Misread options or rushed under time pressure."
+                    )
+                    if len(why_fail) > 500:
+                        why_fail = why_fail[:500]
                     out.append({
                         "question_type": "multiple_choice",
                         "section": section,
@@ -369,6 +384,9 @@ No extra text.
                         "options": opts,
                         "correct_answer": letter,
                         "study_topic": topic,
+                        "difficulty": difficulty,
+                        "asked_in": asked_in,
+                        "why_students_fail": why_fail,
                         "explanation": expl,
                     })
                 if len(out) < PLAN_QUESTION_COUNT:
@@ -393,6 +411,9 @@ No extra text.
             ],
             "correct_answer": "A",
             "study_topic": "Aptitude fundamentals",
+            "difficulty": "moderate",
+            "asked_in": "Common pattern",
+            "why_students_fail": "Model output was invalid; retry the request.",
             "explanation": "Placeholder — model output was not valid JSON; retry the request.",
         }]
 
