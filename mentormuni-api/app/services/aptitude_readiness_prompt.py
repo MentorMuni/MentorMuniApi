@@ -128,29 +128,31 @@ The test must simulate **real pressure and decision-making**
 
 ---
 
-## 📦 Output Format (STRICT JSON):
+## 📦 Output Format (STRICT JSON — API CONTRACT):
 
-Return ONLY a JSON array of exactly 15 objects. No markdown fences, no preamble, no text before or after the array, no extra keys beyond those listed below.
+Return ONLY one JSON object (no markdown fences, no text before or after). Root object MUST have exactly one key: "questions".
 
-Each question MUST follow:
+The "questions" value MUST be an array of exactly 15 objects, in order: positions 1–5 quantitative, 6–10 logical, 11–15 verbal (set "section" accordingly on each object).
 
+Shape:
 {
-  "question_type": "multiple_choice",
-  "section": "quantitative" | "logical" | "verbal",
-  "question": "clear and concise question",
-  "options": [
-    "A) ...",
-    "B) ...",
-    "C) ...",
-    "D) ..."
-  ],
-  "correct_answer": "A" | "B" | "C" | "D",
-  "study_topic": "specific topic (e.g., percentages, syllogism, sentence correction)",
-  "difficulty": "easy | moderate | tricky",
-  "asked_in": "TCS | Infosys | Wipro | Cognizant | Capgemini | Common pattern",
-  "why_students_fail": "1-line reason why students commonly get this wrong",
-  "explanation": "clear step-by-step explanation"
+  "questions": [
+    {
+      "question_type": "multiple_choice",
+      "section": "quantitative" | "logical" | "verbal",
+      "question": "clear and concise question",
+      "options": ["A) ...", "B) ...", "C) ...", "D) ..."],
+      "correct_answer": "A" | "B" | "C" | "D",
+      "study_topic": "short topic label",
+      "difficulty": "easy" | "moderate" | "tricky",
+      "asked_in": "TCS | Infosys | Wipro | Cognizant | Capgemini | Common pattern",
+      "why_students_fail": "one short line",
+      "explanation": "brief step-by-step (keep concise to save tokens)"
+    }
+  ]
 }
+
+Do not omit keys. Do not add extra top-level keys besides "questions".
 
 ---
 

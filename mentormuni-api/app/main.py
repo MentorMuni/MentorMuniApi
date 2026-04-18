@@ -60,6 +60,7 @@ app.add_middleware(
 )
 
 guard_layer = GuardLayer(timeout=settings.llm_timeout_seconds)
+logger = logging.getLogger(__name__)
 llm_service = LLMService()
 evaluator_service = EvaluatorService()
 
@@ -193,9 +194,8 @@ async def interview_readiness_plan(request: Request, body: InterviewReadinessPla
 @limiter.limit("20/minute")
 async def aptitude_readiness_plan(request: Request, body: AptitudeReadinessPlanRequest):
     try:
-        evaluation_plan = await guard_layer.run_with_timeout(
-            llm_service.generate_aptitude_readiness_plan(body)
-        )
+        # Timeout + retries are applied inside generate_aptitude_readiness_plan (avoid nested wait_for).
+        evaluation_plan = await llm_service.generate_aptitude_readiness_plan(body)
         rec = interview_lead_build.lead_from_skill_readiness(
             email=body.email,
             phone=body.phone,
@@ -212,6 +212,7 @@ async def aptitude_readiness_plan(request: Request, body: AptitudeReadinessPlanR
     except TimeoutError as e:
         raise HTTPException(status_code=504, detail=str(e))
     except Exception:
+        logger.exception("aptitude_readiness_plan failed")
         raise HTTPException(status_code=500, detail="Failed to generate aptitude readiness plan. Please try again.")
 
 

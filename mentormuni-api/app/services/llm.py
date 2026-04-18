@@ -18,7 +18,7 @@ MAX_TOKENS_LEGACY_PLAN = 1500
 MAX_TOKENS_MIXED_PLAN = 3200
 MAX_TOKENS_INTERVIEW_READINESS_PLAN = 3600
 MAX_TOKENS_SKILL_READINESS_PLAN = 3000
-MAX_TOKENS_APTITUDE_READINESS_PLAN = 8000
+MAX_TOKENS_APTITUDE_READINESS_PLAN = 12000
 MAX_TOKENS_VALIDATE = 20
 PLAN_QUESTION_COUNT = 15
 APTITUDE_SECTION_ORDER: list[str] = (
@@ -319,11 +319,26 @@ No extra text.
         async def call_openai():
             response = await self._client.chat.completions.create(
                 model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You output only a single valid JSON object (no markdown). "
+                            "The user message describes the required JSON shape including a \"questions\" array."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ],
                 max_tokens=MAX_TOKENS_APTITUDE_READINESS_PLAN,
                 temperature=0.3,
+                response_format={"type": "json_object"},
             )
-            content = response.choices[0].message.content or ""
+            choice = response.choices[0]
+            if getattr(choice, "finish_reason", None) == "length":
+                logger.warning(
+                    "Aptitude readiness: LLM hit max_tokens (finish_reason=length); output may be truncated."
+                )
+            content = choice.message.content or ""
             usage = getattr(response, "usage", None)
             if usage:
                 tokens = getattr(usage, "total_tokens", 0) or 0
@@ -341,8 +356,19 @@ No extra text.
         )
 
     @staticmethod
-    def _extract_json_array_from_llm(content: str) -> Optional[list]:
-        """Parse first JSON array from model output (strip ```json fences when present)."""
+    def _coerce_questions_list(obj) -> Optional[list]:
+        if isinstance(obj, list):
+            return obj
+        if isinstance(obj, dict):
+            for key in ("questions", "evaluation_plan", "items"):
+                v = obj.get(key)
+                if isinstance(v, list):
+                    return v
+        return None
+
+    @classmethod
+    def _extract_aptitude_questions_from_llm(cls, content: str) -> Optional[list]:
+        """Parse JSON object {\"questions\": [...]} or a raw array from model output."""
         content = (content or "").strip()
         if not content:
             return None
@@ -351,8 +377,18 @@ No extra text.
         for candidate in (stripped, content):
             try:
                 obj = json.loads(candidate)
-                if isinstance(obj, list):
-                    return obj
+                lst = cls._coerce_questions_list(obj)
+                if lst is not None:
+                    return lst
+            except json.JSONDecodeError:
+                pass
+        m = re.search(r"\{[\s\S]*\}", content)
+        if m:
+            try:
+                obj = json.loads(m.group())
+                lst = cls._coerce_questions_list(obj)
+                if lst is not None:
+                    return lst
             except json.JSONDecodeError:
                 pass
         m = re.search(r"\[[\s\S]*\]", content)
@@ -360,15 +396,16 @@ No extra text.
             return None
         try:
             obj = json.loads(m.group())
-            return obj if isinstance(obj, list) else None
+            lst = cls._coerce_questions_list(obj)
+            return lst if lst is not None else (obj if isinstance(obj, list) else None)
         except json.JSONDecodeError:
             return None
 
     def _parse_aptitude_readiness_plan(self, content: str) -> list[dict]:
         """Parse aptitude plan JSON into up to 15 multiple_choice questions with strict 5/5/5 sections."""
-        items = self._extract_json_array_from_llm(content)
+        items = self._extract_aptitude_questions_from_llm(content)
         if not items:
-            logger.warning("Aptitude plan: no JSON array found in model output.")
+            logger.warning("Aptitude plan: no JSON questions list found in model output.")
             return []
 
         out: List[dict] = []
@@ -453,9 +490,17 @@ No extra text.
         return opts
 
     def _normalize_mc_letter(self, raw, options: List[str]) -> Optional[str]:
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            i = int(raw)
+            if 1 <= i <= 4:
+                return chr(ord("A") + i - 1)
         s = str(raw).strip()
         if not s:
             return None
+        if s.isdigit():
+            i = int(s)
+            if 1 <= i <= 4:
+                return chr(ord("A") + i - 1)
         u = s.upper()
         if len(u) == 1 and u in "ABCD":
             return u
