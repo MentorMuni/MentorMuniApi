@@ -18,6 +18,7 @@ MAX_TOKENS_LEGACY_PLAN = 1500
 MAX_TOKENS_MIXED_PLAN = 3200
 MAX_TOKENS_INTERVIEW_READINESS_PLAN = 3600
 MAX_TOKENS_SKILL_READINESS_PLAN = 3000
+MAX_TOKENS_APTITUDE_READINESS_PLAN = 8000
 MAX_TOKENS_VALIDATE = 20
 PLAN_QUESTION_COUNT = 15
 APTITUDE_SECTION_ORDER: list[str] = (
@@ -319,7 +320,7 @@ No extra text.
             response = await self._client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=MAX_TOKENS_SKILL_READINESS_PLAN,
+                max_tokens=MAX_TOKENS_APTITUDE_READINESS_PLAN,
                 temperature=0.3,
             )
             content = response.choices[0].message.content or ""
@@ -327,95 +328,107 @@ No extra text.
             if usage:
                 tokens = getattr(usage, "total_tokens", 0) or 0
                 logger.info("LLM tokens used: %d (aptitude readiness plan)", tokens)
-            return self._parse_aptitude_readiness_plan(content)
+            parsed = self._parse_aptitude_readiness_plan(content)
+            if len(parsed) != PLAN_QUESTION_COUNT:
+                raise ValueError(
+                    f"Incomplete aptitude plan: parsed {len(parsed)}/{PLAN_QUESTION_COUNT} valid questions "
+                    "(output may be truncated, invalid JSON, or rows failed validation — check logs)."
+                )
+            return parsed
 
         return await self.guard_layer.run_with_timeout(
             self.guard_layer.retry_with_fallback(call_openai)
         )
 
-    def _parse_aptitude_readiness_plan(self, content: str) -> list[dict]:
-        """Parse aptitude plan JSON into 15 multiple_choice questions with strict 5/5/5 sections."""
-        content = content.strip()
-        json_match = re.search(r"\[[\s\S]*\]", content)
-        if json_match:
+    @staticmethod
+    def _extract_json_array_from_llm(content: str) -> Optional[list]:
+        """Parse first JSON array from model output (strip ```json fences when present)."""
+        content = (content or "").strip()
+        if not content:
+            return None
+        stripped = re.sub(r"^```(?:json)?\s*", "", content, flags=re.IGNORECASE | re.MULTILINE)
+        stripped = re.sub(r"\s*```\s*$", "", stripped, flags=re.MULTILINE).strip()
+        for candidate in (stripped, content):
             try:
-                items = json.loads(json_match.group())
-                if not isinstance(items, list):
-                    raise ValueError("not a list")
-                out: List[dict] = []
-                for x in items:
-                    if len(out) >= PLAN_QUESTION_COUNT:
-                        break
-                    if not isinstance(x, dict) or "question" not in x:
-                        continue
-                    q = str(x["question"]).strip()
-                    if not q:
-                        continue
-                    opts = self._normalize_mc_options(x.get("options"))
-                    if opts is None:
-                        continue
-                    letter = self._normalize_mc_letter(x.get("correct_answer"), opts)
-                    if letter is None:
-                        continue
-                    topic = str(x.get("study_topic", "")).strip()
-                    if not topic:
-                        topic = q[:60] + ("..." if len(q) > 60 else "")
-                    expl = self._explanation_or_default(x.get("explanation"))
-                    section = APTITUDE_SECTION_ORDER[len(out)]
-                    diff_raw = str(x.get("difficulty", "")).strip().lower()
-                    if diff_raw in ("easy", "moderate", "tricky"):
-                        difficulty = diff_raw
-                    elif diff_raw in ("slightly tricky", "hard", "difficult"):
-                        difficulty = "tricky"
-                    else:
-                        difficulty = "moderate"
-                    asked_in = str(x.get("asked_in", "")).strip() or "Common pattern"
-                    if len(asked_in) > 200:
-                        asked_in = asked_in[:200]
-                    why_fail = str(x.get("why_students_fail", "")).strip() or (
-                        "Misread options or rushed under time pressure."
-                    )
-                    if len(why_fail) > 500:
-                        why_fail = why_fail[:500]
-                    out.append({
-                        "question_type": "multiple_choice",
-                        "section": section,
-                        "question": q,
-                        "options": opts,
-                        "correct_answer": letter,
-                        "study_topic": topic,
-                        "difficulty": difficulty,
-                        "asked_in": asked_in,
-                        "why_students_fail": why_fail,
-                        "explanation": expl,
-                    })
-                if len(out) < PLAN_QUESTION_COUNT:
-                    logger.warning(
-                        "Parsed only %d/%d aptitude questions (dropped invalid rows or truncated JSON).",
-                        len(out),
-                        PLAN_QUESTION_COUNT,
-                    )
-                if len(out) == PLAN_QUESTION_COUNT:
-                    return out
-            except (json.JSONDecodeError, ValueError):
+                obj = json.loads(candidate)
+                if isinstance(obj, list):
+                    return obj
+            except json.JSONDecodeError:
                 pass
-        return [{
-            "question_type": "multiple_choice",
-            "section": "quantitative",
-            "question": "Aptitude fundamentals",
-            "options": [
-                "A) Placeholder option A",
-                "B) Placeholder option B",
-                "C) Placeholder option C",
-                "D) Placeholder option D",
-            ],
-            "correct_answer": "A",
-            "study_topic": "Aptitude fundamentals",
-            "difficulty": "moderate",
-            "asked_in": "Common pattern",
-            "why_students_fail": "Model output was invalid; retry the request.",
-            "explanation": "Placeholder — model output was not valid JSON; retry the request.",
-        }]
+        m = re.search(r"\[[\s\S]*\]", content)
+        if not m:
+            return None
+        try:
+            obj = json.loads(m.group())
+            return obj if isinstance(obj, list) else None
+        except json.JSONDecodeError:
+            return None
+
+    def _parse_aptitude_readiness_plan(self, content: str) -> list[dict]:
+        """Parse aptitude plan JSON into up to 15 multiple_choice questions with strict 5/5/5 sections."""
+        items = self._extract_json_array_from_llm(content)
+        if not items:
+            logger.warning("Aptitude plan: no JSON array found in model output.")
+            return []
+
+        out: List[dict] = []
+        try:
+            for x in items:
+                if len(out) >= PLAN_QUESTION_COUNT:
+                    break
+                if not isinstance(x, dict) or "question" not in x:
+                    continue
+                q = str(x["question"]).strip()
+                if not q:
+                    continue
+                opts = self._normalize_mc_options(x.get("options"))
+                if opts is None:
+                    continue
+                letter = self._normalize_mc_letter(x.get("correct_answer"), opts)
+                if letter is None:
+                    continue
+                topic = str(x.get("study_topic", "")).strip()
+                if not topic:
+                    topic = q[:60] + ("..." if len(q) > 60 else "")
+                expl = self._explanation_or_default(x.get("explanation"))
+                section = APTITUDE_SECTION_ORDER[len(out)]
+                diff_raw = str(x.get("difficulty", "")).strip().lower()
+                if diff_raw in ("easy", "moderate", "tricky"):
+                    difficulty = diff_raw
+                elif diff_raw in ("slightly tricky", "hard", "difficult"):
+                    difficulty = "tricky"
+                else:
+                    difficulty = "moderate"
+                asked_in = str(x.get("asked_in", "")).strip() or "Common pattern"
+                if len(asked_in) > 200:
+                    asked_in = asked_in[:200]
+                why_fail = str(x.get("why_students_fail", "")).strip() or (
+                    "Misread options or rushed under time pressure."
+                )
+                if len(why_fail) > 500:
+                    why_fail = why_fail[:500]
+                out.append({
+                    "question_type": "multiple_choice",
+                    "section": section,
+                    "question": q,
+                    "options": opts,
+                    "correct_answer": letter,
+                    "study_topic": topic,
+                    "difficulty": difficulty,
+                    "asked_in": asked_in,
+                    "why_students_fail": why_fail,
+                    "explanation": expl,
+                })
+        except (TypeError, ValueError):
+            return []
+
+        if len(out) < PLAN_QUESTION_COUNT:
+            logger.warning(
+                "Parsed only %d/%d aptitude questions (dropped invalid rows or truncated JSON).",
+                len(out),
+                PLAN_QUESTION_COUNT,
+            )
+        return out
 
     def _parse_yes_no_answer(self, raw) -> str | None:
         s = str(raw).strip().lower()
