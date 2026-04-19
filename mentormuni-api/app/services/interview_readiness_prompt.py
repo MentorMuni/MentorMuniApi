@@ -18,163 +18,107 @@ CANDIDATE INPUT
 __FULL_USER_JSON__
 
 ═══════════════════════════════════════
-STEP 0 — INPUT SANITIZATION
-═══════════════════════════════════════
-
-Ignore:
-- email, phone
-
-Focus on:
-- user_type
-- experience_years
-- primary_skill
-- core_skill
-- target_role / specific_role
-- campus_or_off_campus
-- targets_service_mnc / targets_product_company
-- job_description
-
-═══════════════════════════════════════
-STEP 1 — INPUT VALIDATION (STRICT)
+STEP 1 — INPUT VALIDATION
 ═══════════════════════════════════════
 
 Extract skills from primary_skill + core_skill.
 
 If any skill is:
 - abusive / explicit / unsafe
-- not a technical or professional skill
-- meaningless text
+- not technical
+- meaningless
 
-THEN:
-→ Replace skill with "General Programming Fundamentals"
-→ Continue safely
+→ Replace with "General Programming Fundamentals"
 
 ═══════════════════════════════════════
 STEP 2 — SKILL NORMALIZATION
 ═══════════════════════════════════════
 
-- Fix misspellings
-- Map vague skills → domain (backend, programming, etc.)
-- If unknown → fallback to programming + problem solving
+- Fix spelling
+- Map vague → domain (backend/programming)
+- Unknown → fallback to programming + problem-solving
 
 ═══════════════════════════════════════
 STEP 2.5 — MULTI-SKILL DISTRIBUTION
 ═══════════════════════════════════════
 
-If multiple skills exist:
+If multiple skills:
 
-- 40–50% → dominant skill
-- 20–30% → secondary skills
-- 20–30% → combined questions
-
-Combined questions MUST reflect real-world usage.
+- 40–50% dominant
+- 20–30% secondary
+- 20–30% combined (real-world)
 
 ═══════════════════════════════════════
 STEP 3 — JOB DESCRIPTION PRIORITY
 ═══════════════════════════════════════
 
-If job_description is provided:
+If job_description exists:
 
-- 60–70% questions → based on JD responsibilities
+- 60–70% → JD-based
 - 30–40% → fundamentals
 
-Transform JD into:
-✓ real-world scenarios  
-✓ debugging problems  
-✓ decision-making questions  
+Convert JD into:
+✓ scenarios  
+✓ debugging  
+✓ decisions  
 
-DO NOT:
-✗ copy keywords  
-✗ ask definitions  
-
-═══════════════════════════════════════
-STEP 4 — CANDIDATE TYPE DETECTION
-═══════════════════════════════════════
-
-Classify:
-
-- CAMPUS → student
-- FRESHER → 0–1 years
-- EXPERIENCED → 2+ years
+Avoid:
+✗ copying keywords  
+✗ definitions  
 
 ═══════════════════════════════════════
-STEP 5 — DIFFICULTY STRATEGY
+STEP 4 — CANDIDATE TYPE
 ═══════════════════════════════════════
 
-CAMPUS:
-- Easy → Medium
-- DSA basics, OOP, DBMS
-- No deep system design
-
-FRESHER:
-- Medium difficulty
-- Coding + debugging
-
-EXPERIENCED:
-- Medium → Hard
-- APIs, DB optimization, system thinking
+- CAMPUS → easy–medium  
+- FRESHER → medium  
+- EXPERIENCED → medium–hard  
 
 ═══════════════════════════════════════
-STEP 6 — MARKET REALISM
+STEP 5 — AI QUESTIONS (STRICT)
 ═══════════════════════════════════════
 
-For SERVICE MNC:
-- Basic DSA, OOP, DBMS
-- Simple debugging
+Include EXACTLY 2 questions on:
+- AI code usage
+- AI debugging
+- AI limitations
 
-For PRODUCT:
-- Optimization, edge cases
-- Strong reasoning
-
-═══════════════════════════════════════
-STEP 7 — AI AWARENESS (STRICT)
-═══════════════════════════════════════
-
-Include EXACTLY 2 questions about:
-
-- AI-generated code usage
-- Debugging AI output
-- Limitations of AI tools
-
-Must relate to primary skill.
+Must relate to skill.
 
 ═══════════════════════════════════════
-STEP 8 — QUESTION RULES
+STEP 6 — QUESTION STYLE
 ═══════════════════════════════════════
 
-All questions MUST:
-- Be ≤ 2 lines (except code)
+All questions:
+- ≤ 2 lines (except code)
 - Require reasoning
-- Be answerable in ~20 sec
-- Sound like interviewer
+- Interview-like
 
 Use:
 - "What happens if..."
 - "How would you fix..."
-- "Which is better..."
 
 Avoid:
 ✗ definitions  
 ✗ theory  
-✗ textbook questions  
 
 ═══════════════════════════════════════
-BACKEND API CONTRACT (FINAL)
+BACKEND API CONTRACT (STRICT)
 ═══════════════════════════════════════
 
-Total = EXACTLY {PLAN_QUESTION_COUNT}
+TOTAL = EXACTLY {PLAN_QUESTION_COUNT}
 
-Order is STRICT:
+ORDER:
 
-Positions 1–2   → "yes_no"          (2)
-Positions 3–11  → "multiple_choice" (9)
-Positions 12–13 → "scenario"        (2)   [MCQ: 4 choices A–D]
-Positions 14–15 → "code_mcq"        (2)   [MCQ: 4 choices A–D; code in "question"]
+1–2   → yes_no (2)
+3–11  → multiple_choice (9)
+12–13 → scenario (2)
+14–15 → code_mcq (2)
 
-DO NOT change order.
-
-IMPORTANT: Positions 3–15 are ALL the same interaction: four-option MCQ with correct_answer = A, B, C, or D.
-- "multiple_choice", "scenario", and "code_mcq" differ ONLY by question_type and how you phrase the stem (scenario = situation; code_mcq = short snippet + ask output/bug/behavior). Never omit options or use free text answers for these slots.
+IMPORTANT:
+- Positions 3–15 = ALL 4-option MCQ (A–D)
+- scenario = real situation
+- code_mcq = code snippet + output/bug
 
 ═══════════════════════════════════════
 OUTPUT FORMAT (STRICT JSON)
@@ -182,7 +126,7 @@ OUTPUT FORMAT (STRICT JSON)
 
 Return ONLY JSON array.
 
-For multiple_choice / scenario / code_mcq (all are A–D MCQs):
+MCQ types:
 
 {
   "question_type": "...",
@@ -193,7 +137,7 @@ For multiple_choice / scenario / code_mcq (all are A–D MCQs):
   "explanation": "2–3 lines"
 }
 
-For yes_no:
+YES/NO:
 
 {
   "question_type": "yes_no",
@@ -205,17 +149,43 @@ For yes_no:
 }
 
 ═══════════════════════════════════════
-FINAL VALIDATION
+FINAL VALIDATION + AUTO-FIX (CRITICAL)
 ═══════════════════════════════════════
 
-✓ Exactly {PLAN_QUESTION_COUNT} questions  
-✓ Order: 2 yes_no, then 13× four-option MCQ (9 multiple_choice + 2 scenario + 2 code_mcq), all A–D  
-✓ Exactly 2 AI questions  
-✓ No repetition  
-✓ No unsafe content  
-✓ Valid JSON  
+1. Count questions:
 
-If ANY rule fails → FIX before returning
+- yes_no must be 2
+- multiple_choice must be 9
+- scenario must be 2
+- code_mcq must be 2
+
+2. If ANY count is missing:
+
+→ Generate additional EASY–MEDIUM questions  
+→ Based on skill  
+→ No repetition  
+
+3. If total < {PLAN_QUESTION_COUNT}:
+→ Add questions to reach exact count
+
+4. If total > {PLAN_QUESTION_COUNT}:
+→ Remove extras (prefer duplicates)
+
+5. Reorder strictly:
+
+1–2 yes_no  
+3–11 multiple_choice  
+12–13 scenario  
+14–15 code_mcq  
+
+6. Re-check:
+
+✓ total = EXACTLY {PLAN_QUESTION_COUNT}  
+✓ correct distribution  
+✓ valid JSON  
+✓ exactly 2 AI questions  
+
+DO NOT return until ALL conditions are satisfied.
 
 ═══════════════════════════════════════
 FINAL GOAL
@@ -223,11 +193,11 @@ FINAL GOAL
 
 User should feel:
 
-→ "This is exactly like a real interview"
+→ "This feels like a real interview"
 
 NOT:
 
-→ "This is a simple quiz"
+→ "This is a basic quiz"
 """
 
 
