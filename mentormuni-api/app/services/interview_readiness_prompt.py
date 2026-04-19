@@ -168,10 +168,13 @@ Order is STRICT:
 
 Positions 1–2   → "yes_no"          (2)
 Positions 3–11  → "multiple_choice" (9)
-Positions 12–13 → "scenario"        (2)
-Positions 14–15 → "code_mcq"        (2)
+Positions 12–13 → "scenario"        (2)   [MCQ: 4 choices A–D]
+Positions 14–15 → "code_mcq"        (2)   [MCQ: 4 choices A–D; code in "question"]
 
 DO NOT change order.
+
+IMPORTANT: Positions 3–15 are ALL the same interaction: four-option MCQ with correct_answer = A, B, C, or D.
+- "multiple_choice", "scenario", and "code_mcq" differ ONLY by question_type and how you phrase the stem (scenario = situation; code_mcq = short snippet + ask output/bug/behavior). Never omit options or use free text answers for these slots.
 
 ═══════════════════════════════════════
 OUTPUT FORMAT (STRICT JSON)
@@ -179,7 +182,7 @@ OUTPUT FORMAT (STRICT JSON)
 
 Return ONLY JSON array.
 
-For multiple_choice / scenario / code_mcq:
+For multiple_choice / scenario / code_mcq (all are A–D MCQs):
 
 {
   "question_type": "...",
@@ -206,7 +209,7 @@ FINAL VALIDATION
 ═══════════════════════════════════════
 
 ✓ Exactly {PLAN_QUESTION_COUNT} questions  
-✓ Order: 2 yes_no, 9 MCQ, 2 scenario, 2 code  
+✓ Order: 2 yes_no, then 13× four-option MCQ (9 multiple_choice + 2 scenario + 2 code_mcq), all A–D  
 ✓ Exactly 2 AI questions  
 ✓ No repetition  
 ✓ No unsafe content  

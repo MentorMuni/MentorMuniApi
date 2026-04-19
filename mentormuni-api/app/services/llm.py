@@ -16,7 +16,8 @@ logger = logging.getLogger("llm_service")
 
 MAX_TOKENS_LEGACY_PLAN = 1500
 MAX_TOKENS_MIXED_PLAN = 3200
-MAX_TOKENS_INTERVIEW_READINESS_PLAN = 3600
+# 15 questions × (stem + 4 options + explanation) can exceed 3–4k completion tokens; low limits truncate JSON and drop tail rows (often scenario/code_mcq).
+MAX_TOKENS_INTERVIEW_READINESS_PLAN = 10000
 MAX_TOKENS_SKILL_READINESS_PLAN = 3000
 MAX_TOKENS_APTITUDE_READINESS_PLAN = 12000
 MAX_TOKENS_VALIDATE = 20
@@ -295,7 +296,13 @@ No extra text.
                 max_tokens=MAX_TOKENS_INTERVIEW_READINESS_PLAN,
                 temperature=0.3,
             )
-            content = response.choices[0].message.content or ""
+            choice = response.choices[0]
+            content = choice.message.content or ""
+            if getattr(choice, "finish_reason", None) == "length":
+                logger.warning(
+                    "Interview readiness plan: LLM hit max_tokens (finish_reason=length); JSON may be truncated — expect fewer than %d questions or invalid tail rows.",
+                    PLAN_QUESTION_COUNT,
+                )
             usage = getattr(response, "usage", None)
             if usage:
                 tokens = getattr(usage, "total_tokens", 0) or 0
