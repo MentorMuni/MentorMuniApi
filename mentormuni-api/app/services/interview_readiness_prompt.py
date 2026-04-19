@@ -17,223 +17,202 @@ CANDIDATE INPUT
 
 __FULL_USER_JSON__
 
-Expected fields (infer from the JSON above when phrased differently):
-{
-  "user_type": "campus" | "fresher" | "experienced",
-  "experience_years": number,
-  "primary_skill": "string",
-  "target_role": "string",
-  "job_description": "string (optional)"
-}
-
-If experience_years is missing → treat as FRESHER
-If job_description is empty → rely on primary_skill + target_role
-
 ═══════════════════════════════════════
-STEP 0 — INPUT VALIDATION (STRICT)
+STEP 0 — INPUT SANITIZATION
 ═══════════════════════════════════════
 
-If primary_skill OR job_description contains abusive, explicit, or clearly non-technical content:
-→ Do NOT return only an error object. The API requires a JSON ARRAY of exactly {PLAN_QUESTION_COUNT} question objects.
-→ Instead, output {PLAN_QUESTION_COUNT} neutral, beginner-level technical screening questions that match the OUTPUT schema below.
+Ignore:
+- email, phone
+
+Focus on:
+- user_type
+- experience_years
+- primary_skill
+- core_skill
+- target_role / specific_role
+- campus_or_off_campus
+- targets_service_mnc / targets_product_company
+- job_description
 
 ═══════════════════════════════════════
-STEP 1 — SKILL NORMALIZATION
+STEP 1 — INPUT VALIDATION (STRICT)
 ═══════════════════════════════════════
 
-If primary_skill is:
-- misspelled → infer closest valid skill
-- vague → map to general domain (backend/programming)
-- niche → focus on practical usage
+Extract skills from primary_skill + core_skill.
 
-If completely unknown:
-→ fallback to general programming + problem-solving questions
+If any skill is:
+- abusive / explicit / unsafe
+- not a technical or professional skill
+- meaningless text
 
-DO NOT hallucinate unknown technologies.
-
-═══════════════════════════════════════
-STEP 2 — CANDIDATE TYPE DETECTION
-═══════════════════════════════════════
-
-Classify into ONE:
-
-1. CAMPUS  → college student / graduate
-2. FRESHER → 0–1 years
-3. EXPERIENCED → 2+ years
-
-If ambiguous:
-→ prefer FRESHER over CAMPUS
-→ prefer EXPERIENCED over FRESHER
+THEN:
+→ Replace skill with "General Programming Fundamentals"
+→ Continue safely
 
 ═══════════════════════════════════════
-STEP 3 — QUESTION DISTRIBUTION (THEMATIC — MAP INTO API SLOTS BELOW)
+STEP 2 — SKILL NORMALIZATION
 ═══════════════════════════════════════
 
-TOTAL QUESTIONS = EXACTLY {PLAN_QUESTION_COUNT}
-
-Use the following as *topic* guidance; you MUST still follow BACKEND API CONTRACT (fixed question_type order).
-
-═══════════════════════════════════════
-FOR CAMPUS / FRESHER
-═══════════════════════════════════════
-
-1. FUNDAMENTALS → 5 questions
-- OOP, DBMS, basic DSA
-- applied (NOT theory)
-
-2. PROJECT → 4 questions
-- 2 scenario (design / scale / failure)
-- 2 multiple_choice (decision-based)
-
-3. PRACTICAL / DEBUGGING → 2 questions (multiple_choice)
-- API latency
-- bug fixing
-- DB performance
-
-4. AI AWARENESS → 2 questions
-- 1 yes_no
-- 1 multiple_choice
-- MUST relate to primary_skill
-
-5. CODE UNDERSTANDING → 2 questions (code_mcq)
-- output / bug / behavior
+- Fix misspellings
+- Map vague skills → domain (backend, programming, etc.)
+- If unknown → fallback to programming + problem solving
 
 ═══════════════════════════════════════
-FOR EXPERIENCED
+STEP 2.5 — MULTI-SKILL DISTRIBUTION
 ═══════════════════════════════════════
 
-1. Core technical depth → 5 (multiple_choice)
-2. System design / APIs → 3 (scenario)
-3. Debugging → 3 (multiple_choice)
-4. Architecture / trade-offs → 2 (scenario)
-5. Code → 2 (code_mcq)
+If multiple skills exist:
+
+- 40–50% → dominant skill
+- 20–30% → secondary skills
+- 20–30% → combined questions
+
+Combined questions MUST reflect real-world usage.
 
 ═══════════════════════════════════════
-STEP 4 — BEHAVIORAL FILTER (CRITICAL)
+STEP 3 — JOB DESCRIPTION PRIORITY
 ═══════════════════════════════════════
 
-DO NOT generate:
-✗ HR questions
-✗ personality questions
-✗ generic teamwork/conflict questions
+If job_description is provided:
 
-STRICTLY FORBIDDEN:
-- "What would you do if your teammate..."
-- "Are you a team player?"
-- "How do you handle conflict?"
+- 60–70% questions → based on JD responsibilities
+- 30–40% → fundamentals
 
-INSTEAD:
-Convert into technical decision scenarios.
+Transform JD into:
+✓ real-world scenarios  
+✓ debugging problems  
+✓ decision-making questions  
 
-Example:
-✓ "A critical bug is found before deployment. What is the best action?"
+DO NOT:
+✗ copy keywords  
+✗ ask definitions  
 
 ═══════════════════════════════════════
-STEP 5 — QUESTION TYPE RULES
+STEP 4 — CANDIDATE TYPE DETECTION
 ═══════════════════════════════════════
 
-yes_no:
-- test misconceptions
-- not obvious
-- correct_answer = "Yes" or "No"
-- options = ["Yes", "No"]   (optional; may omit if you output minimal schema)
+Classify:
 
-multiple_choice:
-- exactly 4 options
-- 1 correct, 3 strong distractors
-
-scenario:
-- real-world engineering situation
-- decision-making based
-
-code_mcq:
-- 4–10 lines of code
-- use \n for formatting
-- ask output / bug / behavior
+- CAMPUS → student
+- FRESHER → 0–1 years
+- EXPERIENCED → 2+ years
 
 ═══════════════════════════════════════
-STEP 6 — QUESTION QUALITY RULES
+STEP 5 — DIFFICULTY STRATEGY
 ═══════════════════════════════════════
 
-ALL questions MUST:
+CAMPUS:
+- Easy → Medium
+- DSA basics, OOP, DBMS
+- No deep system design
 
-- be ≤ 2 lines (except code)
-- be answerable in ~20 seconds
-- require reasoning (NOT recall)
-- feel like real interview questions
+FRESHER:
+- Medium difficulty
+- Coding + debugging
 
-Use patterns like:
+EXPERIENCED:
+- Medium → Hard
+- APIs, DB optimization, system thinking
+
+═══════════════════════════════════════
+STEP 6 — MARKET REALISM
+═══════════════════════════════════════
+
+For SERVICE MNC:
+- Basic DSA, OOP, DBMS
+- Simple debugging
+
+For PRODUCT:
+- Optimization, edge cases
+- Strong reasoning
+
+═══════════════════════════════════════
+STEP 7 — AI AWARENESS (STRICT)
+═══════════════════════════════════════
+
+Include EXACTLY 2 questions about:
+
+- AI-generated code usage
+- Debugging AI output
+- Limitations of AI tools
+
+Must relate to primary skill.
+
+═══════════════════════════════════════
+STEP 8 — QUESTION RULES
+═══════════════════════════════════════
+
+All questions MUST:
+- Be ≤ 2 lines (except code)
+- Require reasoning
+- Be answerable in ~20 sec
+- Sound like interviewer
+
+Use:
 - "What happens if..."
-- "Which approach is better..."
-- "Why would this fail..."
 - "How would you fix..."
+- "Which is better..."
 
-STRICTLY AVOID:
-✗ definition questions
-✗ textbook theory
-✗ obvious answers
-
-═══════════════════════════════════════
-BACKEND API CONTRACT (NON-NEGOTIABLE)
-═══════════════════════════════════════
-
-The response MUST be ONE JSON array of exactly {PLAN_QUESTION_COUNT} objects in this EXACT order and count:
-
-Positions 1–4   → "yes_no"          (EXACTLY 4)
-Positions 5–11  → "multiple_choice" (EXACTLY 7)
-Positions 12–13 → "scenario"        (EXACTLY 2)
-Positions 14–15 → "code_mcq"        (EXACTLY 2)
-
-Map STEP 3 thematic buckets into these slots without changing this order.
-Across the full set: include exactly 2 questions that test AI/LLM awareness tied to primary_skill (place them in valid slots per above).
+Avoid:
+✗ definitions  
+✗ theory  
+✗ textbook questions  
 
 ═══════════════════════════════════════
-STEP 7 — OUTPUT FORMAT (STRICT JSON)
+BACKEND API CONTRACT (FINAL)
 ═══════════════════════════════════════
 
-Return ONLY a JSON array of EXACTLY {PLAN_QUESTION_COUNT} objects.
+Total = EXACTLY {PLAN_QUESTION_COUNT}
 
-NO markdown
-NO explanation outside JSON
+Order is STRICT:
 
-Schema:
+Positions 1–2   → "yes_no"          (2)
+Positions 3–11  → "multiple_choice" (9)
+Positions 12–13 → "scenario"        (2)
+Positions 14–15 → "code_mcq"        (2)
+
+DO NOT change order.
+
+═══════════════════════════════════════
+OUTPUT FORMAT (STRICT JSON)
+═══════════════════════════════════════
+
+Return ONLY JSON array.
 
 For multiple_choice / scenario / code_mcq:
+
 {
-  "question_type": "multiple_choice" | "scenario" | "code_mcq",
-  "question": "string",
+  "question_type": "...",
+  "question": "...",
   "options": ["A) ...", "B) ...", "C) ...", "D) ..."],
-  "correct_answer": "A" | "B" | "C" | "D",
-  "study_topic": "2–4 word concept",
-  "explanation": "2–3 lines reasoning"
+  "correct_answer": "A/B/C/D",
+  "study_topic": "2–4 words",
+  "explanation": "2–3 lines"
 }
 
 For yes_no:
+
 {
   "question_type": "yes_no",
-  "question": "string",
+  "question": "...",
   "options": ["Yes", "No"],
-  "correct_answer": "Yes" | "No",
-  "study_topic": "2–4 word concept",
-  "explanation": "2–3 lines reasoning"
+  "correct_answer": "Yes/No",
+  "study_topic": "2–4 words",
+  "explanation": "2–3 lines"
 }
 
 ═══════════════════════════════════════
-STEP 8 — FINAL VALIDATION (MANDATORY)
+FINAL VALIDATION
 ═══════════════════════════════════════
 
-Ensure:
+✓ Exactly {PLAN_QUESTION_COUNT} questions  
+✓ Order: 2 yes_no, 9 MCQ, 2 scenario, 2 code  
+✓ Exactly 2 AI questions  
+✓ No repetition  
+✓ No unsafe content  
+✓ Valid JSON  
 
-- Exactly {PLAN_QUESTION_COUNT} questions
-- BACKEND API CONTRACT slot order satisfied (4 yes_no, 7 multiple_choice, 2 scenario, 2 code_mcq)
-- AI awareness = exactly 2 (within valid slots)
-- Code (code_mcq) = exactly 2 (positions 14–15)
-- No HR or generic behavioral questions
-- Questions primarily tied to primary_skill / target_role / job_description when present
-- No repeated study_topic
-- Valid JSON (parseable)
-
-If ANY rule is violated → FIX before returning.
+If ANY rule fails → FIX before returning
 
 ═══════════════════════════════════════
 FINAL GOAL
@@ -241,7 +220,7 @@ FINAL GOAL
 
 User should feel:
 
-→ "This is exactly what real interviews ask"
+→ "This is exactly like a real interview"
 
 NOT:
 
