@@ -10,6 +10,7 @@ from app.services.guard_layer import GuardLayer
 from app.services.skill_readiness_prompt import render_skill_readiness_prompt
 from app.services.interview_readiness_prompt import render_interview_readiness_prompt
 from app.services.aptitude_readiness_prompt import render_aptitude_readiness_prompt
+from app.services.ai_readiness_prompt import render_ai_readiness_prompt
 from app.schemas.ai import InterviewReadinessPlanRequest
 
 logger = logging.getLogger("llm_service")
@@ -20,6 +21,7 @@ MAX_TOKENS_MIXED_PLAN = 3200
 MAX_TOKENS_INTERVIEW_READINESS_PLAN = 10000
 MAX_TOKENS_SKILL_READINESS_PLAN = 3000
 MAX_TOKENS_APTITUDE_READINESS_PLAN = 12000
+MAX_TOKENS_AI_READINESS_PLAN = 7000
 MAX_TOKENS_VALIDATE = 20
 PLAN_QUESTION_COUNT = 15
 APTITUDE_SECTION_ORDER: list[str] = (
@@ -46,9 +48,10 @@ If YES, respond with just: YES"""
         try:
             response = await self.guard_layer.run_with_timeout(
                 self._client.chat.completions.create(
-                    model="gpt-4o-mini",
+                    model="gpt-4o",
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=MAX_TOKENS_VALIDATE,
+                    temperature=0,
                 )
             )
             content = (response.choices[0].message.content or "").strip().upper()
@@ -158,9 +161,10 @@ No extra text.
 
         async def call_openai():
             response = await self._client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-4o",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=MAX_TOKENS_LEGACY_PLAN,
+                temperature=0,
             )
             content = response.choices[0].message.content or ""
             usage = getattr(response, "usage", None)
@@ -185,10 +189,10 @@ No extra text.
 
         async def call_openai():
             response = await self._client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-4o",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=MAX_TOKENS_SKILL_READINESS_PLAN,
-                temperature=0.3,
+                temperature=0,
             )
             content = response.choices[0].message.content or ""
             usage = getattr(response, "usage", None)
@@ -291,10 +295,10 @@ No extra text.
 
         async def call_openai():
             response = await self._client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-4o",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=MAX_TOKENS_INTERVIEW_READINESS_PLAN,
-                temperature=0.3,
+                temperature=0,
             )
             choice = response.choices[0]
             content = choice.message.content or ""
@@ -325,7 +329,7 @@ No extra text.
 
         async def call_openai():
             response = await self._client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-4o",
                 messages=[
                     {
                         "role": "system",
@@ -337,7 +341,7 @@ No extra text.
                     {"role": "user", "content": prompt},
                 ],
                 max_tokens=MAX_TOKENS_APTITUDE_READINESS_PLAN,
-                temperature=0.3,
+                temperature=0,
                 response_format={"type": "json_object"},
             )
             choice = response.choices[0]
@@ -355,6 +359,48 @@ No extra text.
                 raise ValueError(
                     f"Incomplete aptitude plan: parsed {len(parsed)}/{PLAN_QUESTION_COUNT} valid questions "
                     "(output may be truncated, invalid JSON, or rows failed validation — check logs)."
+                )
+            return parsed
+
+        return await self.guard_layer.run_with_timeout(
+            self.guard_layer.retry_with_fallback(call_openai)
+        )
+
+    async def generate_ai_readiness_plan(self, request) -> list[dict]:
+        """AI readiness: scenario-heavy beginner/intermediate all-MCQ quiz."""
+        prompt = render_ai_readiness_prompt(
+            user_type=request.user_type,
+            experience_years=request.experience_years,
+            primary_skill=request.primary_skill,
+            target_role=request.target_role or "Software Engineer",
+            ai_tools_used=getattr(request, "ai_tools_used", None),
+            workflow_context=getattr(request, "workflow_context", None),
+            plan_question_count=PLAN_QUESTION_COUNT,
+        )
+
+        async def call_openai():
+            response = await self._client.chat.completions.create(
+                model="gpt-4o",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=MAX_TOKENS_AI_READINESS_PLAN,
+                temperature=0,
+            )
+            choice = response.choices[0]
+            content = choice.message.content or ""
+            if getattr(choice, "finish_reason", None) == "length":
+                logger.warning(
+                    "AI readiness: LLM hit max_tokens (finish_reason=length); output may be truncated."
+                )
+            usage = getattr(response, "usage", None)
+            if usage:
+                tokens = getattr(usage, "total_tokens", 0) or 0
+                logger.info("LLM tokens used: %d (ai readiness plan)", tokens)
+            parsed = self._parse_ai_readiness_plan(content)
+            if len(parsed) != PLAN_QUESTION_COUNT:
+                logger.warning(
+                    "AI readiness plan returned %d/%d valid rows.",
+                    len(parsed),
+                    PLAN_QUESTION_COUNT,
                 )
             return parsed
 
@@ -472,6 +518,46 @@ No extra text.
                 len(out),
                 PLAN_QUESTION_COUNT,
             )
+        return out
+
+    def _parse_ai_readiness_plan(self, content: str) -> list[dict]:
+        """Parse AI readiness JSON into up to 15 multiple_choice questions."""
+        items = self._extract_aptitude_questions_from_llm(content)
+        if not items:
+            logger.warning("AI readiness plan: no JSON questions list found in model output.")
+            return []
+
+        out: List[dict] = []
+        try:
+            for x in items:
+                if len(out) >= PLAN_QUESTION_COUNT:
+                    break
+                if not isinstance(x, dict) or "question" not in x:
+                    continue
+                q = str(x["question"]).strip()
+                if not q:
+                    continue
+                opts = self._normalize_mc_options(x.get("options"))
+                if opts is None:
+                    continue
+                letter = self._normalize_mc_letter(x.get("correct_answer"), opts)
+                if letter is None:
+                    continue
+                topic = str(x.get("study_topic", "")).strip()
+                if not topic:
+                    topic = q[:60] + ("..." if len(q) > 60 else "")
+                expl = self._explanation_or_default(x.get("explanation"))
+                out.append({
+                    "question_type": "multiple_choice",
+                    "question": q,
+                    "options": opts,
+                    "correct_answer": letter,
+                    "study_topic": topic,
+                    "explanation": expl,
+                })
+        except (TypeError, ValueError):
+            return []
+
         return out
 
     def _parse_yes_no_answer(self, raw) -> str | None:

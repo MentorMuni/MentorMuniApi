@@ -428,6 +428,76 @@ class AptitudeReadinessPlanRequest(BaseModel):
         return self
 
 
+class AIReadinessPlanRequest(BaseModel):
+    """Request body for POST /interview-ready/ai-readiness/plan (AI awareness readiness, all MCQ)."""
+
+    user_type: str = Field(
+        ...,
+        description=(
+            'One of: college_student_year_1, college_student_year_2, college_student_year_3, '
+            "college_student_year_4, it_professional"
+        ),
+    )
+    experience_years: Optional[int] = Field(default=0, ge=0, le=50)
+    primary_skill: str = Field(
+        default="Software Engineering Fundamentals",
+        min_length=1,
+        max_length=200,
+        description="Primary technical area (used to personalize AI scenarios).",
+    )
+    target_role: Optional[str] = Field(default="Software Engineer", max_length=120)
+    ai_tools_used: Optional[str] = Field(
+        default=None,
+        max_length=300,
+        description="Optional tools the user already uses (e.g., ChatGPT, Copilot, Cursor).",
+    )
+    workflow_context: Optional[str] = Field(
+        default=None,
+        max_length=1000,
+        description="Optional context: projects/tasks where AI is used.",
+    )
+    email: Optional[str] = Field(default=None, max_length=255)
+    phone: Optional[str] = Field(default=None, max_length=20)
+
+    @field_validator("primary_skill")
+    @classmethod
+    def validate_primary_skill_is_safe(cls, v: str) -> str:
+        from app.validators.primary_skill import validate_primary_skill as _validate
+
+        return _validate(v)
+
+    @field_validator("target_role", "ai_tools_used", "workflow_context")
+    @classmethod
+    def strip_optional_strings(cls, v):
+        if v is None:
+            return None
+        s = str(v).strip()
+        return None if not s else s
+
+    @field_validator("email", "phone")
+    @classmethod
+    def empty_to_none_contact(cls, v):
+        if v is None:
+            return None
+        s = str(v).strip()
+        return None if not s else s
+
+    @field_validator("user_type")
+    @classmethod
+    def validate_user_type(cls, v: str) -> str:
+        from app.validators.user_type import normalize_user_type
+
+        return normalize_user_type(v)
+
+    @model_validator(mode="after")
+    def set_target_role_default(self):
+        if not self.target_role or not str(self.target_role).strip():
+            object.__setattr__(self, "target_role", "Software Engineer")
+        if not self.primary_skill or not str(self.primary_skill).strip():
+            object.__setattr__(self, "primary_skill", "Software Engineering Fundamentals")
+        return self
+
+
 class SkillReadinessYesNoItem(BaseModel):
     question_type: Literal["yes_no"] = "yes_no"
     question: str = Field(..., min_length=1)
@@ -523,6 +593,12 @@ class AptitudeReadinessPlanResponse(BaseModel):
     """Aptitude readiness: 15 placement-style MCQs with strict section distribution."""
 
     evaluation_plan: List[AptitudeReadinessMultipleChoiceItem]
+
+
+class AIReadinessPlanResponse(BaseModel):
+    """AI readiness: 15 scenario-heavy beginner/intermediate MCQs."""
+
+    evaluation_plan: List[SkillReadinessMultipleChoiceItem]
 
 
 class EvaluateRequest(BaseModel):

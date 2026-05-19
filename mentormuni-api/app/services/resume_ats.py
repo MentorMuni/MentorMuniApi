@@ -255,6 +255,52 @@ _ACTION_VERBS = (
 )
 
 
+def _is_likely_resume(text: str) -> tuple[bool, str]:
+    """
+    Lightweight resume classifier to block arbitrary PDFs from being scored as resumes.
+    Deterministic and fast: requires multiple resume-structure signals.
+    """
+    t = (text or "").strip()
+    if len(t) < 200:
+        return False, "The uploaded file does not look like a resume (too little structured content)."
+
+    lower = t.lower()
+
+    has_email = re.search(r"[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}", t, re.I) is not None
+    has_phone = re.search(r"(\+?\d[\d\s\-\(\)]{7,}\d)", t) is not None
+    section_hits = sum(1 for p in _SECTION_PATTERNS if re.search(p, lower))
+    has_skillish = re.search(
+        r"\b(skills?|technologies|tech stack|programming|languages?|frameworks?|tools?)\b",
+        lower,
+    ) is not None
+    has_timeline = re.search(
+        r"\b(19|20)\d{2}\b|\b(present|current)\b|\b(intern(ship)?|engineer|developer|analyst)\b",
+        lower,
+    ) is not None
+    bulletish = sum(
+        1
+        for ln in t.splitlines()
+        if re.match(r"^\s*[\-\u2022\u2023\*]\s+", ln) or re.match(r"^\s*\d+[\.)]\s+", ln)
+    )
+
+    score = 0
+    score += 2 if has_email else 0
+    score += 2 if has_phone else 0
+    score += min(4, section_hits)  # up to 4 points
+    score += 1 if has_skillish else 0
+    score += 1 if has_timeline else 0
+    score += 1 if bulletish >= 2 else 0
+
+    # Require evidence from multiple independent resume signals.
+    # Typical resumes pass comfortably; random docs rarely satisfy this.
+    if score >= 6 and section_hits >= 2 and (has_email or has_phone):
+        return True, ""
+    return (
+        False,
+        "The uploaded file appears to be non-resume content. Please upload a resume/CV with sections like Experience, Education, and Skills.",
+    )
+
+
 def _formatting_score(text: str) -> int:
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     score = 35
@@ -405,6 +451,10 @@ def _default_portal_tips(missing: List[str], target_role: str) -> List[str]:
 
 
 def analyze_resume(text: str, target_role: str) -> dict:
+    ok_resume, reason = _is_likely_resume(text)
+    if not ok_resume:
+        raise ValueError(reason)
+
     tr = (target_role or "").strip() or "Software Developer"
     resume_lower = text.lower()
     kw_score, matched, missing = _keyword_analysis(resume_lower, tr)

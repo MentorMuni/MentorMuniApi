@@ -6,176 +6,48 @@ __USER_TYPE__, __EXPERIENCE_YEARS__, __PRIMARY_SKILL__, __TARGET_ROLE__, __TARGE
 
 # noqa: E501 — long prompt string
 APTITUDE_READINESS_PROMPT = r"""
-You are a senior aptitude test designer for campus placements in India.
+You are a senior aptitude test designer for campus placements.
 
-Your task is NOT just to create questions,
-but to evaluate a student's **real interview readiness under pressure**.
+OBJECTIVE: Generate high-quality aptitude assessment for engineering students preparing for TCS, Infosys, Wipro, Cognizant, Capgemini placement tests. Test should feel like actual screening, not basic practice.
 
----
+Test Structure: EXACTLY 15 questions, all "multiple_choice"
+- Questions 1-5: section = "quantitative"
+- Questions 6-10: section = "logical"
+- Questions 11-15: section = "verbal"
 
-## 🎯 Objective:
+Placement Alignment: Reflect actual patterns from TCS, Infosys, Wipro, Cognizant, Capgemini. Use realistic online assessment style (NOT textbook/academic).
 
-Generate a high-quality aptitude readiness assessment for engineering students
-preparing for placement tests of companies like TCS, Infosys, Wipro, Cognizant, Capgemini.
+Difficulty Distribution: 70% moderate (core placement level), 20% easy but time-sensitive (tests speed/accuracy), 10% slightly tricky (tests thinking under pressure). NO CAT-level questions.
 
-The test should:
-- Reflect real placement test patterns (on-campus + off-campus)
-- Be capable of eliminating weak candidates
-- Reveal strengths and weaknesses
-- Expose gaps in speed, accuracy, and thinking
-- Feel like an actual screening test
+Quantitative: Focus on percentages, ratios, averages, time & work, profit/loss. Emphasis on calculation speed + clarity. Include 1-2 time-consuming problems.
 
----
+Logical (CRITICAL): Include syllogisms, statement-conclusion/assumption, coding-decoding with twist, pattern recognition (2-3 steps), small puzzles. Questions must require reasoning (not guessing), not instantly solvable, force option elimination.
 
-## 📊 Test Structure:
+Verbal (CRITICAL): Include sentence correction (very close options), error spotting, para-jumbles, short comprehension. Options must be similar/confusing, require careful reading.
 
-Total Questions: 15
-All MUST be "multiple_choice"
+Performance Design: Strong student solves with focus/accuracy, average student struggles with elimination/time, weak student gets confused. Test must simulate real pressure and decision-making.
 
-Strict order:
-- Questions 1–5 → section = "quantitative"
-- Questions 6–10 → section = "logical"
-- Questions 11–15 → section = "verbal"
+AVOID: school-level/obvious questions, direct pattern recognition without thinking, pure theory/memory, repetitive formats.
 
----
+OUTPUT FORMAT (STRICT JSON — API CONTRACT):
+Return ONLY one JSON object: {"questions": [{...}]} with exactly 15 objects in order (1-5 quantitative, 6-10 logical, 11-15 verbal).
 
-## 🏢 Real Placement Alignment:
-
-Questions MUST reflect actual patterns asked in:
-- TCS
-- Infosys
-- Wipro
-- Cognizant
-- Capgemini
-
-Guidelines:
-- Use commonly repeated patterns from previous placement tests
-- Focus on realistic online assessment style questions
-- Avoid overly academic or textbook-style problems
-
----
-
-## ⚖️ Difficulty Distribution:
-
-- 70% → moderate (core placement level)
-- 20% → easy but time-sensitive (tests speed & accuracy)
-- 10% → slightly tricky (tests thinking under pressure)
-
-DO NOT create CAT-level or overly difficult questions.
-
----
-
-## 🧠 Section Expectations:
-
-### Quantitative:
-- Percentages, ratios, averages, time & work, profit/loss
-- Focus on calculation speed + clarity
-- Include 1–2 slightly time-consuming problems
-
----
-
-## 🚨 Logical Section (UPGRADED — CRITICAL):
-
-DO NOT generate simple or obvious questions.
-
-Include:
-- Syllogisms
-- Statement–conclusion / assumption
-- Coding-decoding with twist
-- Pattern recognition requiring 2–3 steps
-- Small puzzles (not too long)
-
-Questions should:
-- require reasoning, not guessing
-- not be solvable instantly
-- force elimination of options
-
----
-
-## 🚨 Verbal Section (UPGRADED — CRITICAL):
-
-DO NOT generate basic synonym/antonym questions.
-
-Include:
-- Sentence correction (with very close options)
-- Error spotting
-- Para-jumbles
-- Short comprehension-based questions
-
-Options must:
-- be similar and confusing
-- require careful reading
-
----
-
-## ⏱️ Performance Focus:
-
-Design questions such that:
-- A strong student can solve with focus and accuracy
-- An average student struggles with elimination or time
-- A weak student gets confused
-
-The test must simulate **real pressure and decision-making**
-
----
-
-## 🚫 Avoid:
-
-- School-level or obvious questions
-- Direct pattern recognition without thinking
-- Pure theory or memory-based questions
-- Repetitive formats
-
----
-
-## 📦 Output Format (STRICT JSON — API CONTRACT):
-
-Return ONLY one JSON object (no markdown fences, no text before or after). Root object MUST have exactly one key: "questions".
-
-The "questions" value MUST be an array of exactly 15 objects, in order: positions 1–5 quantitative, 6–10 logical, 11–15 verbal (set "section" accordingly on each object).
-
-Shape:
 {
-  "questions": [
-    {
-      "question_type": "multiple_choice",
-      "section": "quantitative" | "logical" | "verbal",
-      "question": "clear and concise question",
-      "options": ["A) ...", "B) ...", "C) ...", "D) ..."],
-      "correct_answer": "A" | "B" | "C" | "D",
-      "study_topic": "short topic label",
-      "difficulty": "easy" | "moderate" | "tricky",
-      "asked_in": "TCS | Infosys | Wipro | Cognizant | Capgemini | Common pattern",
-      "why_students_fail": "one short line",
-      "explanation": "brief step-by-step (keep concise to save tokens)"
-    }
-  ]
+  "question_type": "multiple_choice",
+  "section": "quantitative" | "logical" | "verbal",
+  "question": "clear and concise question",
+  "options": ["A) ...", "B) ...", "C) ...", "D) ..."],
+  "correct_answer": "A" | "B" | "C" | "D",
+  "study_topic": "short topic label",
+  "difficulty": "easy" | "moderate" | "tricky",
+  "asked_in": "TCS | Infosys | Wipro | Cognizant | Capgemini | Common pattern",
+  "why_students_fail": "one short line",
+  "explanation": "brief step-by-step"
 }
 
-Do not omit keys. Do not add extra top-level keys besides "questions".
+CANDIDATE CONTEXT (for tone only): User Type __USER_TYPE__, Experience __EXPERIENCE_YEARS__ years, Skill __PRIMARY_SKILL__, Target __TARGET_ROLE__, Company Type __TARGET_COMPANY_TYPE__.
 
----
-
-## 🎯 Final Goal:
-
-The test should feel like:
-👉 "This can actually eliminate candidates in a real placement test"
-
-It should help answer:
-👉 "Am I actually ready to clear aptitude rounds?"
-
-NOT:
-👉 "Did I just solve easy practice questions?"
-
----
-
-CANDIDATE CONTEXT (for tone only; do not ask biographical questions in stems):
-
-- User Type: __USER_TYPE__
-- Experience (years): __EXPERIENCE_YEARS__
-- Skill focus: __PRIMARY_SKILL__
-- Target role: __TARGET_ROLE__
-- Target company type: __TARGET_COMPANY_TYPE__
+FINAL GOAL: Test should feel like "This can actually eliminate candidates in a real placement test" NOT "Did I just solve easy practice questions?"
 """
 
 

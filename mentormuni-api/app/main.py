@@ -1,6 +1,7 @@
 import sys
 import os
 import logging
+import asyncio
 
 # Ensure parent dir (mentormuni-api) is on path so 'app' package is found (Railway, etc.)
 _here = os.path.dirname(os.path.abspath(__file__))
@@ -29,6 +30,8 @@ from app.schemas.ai import (
     SkillReadinessPlanResponse,
     AptitudeReadinessPlanRequest,
     AptitudeReadinessPlanResponse,
+    AIReadinessPlanRequest,
+    AIReadinessPlanResponse,
     InterviewReadinessPlanRequest,
     InterviewReadinessPlanResponse,
     EvaluateRequest,
@@ -127,15 +130,24 @@ async def generate_plan(request: Request, body: PlanRequest):
 @limiter.limit("20/minute")
 async def skill_readiness_plan(request: Request, body: SkillReadinessPlanRequest):
     try:
-        is_valid, error_msg = await llm_service.validate_primary_skill(body.primary_skill)
-        if not is_valid:
-            detail = error_msg if error_msg else "Please enter a valid technical skill (e.g. React, .NET, Python)"
-            if not detail.startswith("Please"):
-                detail = f"Please enter a valid technical skill. {detail}"
-            raise HTTPException(status_code=422, detail=detail)
-        evaluation_plan = await guard_layer.run_with_timeout(
-            llm_service.generate_skill_readiness_plan(body)
-        )
+        # OPTIMIZATION: Parallelize skill validation + plan generation
+        async def validate_skill():
+            is_valid, error_msg = await llm_service.validate_primary_skill(body.primary_skill)
+            if not is_valid:
+                detail = error_msg if error_msg else "Please enter a valid technical skill (e.g. React, .NET, Python)"
+                if not detail.startswith("Please"):
+                    detail = f"Please enter a valid technical skill. {detail}"
+                raise HTTPException(status_code=422, detail=detail)
+            return True
+
+        async def generate_plan():
+            return await guard_layer.run_with_timeout(
+                llm_service.generate_skill_readiness_plan(body)
+            )
+
+        # Run validation and generation in parallel
+        _, evaluation_plan = await asyncio.gather(validate_skill(), generate_plan())
+        
         rec = interview_lead_build.lead_from_skill_readiness(
             email=body.email,
             phone=body.phone,
@@ -164,15 +176,24 @@ async def skill_readiness_plan(request: Request, body: SkillReadinessPlanRequest
 @limiter.limit("20/minute")
 async def interview_readiness_plan(request: Request, body: InterviewReadinessPlanRequest):
     try:
-        is_valid, error_msg = await llm_service.validate_primary_skill(body.primary_skill)
-        if not is_valid:
-            detail = error_msg if error_msg else "Please enter a valid technical skill (e.g. React, .NET, Python)"
-            if not detail.startswith("Please"):
-                detail = f"Please enter a valid technical skill. {detail}"
-            raise HTTPException(status_code=422, detail=detail)
-        evaluation_plan = await guard_layer.run_with_timeout(
-            llm_service.generate_interview_readiness_plan(body)
-        )
+        # OPTIMIZATION: Parallelize skill validation + plan generation
+        async def validate_skill():
+            is_valid, error_msg = await llm_service.validate_primary_skill(body.primary_skill)
+            if not is_valid:
+                detail = error_msg if error_msg else "Please enter a valid technical skill (e.g. React, .NET, Python)"
+                if not detail.startswith("Please"):
+                    detail = f"Please enter a valid technical skill. {detail}"
+                raise HTTPException(status_code=422, detail=detail)
+            return True
+
+        async def generate_plan():
+            return await guard_layer.run_with_timeout(
+                llm_service.generate_interview_readiness_plan(body)
+            )
+
+        # Run validation and generation in parallel
+        _, evaluation_plan = await asyncio.gather(validate_skill(), generate_plan())
+        
         rec = interview_lead_build.lead_from_interview_readiness(body)
         if rec:
             stats_service.append_interview_ready_lead(rec)
@@ -214,6 +235,53 @@ async def aptitude_readiness_plan(request: Request, body: AptitudeReadinessPlanR
     except Exception:
         logger.exception("aptitude_readiness_plan failed")
         raise HTTPException(status_code=500, detail="Failed to generate aptitude readiness plan. Please try again.")
+
+
+@app.post(
+    "/interview-ready/ai-readiness/plan",
+    response_model=AIReadinessPlanResponse,
+    responses={429: {"description": "Rate limit exceeded"}},
+    summary="AI readiness plan (scenario-heavy beginner/intermediate all-MCQ test)",
+)
+@limiter.limit("20/minute")
+async def ai_readiness_plan(request: Request, body: AIReadinessPlanRequest):
+    try:
+        # OPTIMIZATION: Parallelize skill validation + plan generation
+        async def validate_skill():
+            is_valid, error_msg = await llm_service.validate_primary_skill(body.primary_skill)
+            if not is_valid:
+                detail = error_msg if error_msg else "Please enter a valid technical skill (e.g. React, .NET, Python)"
+                if not detail.startswith("Please"):
+                    detail = f"Please enter a valid technical skill. {detail}"
+                raise HTTPException(status_code=422, detail=detail)
+            return True
+
+        async def generate_plan():
+            return await guard_layer.run_with_timeout(
+                llm_service.generate_ai_readiness_plan(body)
+            )
+
+        # Run validation and generation in parallel
+        _, evaluation_plan = await asyncio.gather(validate_skill(), generate_plan())
+        
+        rec = interview_lead_build.lead_from_skill_readiness(
+            email=body.email,
+            phone=body.phone,
+            user_type_canonical=body.user_type,
+            primary_skill=body.primary_skill,
+            target_role=body.target_role,
+            experience_years=body.experience_years or 0,
+        )
+        if rec:
+            stats_service.append_interview_ready_lead(rec)
+        return AIReadinessPlanResponse(evaluation_plan=evaluation_plan)
+    except HTTPException:
+        raise
+    except TimeoutError as e:
+        raise HTTPException(status_code=504, detail=str(e))
+    except Exception:
+        logger.exception("ai_readiness_plan failed")
+        raise HTTPException(status_code=500, detail="Failed to generate AI readiness plan. Please try again.")
 
 
 @app.post(

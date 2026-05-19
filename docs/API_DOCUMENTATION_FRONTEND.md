@@ -362,7 +362,7 @@ JSON object **shape**:
 
 | Status | Meaning |
 |--------|---------|
-| **422** | Bad file type, unreadable file, empty `target_role`, or almost no extractable text |
+| **422** | Bad file type, unreadable file, empty `target_role`, almost no extractable text, **or file looks like non-resume content** |
 | **413** | File larger than **5 MB** |
 | **429** | Too many requests — show “try again in a minute” |
 | **500** | Server error — generic retry message |
