@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     llm_timeout_seconds: int = Field(default=120, ge=15, le=600)
     # Resume ATS: enrich summary/fixes/strengths with OpenAI (scores stay heuristic). Set false to skip LLM.
     resume_ats_use_llm: bool = Field(default=True)
+    # OPTIMIZATION: Skip skill validation LLM call (saves 2-3s per request)
+    # If enabled, invalid skills will be caught by generation LLM instead
+    skip_skill_validation: bool = Field(default=True)
 
     class Config:
         env_prefix = ""

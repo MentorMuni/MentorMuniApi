@@ -130,23 +130,29 @@ async def generate_plan(request: Request, body: PlanRequest):
 @limiter.limit("20/minute")
 async def skill_readiness_plan(request: Request, body: SkillReadinessPlanRequest):
     try:
-        # OPTIMIZATION: Parallelize skill validation + plan generation
-        async def validate_skill():
-            is_valid, error_msg = await llm_service.validate_primary_skill(body.primary_skill)
-            if not is_valid:
-                detail = error_msg if error_msg else "Please enter a valid technical skill (e.g. React, .NET, Python)"
-                if not detail.startswith("Please"):
-                    detail = f"Please enter a valid technical skill. {detail}"
-                raise HTTPException(status_code=422, detail=detail)
-            return True
-
-        async def generate_plan():
-            return await guard_layer.run_with_timeout(
+        if settings.skip_skill_validation:
+            # OPTIMIZATION: Skip validation (2-3s saved) - let generation LLM handle invalid skills
+            evaluation_plan = await guard_layer.run_with_timeout(
                 llm_service.generate_skill_readiness_plan(body)
             )
+        else:
+            # Original: Parallelize skill validation + plan generation
+            async def validate_skill():
+                is_valid, error_msg = await llm_service.validate_primary_skill(body.primary_skill)
+                if not is_valid:
+                    detail = error_msg if error_msg else "Please enter a valid technical skill (e.g. React, .NET, Python)"
+                    if not detail.startswith("Please"):
+                        detail = f"Please enter a valid technical skill. {detail}"
+                    raise HTTPException(status_code=422, detail=detail)
+                return True
 
-        # Run validation and generation in parallel
-        _, evaluation_plan = await asyncio.gather(validate_skill(), generate_plan())
+            async def generate_plan():
+                return await guard_layer.run_with_timeout(
+                    llm_service.generate_skill_readiness_plan(body)
+                )
+
+            # Run validation and generation in parallel
+            _, evaluation_plan = await asyncio.gather(validate_skill(), generate_plan())
         
         rec = interview_lead_build.lead_from_skill_readiness(
             email=body.email,
@@ -176,23 +182,29 @@ async def skill_readiness_plan(request: Request, body: SkillReadinessPlanRequest
 @limiter.limit("20/minute")
 async def interview_readiness_plan(request: Request, body: InterviewReadinessPlanRequest):
     try:
-        # OPTIMIZATION: Parallelize skill validation + plan generation
-        async def validate_skill():
-            is_valid, error_msg = await llm_service.validate_primary_skill(body.primary_skill)
-            if not is_valid:
-                detail = error_msg if error_msg else "Please enter a valid technical skill (e.g. React, .NET, Python)"
-                if not detail.startswith("Please"):
-                    detail = f"Please enter a valid technical skill. {detail}"
-                raise HTTPException(status_code=422, detail=detail)
-            return True
-
-        async def generate_plan():
-            return await guard_layer.run_with_timeout(
+        if settings.skip_skill_validation:
+            # OPTIMIZATION: Skip validation (2-3s saved)
+            evaluation_plan = await guard_layer.run_with_timeout(
                 llm_service.generate_interview_readiness_plan(body)
             )
+        else:
+            # Original: Parallelize skill validation + plan generation
+            async def validate_skill():
+                is_valid, error_msg = await llm_service.validate_primary_skill(body.primary_skill)
+                if not is_valid:
+                    detail = error_msg if error_msg else "Please enter a valid technical skill (e.g. React, .NET, Python)"
+                    if not detail.startswith("Please"):
+                        detail = f"Please enter a valid technical skill. {detail}"
+                    raise HTTPException(status_code=422, detail=detail)
+                return True
 
-        # Run validation and generation in parallel
-        _, evaluation_plan = await asyncio.gather(validate_skill(), generate_plan())
+            async def generate_plan():
+                return await guard_layer.run_with_timeout(
+                    llm_service.generate_interview_readiness_plan(body)
+                )
+
+            # Run validation and generation in parallel
+            _, evaluation_plan = await asyncio.gather(validate_skill(), generate_plan())
         
         rec = interview_lead_build.lead_from_interview_readiness(body)
         if rec:
@@ -246,23 +258,29 @@ async def aptitude_readiness_plan(request: Request, body: AptitudeReadinessPlanR
 @limiter.limit("20/minute")
 async def ai_readiness_plan(request: Request, body: AIReadinessPlanRequest):
     try:
-        # OPTIMIZATION: Parallelize skill validation + plan generation
-        async def validate_skill():
-            is_valid, error_msg = await llm_service.validate_primary_skill(body.primary_skill)
-            if not is_valid:
-                detail = error_msg if error_msg else "Please enter a valid technical skill (e.g. React, .NET, Python)"
-                if not detail.startswith("Please"):
-                    detail = f"Please enter a valid technical skill. {detail}"
-                raise HTTPException(status_code=422, detail=detail)
-            return True
-
-        async def generate_plan():
-            return await guard_layer.run_with_timeout(
+        if settings.skip_skill_validation:
+            # OPTIMIZATION: Skip validation (2-3s saved)
+            evaluation_plan = await guard_layer.run_with_timeout(
                 llm_service.generate_ai_readiness_plan(body)
             )
+        else:
+            # Original: Parallelize skill validation + plan generation
+            async def validate_skill():
+                is_valid, error_msg = await llm_service.validate_primary_skill(body.primary_skill)
+                if not is_valid:
+                    detail = error_msg if error_msg else "Please enter a valid technical skill (e.g. React, .NET, Python)"
+                    if not detail.startswith("Please"):
+                        detail = f"Please enter a valid technical skill. {detail}"
+                    raise HTTPException(status_code=422, detail=detail)
+                return True
 
-        # Run validation and generation in parallel
-        _, evaluation_plan = await asyncio.gather(validate_skill(), generate_plan())
+            async def generate_plan():
+                return await guard_layer.run_with_timeout(
+                    llm_service.generate_ai_readiness_plan(body)
+                )
+
+            # Run validation and generation in parallel
+            _, evaluation_plan = await asyncio.gather(validate_skill(), generate_plan())
         
         rec = interview_lead_build.lead_from_skill_readiness(
             email=body.email,

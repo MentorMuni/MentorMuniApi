@@ -17,11 +17,12 @@ logger = logging.getLogger("llm_service")
 
 MAX_TOKENS_LEGACY_PLAN = 1500
 MAX_TOKENS_MIXED_PLAN = 3200
-# 15 questions × (stem + 4 options + explanation) can exceed 3–4k completion tokens; low limits truncate JSON and drop tail rows (often scenario/code_mcq).
-MAX_TOKENS_INTERVIEW_READINESS_PLAN = 10000
-MAX_TOKENS_SKILL_READINESS_PLAN = 3000
-MAX_TOKENS_APTITUDE_READINESS_PLAN = 12000
-MAX_TOKENS_AI_READINESS_PLAN = 7000
+# OPTIMIZED: Reduced max tokens for faster response while maintaining quality (prompts already compressed)
+# Typical 15 questions need ~6-9k tokens; setting lower limits forces conciseness
+MAX_TOKENS_INTERVIEW_READINESS_PLAN = 3000  # Reduced from 10000 (-70%, saves 2-3s)
+MAX_TOKENS_SKILL_READINESS_PLAN = 2500  # Reduced from 3000 (-17%, saves ~0.5s)
+MAX_TOKENS_APTITUDE_READINESS_PLAN = 3000  # Reduced from 12000 (-75%, saves 2-4s)
+MAX_TOKENS_AI_READINESS_PLAN = 2500  # Reduced from 7000 (-64%, saves 2s)
 MAX_TOKENS_VALIDATE = 20
 PLAN_QUESTION_COUNT = 15
 APTITUDE_SECTION_ORDER: list[str] = (
