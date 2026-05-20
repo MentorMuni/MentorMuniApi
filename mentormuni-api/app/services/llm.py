@@ -617,13 +617,13 @@ No extra text.
 
     def _validate_mc_options(self, options: List[str], question: str = "") -> bool:
         """
-        BUG FIX: Validate that MCQ options are distinct, relevant, and not duplicates.
+        APTITUDE VALIDATION: Relaxed rules for aptitude questions with short numeric answers.
         
         Checks:
         1. Exactly 4 options
         2. All options are unique (case-insensitive)
-        3. Each option has minimum meaningful length (>= 5 characters)
-        4. Options aren't >85% similar (prevents exact near-duplicates)
+        3. Each option has minimum meaningful length (>= 2 characters for short numeric answers)
+        4. Options aren't >90% similar (allows legitimate similar options)
         
         Returns True if all validations pass, False otherwise.
         """
@@ -636,15 +636,15 @@ No extra text.
             logger.warning("MCQ validation failed: duplicate options found in: %s", question[:60] if question else "unknown")
             return False
         
-        # Check 2: Each option has meaningful length
+        # Check 2: Each option has meaningful length (RELAXED to 2 for short numeric answers like "A) 3")
         for opt in options:
             opt_clean = opt.strip()
-            if len(opt_clean) < 5:
+            if len(opt_clean) < 2:
                 logger.warning("MCQ validation failed: option too short '%s' in: %s", opt_clean, question[:60] if question else "unknown")
                 return False
         
-        # Check 3: Options aren't nearly identical (>85% similar = reject)
-        # RELAXED: Changed from >0.7 to >0.85 to allow legitimate similar options
+        # Check 3: Options aren't nearly identical (RELAXED to >90% to allow similar options like "weak" vs "unclear")
+        # This allows 87-89% similar options which are legitimate in aptitude questions
         try:
             for i in range(len(options)):
                 for j in range(i + 1, len(options)):
@@ -653,7 +653,7 @@ No extra text.
                         options[i].lower().strip(),
                         options[j].lower().strip()
                     ).ratio()
-                    if similarity > 0.85:  # RELAXED: was 0.7, now 0.85 (only reject near-identical)
+                    if similarity > 0.90:  # FURTHER RELAXED: was 0.85, now 0.90 (only reject near-identical, allow 87-89% similar)
                         logger.warning(
                             "MCQ validation failed: options too similar (%.0f%% match): '%s' vs '%s'",
                             similarity * 100,
