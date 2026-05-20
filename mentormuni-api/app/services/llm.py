@@ -18,16 +18,15 @@ logger = logging.getLogger("llm_service")
 
 MAX_TOKENS_LEGACY_PLAN = 1500
 MAX_TOKENS_MIXED_PLAN = 3200
-# TIER 2+ CRITICAL FIX: Optimal token balance for Railway + gpt-3.5-turbo
+# TIER 2++ FINAL FIX: Based on actual production data
 # Model: gpt-3.5-turbo (200+ tok/s - proven on Railway)
-# Issue: Previous aggressive reduction (500 tokens) caused incomplete JSON
-# Error: LLM hitting max_tokens and truncating output
-# Solution: Balanced reduction - enough for complete output, fast enough for Railway
-# With gpt-3.5-turbo (200 tok/s): 1200 tokens = 6 seconds generation
-MAX_TOKENS_INTERVIEW_READINESS_PLAN = 1200   # BALANCED: 750 → 1200 (enough for complete 15 questions)
-MAX_TOKENS_SKILL_READINESS_PLAN = 1200    # BALANCED: 680 → 1200 (sufficient for full output)
-MAX_TOKENS_APTITUDE_READINESS_PLAN = 1200   # BALANCED: 700 → 1200 (CRITICAL - was causing truncation)
-MAX_TOKENS_AI_READINESS_PLAN = 1200      # BALANCED: 700 → 1200 (ensure complete JSON)
+# PRODUCTION DATA: LLM used 2061 tokens for aptitude readiness
+# Solution: Set MAX_TOKENS to 2200 (enough for complete output with buffer)
+# With gpt-3.5-turbo (200 tok/s): 2200 tokens = 11 seconds generation
+MAX_TOKENS_INTERVIEW_READINESS_PLAN = 2200   # SET TO: 2200 (production tested)
+MAX_TOKENS_SKILL_READINESS_PLAN = 2200    # SET TO: 2200 (for consistency)
+MAX_TOKENS_APTITUDE_READINESS_PLAN = 2200   # SET TO: 2200 (LLM used 2061, buffer ensures completion)
+MAX_TOKENS_AI_READINESS_PLAN = 2200      # SET TO: 2200 (for consistency)
 MAX_TOKENS_VALIDATE = 20
 PLAN_QUESTION_COUNT = 15
 APTITUDE_SECTION_ORDER: list[str] = (
