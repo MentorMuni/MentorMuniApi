@@ -4,6 +4,7 @@ import json
 import logging
 import re
 from typing import List, Optional, Tuple
+from difflib import SequenceMatcher
 from openai import AsyncOpenAI
 from app.core.config import settings as app_settings
 from app.services.guard_layer import GuardLayer
@@ -624,7 +625,7 @@ No extra text.
         1. Exactly 4 options
         2. All options are unique (case-insensitive)
         3. Each option has minimum meaningful length (>= 5 characters)
-        4. Options aren't >70% similar (prevents near-duplicates)
+        4. Options aren't >85% similar (prevents exact near-duplicates)
         
         Returns True if all validations pass, False otherwise.
         """
@@ -644,10 +645,9 @@ No extra text.
                 logger.warning("MCQ validation failed: option too short '%s' in: %s", opt_clean, question[:60] if question else "unknown")
                 return False
         
-        # Check 3: Options aren't >70% similar (basic Levenshtein check)
-        # This catches near-duplicates like "The answer is A", "The answer is A", "The answer is A"
+        # Check 3: Options aren't nearly identical (>85% similar = reject)
+        # RELAXED: Changed from >0.7 to >0.85 to allow legitimate similar options
         try:
-            from difflib import SequenceMatcher
             for i in range(len(options)):
                 for j in range(i + 1, len(options)):
                     similarity = SequenceMatcher(
@@ -655,7 +655,7 @@ No extra text.
                         options[i].lower().strip(),
                         options[j].lower().strip()
                     ).ratio()
-                    if similarity > 0.7:  # >70% similar = likely duplicate
+                    if similarity > 0.85:  # RELAXED: was 0.7, now 0.85 (only reject near-identical)
                         logger.warning(
                             "MCQ validation failed: options too similar (%.0f%% match): '%s' vs '%s'",
                             similarity * 100,
