@@ -18,16 +18,16 @@ logger = logging.getLogger("llm_service")
 
 MAX_TOKENS_LEGACY_PLAN = 1500
 MAX_TOKENS_MIXED_PLAN = 3200
-# TIER 1.5+ OPTIMIZATION: Aggressive token reduction for Railway
-# Model: gpt-4o-mini (150-170 tok/s, better reasoning for MCQ generation)
-# Issue: Railway timeout on gpt-4o-mini (even with 120s timeout)
-# Solution: Further aggressive token reduction (50% less)
-# Quality maintained: Still sufficient for 15 quality questions
-# With gpt-4o-mini (170 tok/s): Reduced tokens = faster generation
-MAX_TOKENS_INTERVIEW_READINESS_PLAN = 500   # OPTIMIZED: 750 → 500 (-33%) for Railway speed
-MAX_TOKENS_SKILL_READINESS_PLAN = 480    # OPTIMIZED: 680 → 480 (-29%)
-MAX_TOKENS_APTITUDE_READINESS_PLAN = 500   # OPTIMIZED: 700 → 500 (-29%) - CRITICAL for Railway
-MAX_TOKENS_AI_READINESS_PLAN = 480      # OPTIMIZED: 700 → 480 (-31%)
+# TIER 2+ CRITICAL FIX: Optimal token balance for Railway + gpt-3.5-turbo
+# Model: gpt-3.5-turbo (200+ tok/s - proven on Railway)
+# Issue: Previous aggressive reduction (500 tokens) caused incomplete JSON
+# Error: LLM hitting max_tokens and truncating output
+# Solution: Balanced reduction - enough for complete output, fast enough for Railway
+# With gpt-3.5-turbo (200 tok/s): 1200 tokens = 6 seconds generation
+MAX_TOKENS_INTERVIEW_READINESS_PLAN = 1200   # BALANCED: 750 → 1200 (enough for complete 15 questions)
+MAX_TOKENS_SKILL_READINESS_PLAN = 1200    # BALANCED: 680 → 1200 (sufficient for full output)
+MAX_TOKENS_APTITUDE_READINESS_PLAN = 1200   # BALANCED: 700 → 1200 (CRITICAL - was causing truncation)
+MAX_TOKENS_AI_READINESS_PLAN = 1200      # BALANCED: 700 → 1200 (ensure complete JSON)
 MAX_TOKENS_VALIDATE = 20
 PLAN_QUESTION_COUNT = 15
 APTITUDE_SECTION_ORDER: list[str] = (
