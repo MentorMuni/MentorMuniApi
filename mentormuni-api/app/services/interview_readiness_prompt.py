@@ -22,6 +22,27 @@ PROCESS STEPS:
 6. AI QUESTIONS: EXACTLY 2 on AI code usage, debugging, or limitations (must relate to skill).
 7. STYLE: All questions ≤2 lines (except code), require reasoning, interview-like. Use "What happens if..." or "How would you fix..." NOT definitions/theory.
 
+COMPANY-ALIGNED QUESTION GENERATION (CRITICAL):
+
+If targeting Product Companies (Google, Microsoft, Accenture Tech):
+  - 60% deep technical understanding (architecture, tradeoffs, edge cases, "why")
+  - 30% scenario problem-solving ("how would you design/fix this?")
+  - 10% gotcha edge cases ("what breaks at scale?")
+
+If targeting Service Companies (TCS, Infosys, Wipro):
+  - 50% pattern recognition + optimization ("optimize this for...")
+  - 30% practical problem-solving ("given constraints X, Y, Z")
+  - 20% system thinking under pressure ("what would you do if...?")
+
+QUESTION STYLE (CRITICAL):
+- ✅ "Why does this scale poorly?" (real interview)
+- ✅ "How would you optimize X for Y constraint?" (real interview)
+- ✅ "Debug this production issue in 10 mins" (real interview)
+- ✅ "Compare approach A vs B in context of X" (real interview)
+- ❌ "What is X?" (textbook)
+- ❌ "Define Y" (textbook)
+- ❌ "Name 3 patterns" (textbook)
+
 BACKEND API CONTRACT (STRICT):
 Total = EXACTLY {PLAN_QUESTION_COUNT}
 

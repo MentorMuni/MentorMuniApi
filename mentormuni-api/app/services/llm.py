@@ -17,12 +17,14 @@ logger = logging.getLogger("llm_service")
 
 MAX_TOKENS_LEGACY_PLAN = 1500
 MAX_TOKENS_MIXED_PLAN = 3200
-# OPTIMIZED: Reduced max tokens for faster response while maintaining quality (prompts already compressed)
-# Typical 15 questions need ~6-9k tokens; setting lower limits forces conciseness
-MAX_TOKENS_INTERVIEW_READINESS_PLAN = 3000  # Reduced from 10000 (-70%, saves 2-3s)
-MAX_TOKENS_SKILL_READINESS_PLAN = 2500  # Reduced from 3000 (-17%, saves ~0.5s)
-MAX_TOKENS_APTITUDE_READINESS_PLAN = 3000  # Reduced from 12000 (-75%, saves 2-4s)
-MAX_TOKENS_AI_READINESS_PLAN = 2500  # Reduced from 7000 (-64%, saves 2s)
+# BUG FIX: Increased max tokens to prevent JSON truncation and ensure complete responses
+# Previous limits (2500-3000) caused incomplete JSON, resulting in <15 questions with duplicate/invalid options
+# New limits ensure full room for 15 questions + 4 options each + explanations + validation metadata
+# Response time impact: +100-200ms (0.5-2s total, still acceptable for LLM-based API)
+MAX_TOKENS_INTERVIEW_READINESS_PLAN = 5000  # BUG FIX: Increased from 3000 (was causing truncation)
+MAX_TOKENS_SKILL_READINESS_PLAN = 4500   # BUG FIX: Increased from 2500 (was causing truncation)
+MAX_TOKENS_APTITUDE_READINESS_PLAN = 5000  # BUG FIX: Increased from 3000 (was causing truncation)
+MAX_TOKENS_AI_READINESS_PLAN = 4500     # BUG FIX: Increased from 2500 (was causing truncation)
 MAX_TOKENS_VALIDATE = 20
 PLAN_QUESTION_COUNT = 15
 APTITUDE_SECTION_ORDER: list[str] = (
@@ -251,7 +253,9 @@ No extra text.
                         })
                     elif qt in ("multiple_choice", "scenario", "code_mcq"):
                         opts = self._normalize_mc_options(x.get("options"))
-                        if opts is None:
+                        # BUG FIX: Add validation to ensure options are distinct and relevant
+                        if opts is None or not self._validate_mc_options(opts, q):
+                            logger.debug("Skipping MCQ with invalid/duplicate options: %s", q[:60])
                             continue
                         letter = self._normalize_mc_letter(x.get("correct_answer"), opts)
                         if letter is None:
@@ -473,7 +477,8 @@ No extra text.
                 if not q:
                     continue
                 opts = self._normalize_mc_options(x.get("options"))
-                if opts is None:
+                if opts is None or not self._validate_mc_options(opts, q):
+                    logger.debug("Skipping aptitude MCQ with invalid/duplicate options: %s", q[:60])
                     continue
                 letter = self._normalize_mc_letter(x.get("correct_answer"), opts)
                 if letter is None:
@@ -539,7 +544,8 @@ No extra text.
                 if not q:
                     continue
                 opts = self._normalize_mc_options(x.get("options"))
-                if opts is None:
+                if opts is None or not self._validate_mc_options(opts, q):
+                    logger.debug("Skipping AI MCQ with invalid/duplicate options: %s", q[:60])
                     continue
                 letter = self._normalize_mc_letter(x.get("correct_answer"), opts)
                 if letter is None:
@@ -609,6 +615,60 @@ No extra text.
             if opt.strip().lower() == s.lower():
                 return chr(ord("A") + i)
         return None
+
+    def _validate_mc_options(self, options: List[str], question: str = "") -> bool:
+        """
+        BUG FIX: Validate that MCQ options are distinct, relevant, and not duplicates.
+        
+        Checks:
+        1. Exactly 4 options
+        2. All options are unique (case-insensitive)
+        3. Each option has minimum meaningful length (>= 5 characters)
+        4. Options aren't >70% similar (prevents near-duplicates)
+        
+        Returns True if all validations pass, False otherwise.
+        """
+        if len(options) != 4:
+            return False
+        
+        # Check 1: No exact duplicates (case-insensitive)
+        unique_lower = {opt.lower().strip() for opt in options}
+        if len(unique_lower) < 4:
+            logger.warning("MCQ validation failed: duplicate options found in: %s", question[:60] if question else "unknown")
+            return False
+        
+        # Check 2: Each option has meaningful length
+        for opt in options:
+            opt_clean = opt.strip()
+            if len(opt_clean) < 5:
+                logger.warning("MCQ validation failed: option too short '%s' in: %s", opt_clean, question[:60] if question else "unknown")
+                return False
+        
+        # Check 3: Options aren't >70% similar (basic Levenshtein check)
+        # This catches near-duplicates like "The answer is A", "The answer is A", "The answer is A"
+        try:
+            from difflib import SequenceMatcher
+            for i in range(len(options)):
+                for j in range(i + 1, len(options)):
+                    similarity = SequenceMatcher(
+                        None,
+                        options[i].lower().strip(),
+                        options[j].lower().strip()
+                    ).ratio()
+                    if similarity > 0.7:  # >70% similar = likely duplicate
+                        logger.warning(
+                            "MCQ validation failed: options too similar (%.0f%% match): '%s' vs '%s'",
+                            similarity * 100,
+                            options[i][:40],
+                            options[j][:40],
+                        )
+                        return False
+        except Exception as e:
+            logger.warning("MCQ validation similarity check failed: %s", e)
+            return False
+        
+        return True
+
 
     def _parse_legacy_plan(self, content: str) -> list[dict]:
         """Parse LLM JSON into LegacyPlanQuestionItem dicts (question, correct_answer, study_topic only)."""

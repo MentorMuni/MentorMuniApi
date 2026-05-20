@@ -29,9 +29,17 @@ DESIGN RULES:
 - Difficulty: 30% moderate, 50% strong, 20% tricky
 
 SKILL FOCUS:
-- LANGUAGE: code behavior, output prediction, memory, concurrency, edge cases
-- FRAMEWORK: architecture, lifecycle, dependency injection, real-world usage
-- PLATFORM: deployment, configuration, scaling, workflows
+- LANGUAGE: code behavior, output prediction, memory, concurrency, edge cases (NOT syntax trivia)
+- FRAMEWORK: architecture, lifecycle, dependency injection, real-world usage patterns (NOT "how do you import X?")
+- PLATFORM: deployment, configuration, scaling, workflows (NOT just "what is this tool?")
+
+FOR REAL INTERVIEWS:
+- Prefer "What would fail at scale?" over "What is X?"
+- Prefer "Debug this production error" over "Define X"
+- Prefer "Compare approach A vs B" over "Name 3 patterns"
+- Include: Actual gotchas engineers face, not textbook theory
+- TCS/Infosys level: Optimization, performance, practical patterns
+- Accenture/Product Co level: Architecture tradeoffs, edge cases, decision-making under constraints
 
 OUTPUT FORMAT (VALID JSON ONLY):
 [{

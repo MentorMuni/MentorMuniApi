@@ -25,6 +25,28 @@ Logical (CRITICAL): Include syllogisms, statement-conclusion/assumption, coding-
 
 Verbal (CRITICAL): Include sentence correction (very close options), error spotting, para-jumbles, short comprehension. Options must be similar/confusing, require careful reading.
 
+COMPANY-SPECIFIC PATTERNS (CRITICAL):
+
+TCS/Infosys/Wipro (Service Companies):
+- 40% optimization/performance problems
+- 30% pattern recognition + coding-decoding
+- 30% practical problem-solving
+- Emphasis: Efficiency, scalability, real-world patterns
+
+Accenture/Capgemini (Consulting):
+- 35% client scenario thinking
+- 30% enterprise/system thinking
+- 25% optimization/performance
+- 10% client communication clarity
+- Emphasis: Business logic, constraints, trade-offs, client perspective
+
+Google/Microsoft/Product Companies:
+- 40% deep algorithm optimization
+- 30% system design thinking
+- 20% edge case handling
+- 10% practical optimization
+- Emphasis: Elegance, edge cases, deep thinking, not just "get it done"
+
 Performance Design: Strong student solves with focus/accuracy, average student struggles with elimination/time, weak student gets confused. Test must simulate real pressure and decision-making.
 
 AVOID: school-level/obvious questions, direct pattern recognition without thinking, pure theory/memory, repetitive formats.
