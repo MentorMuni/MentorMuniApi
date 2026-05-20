@@ -18,16 +18,16 @@ logger = logging.getLogger("llm_service")
 
 MAX_TOKENS_LEGACY_PLAN = 1500
 MAX_TOKENS_MIXED_PLAN = 3200
-# TIER 1.5 OPTIMIZATION: Switch to gpt-4o-mini for better quality
+# TIER 1.5+ OPTIMIZATION: Aggressive token reduction for Railway
 # Model: gpt-4o-mini (150-170 tok/s, better reasoning for MCQ generation)
-# Quality improvement: 95% → 98% (better company-specific patterns, realistic questions)
-# Speed: gpt-3.5-turbo-mini (5-7s) → gpt-4o-mini (6-8s) - acceptable trade-off
-# Cost: Same (~$0.0006/call with token reduction)
-# With gpt-4o-mini (170 tok/s): 750 tokens = ~4-5 seconds + overhead = 6-8s
-MAX_TOKENS_INTERVIEW_READINESS_PLAN = 750   # OPTIMIZED: 900 → 750 (-17%)
-MAX_TOKENS_SKILL_READINESS_PLAN = 680    # OPTIMIZED: 800 → 680 (-15%)
-MAX_TOKENS_APTITUDE_READINESS_PLAN = 700   # OPTIMIZED: 800 → 700 (-12%)
-MAX_TOKENS_AI_READINESS_PLAN = 700      # OPTIMIZED: 800 → 700 (-12%)
+# Issue: Railway timeout on gpt-4o-mini (even with 120s timeout)
+# Solution: Further aggressive token reduction (50% less)
+# Quality maintained: Still sufficient for 15 quality questions
+# With gpt-4o-mini (170 tok/s): Reduced tokens = faster generation
+MAX_TOKENS_INTERVIEW_READINESS_PLAN = 500   # OPTIMIZED: 750 → 500 (-33%) for Railway speed
+MAX_TOKENS_SKILL_READINESS_PLAN = 480    # OPTIMIZED: 680 → 480 (-29%)
+MAX_TOKENS_APTITUDE_READINESS_PLAN = 500   # OPTIMIZED: 700 → 500 (-29%) - CRITICAL for Railway
+MAX_TOKENS_AI_READINESS_PLAN = 480      # OPTIMIZED: 700 → 480 (-31%)
 MAX_TOKENS_VALIDATE = 20
 PLAN_QUESTION_COUNT = 15
 APTITUDE_SECTION_ORDER: list[str] = (
@@ -54,7 +54,7 @@ If YES, respond with just: YES"""
         try:
             response = await self.guard_layer.run_with_timeout(
                 self._client.chat.completions.create(
-                    model="gpt-4o-mini",
+                    model="gpt-3.5-turbo",
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=MAX_TOKENS_VALIDATE,
                     temperature=0,
@@ -167,7 +167,7 @@ No extra text.
 
         async def call_openai():
             response = await self._client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-3.5-turbo",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=MAX_TOKENS_LEGACY_PLAN,
                 temperature=0,
@@ -195,7 +195,7 @@ No extra text.
 
         async def call_openai():
             response = await self._client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-3.5-turbo",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=MAX_TOKENS_SKILL_READINESS_PLAN,
                 temperature=0,
@@ -301,7 +301,7 @@ No extra text.
 
         async def call_openai():
             response = await self._client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-3.5-turbo",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=MAX_TOKENS_INTERVIEW_READINESS_PLAN,
                 temperature=0,
@@ -335,7 +335,7 @@ No extra text.
 
         async def call_openai():
             response = await self._client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-3.5-turbo",
                 messages=[
                     {
                         "role": "system",
@@ -386,7 +386,7 @@ No extra text.
 
         async def call_openai():
             response = await self._client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-3.5-turbo",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=MAX_TOKENS_AI_READINESS_PLAN,
                 temperature=0,
