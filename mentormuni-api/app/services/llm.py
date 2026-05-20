@@ -18,15 +18,16 @@ logger = logging.getLogger("llm_service")
 
 MAX_TOKENS_LEGACY_PLAN = 1500
 MAX_TOKENS_MIXED_PLAN = 3200
-# TIER 2++ FINAL FIX: Based on actual production data
+# TIER 2+++ MAXIMUM RELIABILITY: Set to 4000 tokens
 # Model: gpt-3.5-turbo (200+ tok/s - proven on Railway)
-# PRODUCTION DATA: LLM used 2061 tokens for aptitude readiness
-# Solution: Set MAX_TOKENS to 2200 (enough for complete output with buffer)
-# With gpt-3.5-turbo (200 tok/s): 2200 tokens = 11 seconds generation
-MAX_TOKENS_INTERVIEW_READINESS_PLAN = 2200   # SET TO: 2200 (production tested)
-MAX_TOKENS_SKILL_READINESS_PLAN = 2200    # SET TO: 2200 (for consistency)
-MAX_TOKENS_APTITUDE_READINESS_PLAN = 2200   # SET TO: 2200 (LLM used 2061, buffer ensures completion)
-MAX_TOKENS_AI_READINESS_PLAN = 2200      # SET TO: 2200 (for consistency)
+# Strategy: Maximum tokens to ensure ZERO truncation
+# LLM used 2061 at max, 4000 is 2x buffer
+# With gpt-3.5-turbo (200 tok/s): 4000 tokens = 20 seconds generation
+# With overhead: ~22 seconds (guaranteed complete, high-quality output)
+MAX_TOKENS_INTERVIEW_READINESS_PLAN = 4000   # SET TO: 4000 (maximum reliability)
+MAX_TOKENS_SKILL_READINESS_PLAN = 4000    # SET TO: 4000 (maximum reliability)
+MAX_TOKENS_APTITUDE_READINESS_PLAN = 4000   # SET TO: 4000 (maximum reliability)
+MAX_TOKENS_AI_READINESS_PLAN = 4000      # SET TO: 4000 (consistency)
 MAX_TOKENS_VALIDATE = 20
 PLAN_QUESTION_COUNT = 15
 APTITUDE_SECTION_ORDER: list[str] = (
