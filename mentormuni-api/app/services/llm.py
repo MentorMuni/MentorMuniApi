@@ -18,14 +18,14 @@ logger = logging.getLogger("llm_service")
 
 MAX_TOKENS_LEGACY_PLAN = 1500
 MAX_TOKENS_MIXED_PLAN = 3200
-# BUG FIX: Increased max tokens to prevent JSON truncation and ensure complete responses
-# Previous limits (2500-3000) caused incomplete JSON, resulting in <15 questions with duplicate/invalid options
-# New limits ensure full room for 15 questions + 4 options each + explanations + validation metadata
-# Response time impact: +100-200ms (0.5-2s total, still acceptable for LLM-based API)
-MAX_TOKENS_INTERVIEW_READINESS_PLAN = 5000  # BUG FIX: Increased from 3000 (was causing truncation)
-MAX_TOKENS_SKILL_READINESS_PLAN = 4500   # BUG FIX: Increased from 2500 (was causing truncation)
-MAX_TOKENS_APTITUDE_READINESS_PLAN = 5000  # BUG FIX: Increased from 3000 (was causing truncation)
-MAX_TOKENS_AI_READINESS_PLAN = 4500     # BUG FIX: Increased from 2500 (was causing truncation)
+# OPTIMIZATION: Reduced max tokens after removing explanation field
+# Explanations removed = ~1500-2000 tokens freed up per response
+# New limits optimized for no-explanation output format
+# With gpt-3.5-turbo (120 tok/s): 1500-2000 tokens = ~12-17 seconds (fast!)
+MAX_TOKENS_INTERVIEW_READINESS_PLAN = 2000  # OPTIMIZED: 5000 → 2000 (no explanation needed)
+MAX_TOKENS_SKILL_READINESS_PLAN = 1800   # OPTIMIZED: 4500 → 1800 (no explanation needed)
+MAX_TOKENS_APTITUDE_READINESS_PLAN = 1500  # OPTIMIZED: 5000 → 1500 (no explanation needed)
+MAX_TOKENS_AI_READINESS_PLAN = 1500     # OPTIMIZED: 4500 → 1500 (no explanation needed)
 MAX_TOKENS_VALIDATE = 20
 PLAN_QUESTION_COUNT = 15
 APTITUDE_SECTION_ORDER: list[str] = (
