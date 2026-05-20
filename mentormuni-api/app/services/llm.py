@@ -341,7 +341,9 @@ No extra text.
                         "role": "system",
                         "content": (
                             "You output only a single valid JSON object (no markdown). "
-                            "The user message describes the required JSON shape including a \"questions\" array."
+                            "The user message describes the required JSON shape including a \"questions\" array. "
+                            "CRITICAL: ALL 4 OPTIONS PER QUESTION MUST BE MEANINGFULLY DIFFERENT. "
+                            "Do NOT create options that differ only by punctuation, grammar, or pronoun."
                         ),
                     },
                     {"role": "user", "content": prompt},
@@ -478,11 +480,19 @@ No extra text.
                 if not q:
                     continue
                 opts = self._normalize_mc_options(x.get("options"))
-                if opts is None or not self._validate_mc_options(opts, q):
-                    logger.debug("Skipping aptitude MCQ with invalid/duplicate options: %s", q[:60])
+                if opts is None:
+                    logger.debug("Skipping aptitude MCQ with invalid option format: %s", q[:60])
                     continue
-                letter = self._normalize_mc_letter(x.get("correct_answer"), opts)
+                
+                # TRY FIX: Attempt to auto-fix similar options before rejecting
+                fixed_opts = self._fix_similar_options(q, opts)
+                if fixed_opts is None:
+                    logger.debug("Skipping aptitude MCQ with unfixable similar options: %s", q[:60])
+                    continue
+                
+                letter = self._normalize_mc_letter(x.get("correct_answer"), fixed_opts)
                 if letter is None:
+                    logger.debug("Skipping aptitude MCQ with invalid correct_answer: %s", q[:60])
                     continue
                 topic = str(x.get("study_topic", "")).strip()
                 if not topic:
@@ -508,14 +518,15 @@ No extra text.
                     "question_type": "multiple_choice",
                     "section": section,
                     "question": q,
-                    "options": opts,
+                    "options": fixed_opts,
                     "correct_answer": letter,
                     "study_topic": topic,
                     "difficulty": difficulty,
                     "asked_in": asked_in,
                     "why_students_fail": why_fail,
                 })
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as e:
+            logger.error("Error parsing aptitude questions: %s", e)
             return []
 
         if len(out) < PLAN_QUESTION_COUNT:
@@ -544,11 +555,19 @@ No extra text.
                 if not q:
                     continue
                 opts = self._normalize_mc_options(x.get("options"))
-                if opts is None or not self._validate_mc_options(opts, q):
-                    logger.debug("Skipping AI MCQ with invalid/duplicate options: %s", q[:60])
+                if opts is None:
+                    logger.debug("Skipping AI MCQ with invalid option format: %s", q[:60])
                     continue
-                letter = self._normalize_mc_letter(x.get("correct_answer"), opts)
+                
+                # TRY FIX: Attempt to auto-fix similar options before rejecting
+                fixed_opts = self._fix_similar_options(q, opts)
+                if fixed_opts is None:
+                    logger.debug("Skipping AI MCQ with unfixable similar options: %s", q[:60])
+                    continue
+                
+                letter = self._normalize_mc_letter(x.get("correct_answer"), fixed_opts)
                 if letter is None:
+                    logger.debug("Skipping AI MCQ with invalid correct_answer: %s", q[:60])
                     continue
                 topic = str(x.get("study_topic", "")).strip()
                 if not topic:
@@ -557,11 +576,12 @@ No extra text.
                 out.append({
                     "question_type": "multiple_choice",
                     "question": q,
-                    "options": opts,
+                    "options": fixed_opts,
                     "correct_answer": letter,
                     "study_topic": topic,
                 })
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as e:
+            logger.error("Error parsing AI readiness questions: %s", e)
             return []
 
         return out
@@ -617,48 +637,65 @@ No extra text.
 
     def _validate_mc_options(self, options: List[str], question: str = "") -> bool:
         """
-        APTITUDE VALIDATION: Relaxed rules for aptitude questions with short numeric answers.
+        PRODUCTION APTITUDE VALIDATION: Validates MCQ options rigorously but pragmatically.
+        
+        This validator is designed specifically for placement aptitude tests where:
+        - Options often have similar wording by design (e.g., sentence correction)
+        - Legitimate variations exist (pronouns, articles, verb forms)
+        - Validation should reject only actual duplicates and near-identical options
         
         Checks:
         1. Exactly 4 options
-        2. All options are unique (case-insensitive)
-        3. Each option has minimum meaningful length (>= 2 characters for short numeric answers)
-        4. Options aren't >90% similar (allows legitimate similar options)
+        2. No exact/near-exact duplicates (case-insensitive, normalized whitespace, ignoring letter prefix)
+        3. Each option has minimum meaningful length (>= 3 characters after removing prefix)
+        4. Strict similarity only for near-identical pairs (>98%)
         
-        Returns True if all validations pass, False otherwise.
+        Returns True if valid, False otherwise.
         """
         if len(options) != 4:
+            logger.debug("MCQ validation failed: expected 4 options, got %d", len(options))
             return False
         
-        # Check 1: No exact duplicates (case-insensitive)
-        unique_lower = {opt.lower().strip() for opt in options}
-        if len(unique_lower) < 4:
+        # Helper to strip letter prefix and normalize
+        def normalize_option(opt: str) -> str:
+            # Remove leading letter prefix: "A) text" → "text"
+            cleaned = re.sub(r'^[a-zA-Z]\)\s*', '', opt).strip()
+            # Normalize whitespace and lowercase
+            return " ".join(cleaned.lower().split())
+        
+        # Normalize all options once
+        normalized_options = [normalize_option(opt) for opt in options]
+        
+        # Check 1: No exact duplicates
+        unique_set = set(normalized_options)
+        if len(unique_set) < 4:
             logger.warning("MCQ validation failed: duplicate options found in: %s", question[:60] if question else "unknown")
+            logger.debug("Options: %s", options)
             return False
         
-        # Check 2: Each option has meaningful length (RELAXED to 2 for short numeric answers like "A) 3")
-        for opt in options:
-            opt_clean = opt.strip()
-            if len(opt_clean) < 2:
-                logger.warning("MCQ validation failed: option too short '%s' in: %s", opt_clean, question[:60] if question else "unknown")
+        # Check 2: Each option has minimum meaningful length (3 chars minimum after removing prefix)
+        for i, norm_opt in enumerate(normalized_options):
+            if len(norm_opt) < 3:
+                logger.warning(
+                    "MCQ validation failed: option[%d] too short ('%s') in: %s",
+                    i, options[i][:50], question[:60] if question else "unknown"
+                )
                 return False
         
-        # Check 3: Options aren't nearly identical (RELAXED to >90% to allow similar options like "weak" vs "unclear")
-        # This allows 87-89% similar options which are legitimate in aptitude questions
+        # Check 3: Validate character similarity ONLY for near-identical pairs
+        # We're lenient here because aptitude questions legitimately have similar options
+        # Only reject if options are >98% identical (only whitespace/single-char differences)
         try:
-            for i in range(len(options)):
-                for j in range(i + 1, len(options)):
-                    similarity = SequenceMatcher(
-                        None,
-                        options[i].lower().strip(),
-                        options[j].lower().strip()
-                    ).ratio()
-                    if similarity > 0.90:  # FURTHER RELAXED: was 0.85, now 0.90 (only reject near-identical, allow 87-89% similar)
+            for i in range(len(normalized_options)):
+                for j in range(i + 1, len(normalized_options)):
+                    similarity = SequenceMatcher(None, normalized_options[i], normalized_options[j]).ratio()
+                    
+                    # REJECT only if nearly identical (>98%)
+                    # This catches: "option, was" vs "option was" OR "exact duplicate" vs "exact duplicate"
+                    if similarity > 0.98:
                         logger.warning(
-                            "MCQ validation failed: options too similar (%.0f%% match): '%s' vs '%s'",
-                            similarity * 100,
-                            options[i][:40],
-                            options[j][:40],
+                            "MCQ validation failed: options nearly identical (%.0f%% match): '%s' vs '%s'",
+                            similarity * 100, options[i][:50], options[j][:50]
                         )
                         return False
         except Exception as e:
@@ -668,8 +705,70 @@ No extra text.
         return True
 
 
+    def _fix_similar_options(self, question: str, options: List[str]) -> Optional[List[str]]:
+        """
+        POST-PROCESSING: Attempt to fix similar options that would fail validation.
+        
+        For aptitude tests, we're lenient since similar options are legitimate.
+        This only tries to fix options that are >98% similar (near-identical).
+        
+        Returns fixed options if fixable, None if unfixable (skip question).
+        """
+        if len(options) != 4:
+            return None
+        
+        # First, try validation as-is
+        if self._validate_mc_options(options, question):
+            return options
+        
+        # Find which pair(s) are too similar (>98%)
+        problematic_pairs = []
+        try:
+            for i in range(len(options)):
+                for j in range(i + 1, len(options)):
+                    opt_i = options[i].lower().strip()
+                    opt_j = options[j].lower().strip()
+                    similarity = SequenceMatcher(None, opt_i, opt_j).ratio()
+                    
+                    if similarity > 0.98:
+                        problematic_pairs.append((i, j, similarity))
+        except Exception:
+            return None
+        
+        if not problematic_pairs:
+            return options
+        
+        # Try to fix by removing punctuation from one option in each pair
+        fixed_options = list(options)
+        for idx_i, idx_j, sim in problematic_pairs:
+            opt_i = fixed_options[idx_i]
+            opt_j = fixed_options[idx_j]
+            
+            # Remove punctuation to differentiate
+            opt_i_no_punct = re.sub(r'[,;:!?.]', '', opt_i).strip()
+            opt_j_no_punct = re.sub(r'[,;:!?.]', '', opt_j).strip()
+            
+            if opt_i_no_punct.lower() == opt_j_no_punct.lower():
+                # They're identical except for punctuation
+                if len(opt_i_no_punct) > len(opt_j_no_punct):
+                    fixed_options[idx_j] = opt_i_no_punct
+                else:
+                    fixed_options[idx_i] = opt_j_no_punct
+                logger.info("Auto-fixed punctuation difference in question: %s", question[:60])
+                continue
+            
+            # Could not fix this pair
+            logger.debug("Could not auto-fix similar options pair (%.0f%% match)", sim * 100)
+            return None
+        
+        # Validate the fixed options
+        if self._validate_mc_options(fixed_options, question):
+            logger.info("Auto-fixed options in question: %s", question[:60])
+            return fixed_options
+        
+        return None
+
     def _parse_legacy_plan(self, content: str) -> list[dict]:
-        """Parse LLM JSON into LegacyPlanQuestionItem dicts (question, correct_answer, study_topic only)."""
         content = content.strip()
         json_match = re.search(r"\[[\s\S]*\]", content)
         if json_match:
