@@ -18,14 +18,13 @@ logger = logging.getLogger("llm_service")
 
 MAX_TOKENS_LEGACY_PLAN = 1500
 MAX_TOKENS_MIXED_PLAN = 3200
-# OPTIMIZATION: Reduced max tokens after removing explanation field
-# Explanations removed = ~1500-2000 tokens freed up per response
-# New limits optimized for no-explanation output format
-# With gpt-3.5-turbo (120 tok/s): 1500-2000 tokens = ~12-17 seconds (fast!)
-MAX_TOKENS_INTERVIEW_READINESS_PLAN = 2000  # OPTIMIZED: 5000 → 2000 (no explanation needed)
-MAX_TOKENS_SKILL_READINESS_PLAN = 1800   # OPTIMIZED: 4500 → 1800 (no explanation needed)
-MAX_TOKENS_APTITUDE_READINESS_PLAN = 1500  # OPTIMIZED: 5000 → 1500 (no explanation needed)
-MAX_TOKENS_AI_READINESS_PLAN = 1500     # OPTIMIZED: 4500 → 1500 (no explanation needed)
+# TIER 1 OPTIMIZATION: Ultra-minimal tokens for gpt-3.5-turbo-mini
+# Model: gpt-3.5-turbo-mini (200+ tok/s, 10x cheaper)
+# With gpt-3.5-turbo-mini (200 tok/s): 800 tokens = ~4-5 seconds (EXCELLENT!)
+MAX_TOKENS_INTERVIEW_READINESS_PLAN = 900   # OPTIMIZED: 2000 → 900 (-55%)
+MAX_TOKENS_SKILL_READINESS_PLAN = 800    # OPTIMIZED: 1800 → 800 (-56%)
+MAX_TOKENS_APTITUDE_READINESS_PLAN = 800   # OPTIMIZED: 1500 → 800 (-47%)
+MAX_TOKENS_AI_READINESS_PLAN = 800      # OPTIMIZED: 1500 → 800 (-47%)
 MAX_TOKENS_VALIDATE = 20
 PLAN_QUESTION_COUNT = 15
 APTITUDE_SECTION_ORDER: list[str] = (
@@ -52,7 +51,7 @@ If YES, respond with just: YES"""
         try:
             response = await self.guard_layer.run_with_timeout(
                 self._client.chat.completions.create(
-                    model="gpt-3.5-turbo",
+                    model="gpt-3.5-turbo-mini",
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=MAX_TOKENS_VALIDATE,
                     temperature=0,
@@ -165,7 +164,7 @@ No extra text.
 
         async def call_openai():
             response = await self._client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model="gpt-3.5-turbo-mini",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=MAX_TOKENS_LEGACY_PLAN,
                 temperature=0,
@@ -193,7 +192,7 @@ No extra text.
 
         async def call_openai():
             response = await self._client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model="gpt-3.5-turbo-mini",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=MAX_TOKENS_SKILL_READINESS_PLAN,
                 temperature=0,
@@ -299,7 +298,7 @@ No extra text.
 
         async def call_openai():
             response = await self._client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model="gpt-3.5-turbo-mini",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=MAX_TOKENS_INTERVIEW_READINESS_PLAN,
                 temperature=0,
@@ -333,7 +332,7 @@ No extra text.
 
         async def call_openai():
             response = await self._client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model="gpt-3.5-turbo-mini",
                 messages=[
                     {
                         "role": "system",
@@ -384,7 +383,7 @@ No extra text.
 
         async def call_openai():
             response = await self._client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model="gpt-3.5-turbo-mini",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=MAX_TOKENS_AI_READINESS_PLAN,
                 temperature=0,
