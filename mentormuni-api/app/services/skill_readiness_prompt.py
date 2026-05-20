@@ -48,8 +48,7 @@ OUTPUT FORMAT (VALID JSON ONLY):
   "options": ["A) ...", "B) ...", "C) ...", "D) ..."],
   "correct_answer": "A" | "B" | "C" | "D" | "Yes" | "No",
   "study_topic": "2-4 words",
-  "difficulty": "moderate" | "strong" | "tricky",
-  "explanation": "brief explanation"
+  "difficulty": "moderate" | "strong" | "tricky"
 }]
 
 VALIDATION: Exactly 15 questions, correct distribution (8 MCQ, 4 scenario, 3 yes/no), no repeats, valid JSON only.

@@ -52,7 +52,7 @@ If YES, respond with just: YES"""
         try:
             response = await self.guard_layer.run_with_timeout(
                 self._client.chat.completions.create(
-                    model="gpt-4o",
+                    model="gpt-3.5-turbo",
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=MAX_TOKENS_VALIDATE,
                     temperature=0,
@@ -165,7 +165,7 @@ No extra text.
 
         async def call_openai():
             response = await self._client.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-3.5-turbo",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=MAX_TOKENS_LEGACY_PLAN,
                 temperature=0,
@@ -193,7 +193,7 @@ No extra text.
 
         async def call_openai():
             response = await self._client.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-3.5-turbo",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=MAX_TOKENS_SKILL_READINESS_PLAN,
                 temperature=0,
@@ -250,7 +250,6 @@ No extra text.
                             "question": q,
                             "correct_answer": yn,
                             "study_topic": topic,
-                            "explanation": expl,
                         })
                     elif qt in ("multiple_choice", "scenario", "code_mcq"):
                         opts = self._normalize_mc_options(x.get("options"))
@@ -267,7 +266,6 @@ No extra text.
                             "options": opts,
                             "correct_answer": letter,
                             "study_topic": topic,
-                            "explanation": expl,
                         })
                 if len(out) < PLAN_QUESTION_COUNT:
                     logger.warning(
@@ -301,7 +299,7 @@ No extra text.
 
         async def call_openai():
             response = await self._client.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-3.5-turbo",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=MAX_TOKENS_INTERVIEW_READINESS_PLAN,
                 temperature=0,
@@ -335,7 +333,7 @@ No extra text.
 
         async def call_openai():
             response = await self._client.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-3.5-turbo",
                 messages=[
                     {
                         "role": "system",
@@ -386,7 +384,7 @@ No extra text.
 
         async def call_openai():
             response = await self._client.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-3.5-turbo",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=MAX_TOKENS_AI_READINESS_PLAN,
                 temperature=0,
@@ -514,7 +512,6 @@ No extra text.
                     "difficulty": difficulty,
                     "asked_in": asked_in,
                     "why_students_fail": why_fail,
-                    "explanation": expl,
                 })
         except (TypeError, ValueError):
             return []
@@ -561,7 +558,6 @@ No extra text.
                     "options": opts,
                     "correct_answer": letter,
                     "study_topic": topic,
-                    "explanation": expl,
                 })
         except (TypeError, ValueError):
             return []
