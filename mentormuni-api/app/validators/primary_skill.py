@@ -26,7 +26,9 @@ def validate_primary_skill(value: str) -> str:
         raise ValueError("Primary skill is required")
 
     v = value.strip()
-    if len(v) < 2:
+    # Allow single-character skills (e.g. C, R, D programming languages).
+    # The LLM-based validator downstream confirms semantic validity.
+    if len(v) < 1:
         raise ValueError("Please enter a valid technical skill (e.g. React, .NET, Python)")
 
     v_lower = v.lower()
