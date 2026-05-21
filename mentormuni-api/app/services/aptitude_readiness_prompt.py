@@ -39,6 +39,7 @@ CRITICAL RULES:
 3. Each option ≥3 chars
 4. Difficulty mix: 70% moderate, 20% easy, 10% tricky
 5. Return ONLY valid JSON (no markdown, no preamble)
+6. DIFFICULTY VALUES MUST BE EXACT: "easy" (not "e"), "moderate" (not "mod"), "tricky" (not "t")
 
 CANDIDATE: __USER_TYPE__, __EXPERIENCE_YEARS__ yrs, __PRIMARY_SKILL__, Target: __TARGET_ROLE__, Company: __TARGET_COMPANY_TYPE__
 
@@ -46,7 +47,8 @@ VALIDATE BEFORE RETURNING:
 ✓ Exactly 15 questions
 ✓ Q1-5 quantitative, Q6-10 logical, Q11-15 verbal
 ✓ 4 distinct options per question
-✓ Valid JSON only"""
+✓ Valid JSON only
+✓ difficulty is exactly: "easy", "moderate", or "tricky" (NOT abbreviated)"""
 
 
 def render_aptitude_readiness_prompt(

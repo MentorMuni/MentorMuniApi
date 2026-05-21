@@ -476,135 +476,66 @@ Each item: {{"question":"...","question_type":"yes_no|multiple_choice","options"
         return all_questions[:PLAN_QUESTION_COUNT]
 
     async def generate_aptitude_readiness_plan(self, request) -> list[dict]:
-        """Aptitude readiness: parallel batch generation with bulletproof fallbacks.
+        """Aptitude readiness: 3 parallel batches with bulletproof validation.
         
-        GOAL: Zero errors on 100 consecutive API calls.
-        Strategy: 3 parallel batches + auto-healing + smart fallbacks
+        GOAL: 100% success rate. Every field strictly validated before returning.
+        Strategy: Strict output validation + automatic normalization + fallback
         """
         batch_size = 5
-        num_batches = 3
         
-        async def generate_batch(batch_num: int, section: str, attempt: int = 1) -> list[dict]:
-            """Generate 5 questions for a specific section with retries."""
-            # Map batch number to section
+        async def generate_batch(batch_num: int, section: str) -> list[dict]:
+            """Generate 5 questions with STRICT validation."""
             section_map = {0: "quantitative", 1: "logical", 2: "verbal"}
             section = section_map[batch_num]
             
-            # VERY CONCISE PROMPT to minimize tokens and errors
-            batch_prompt = f"""Generate {batch_size} {section} aptitude MCQs.
+            batch_prompt = f"""Generate EXACTLY {batch_size} {section} aptitude MCQs.
 User: {request.user_type}, {request.experience_years}yrs, {request.primary_skill}
 Target: {request.target_role}, {request.target_company_type}
 
-ONLY valid JSON array. No markdown.
-Format: [{{"q":"...","opts":["A)","B)","C)","D)"],"ans":"A|B|C|D","topic":"...","diff":"easy|mod|tricky"}}...]"""
+MANDATORY JSON FORMAT:
+[{{"q":"question","opts":["A) opt1","B) opt2","C) opt3","D) opt4"],"ans":"A","topic":"topic","diff":"easy"}}]
+
+CRITICAL RULES:
+1. Output ONLY JSON array (no markdown, no text)
+2. ans must be: A, B, C, or D only
+3. diff must be EXACTLY: "easy", "moderate", or "tricky" (NO abbreviations like "mod", "e", "t")
+4. All 4 options must be MEANINGFULLY DIFFERENT"""
             
             async def call_openai():
-                try:
-                    response = await self._client.chat.completions.create(
-                        model="gpt-3.5-turbo",
-                        messages=[
-                            {"role": "system", "content": "Output ONLY JSON array."},
-                            {"role": "user", "content": batch_prompt},
-                        ],
-                        max_tokens=800,
-                        temperature=0,
-                    )
-                    content = response.choices[0].message.content or ""
-                    if not content or len(content.strip()) < 10:
-                        raise ValueError("Empty response")
-                    return content
-                except Exception as e:
-                    logger.error("Batch %d attempt %d OpenAI call failed: %s", batch_num, attempt, e)
-                    if attempt < 2:
-                        # Retry once on failure
-                        await asyncio.sleep(0.2)
-                        return await call_openai()
-                    raise
+                response = await self._client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {"role": "system", "content": "Output ONLY valid JSON array. Zero preamble."},
+                        {"role": "user", "content": batch_prompt},
+                    ],
+                    max_tokens=800,
+                    temperature=0,
+                )
+                return response.choices[0].message.content or ""
             
             try:
                 content = await self.guard_layer_aptitude.run_with_timeout(call_openai())
-                # Parse with lenient mode (allow partial results)
-                parsed = self._parse_batch_lenient(content, section)
-                return parsed
+                return self._parse_and_validate_batch(content, section)
             except Exception as e:
                 logger.warning("Batch %d failed: %s", batch_num, e)
                 return []
         
-        # PARALLEL EXECUTION
         logger.info("Generating 15 aptitude questions (3 parallel batches)...")
-        batch_results = await asyncio.gather(
+        results = await asyncio.gather(
             generate_batch(0, "quantitative"),
             generate_batch(1, "logical"),
             generate_batch(2, "verbal"),
         )
         
-        # Combine and validate
         all_questions = []
-        for batch_idx, batch_result in enumerate(batch_results):
-            section_map = {0: "quantitative", 1: "logical", 2: "verbal"}
-            section = section_map[batch_idx]
-            
-            for q in batch_result:
-                if not isinstance(q, dict):
-                    continue
-                
-                # Flexible key names (q/question, ans/answer, opts/options)
-                question_text = q.get("q") or q.get("question") or ""
-                if not question_text:
-                    continue
-                
-                opts = q.get("opts") or q.get("options") or []
-                if not opts or len(opts) != 4:
-                    continue
-                
-                # Normalize options
-                opts = [str(o).strip() for o in opts]
-                opts = self._normalize_mc_options(opts)
-                if opts is None:
-                    continue
-                
-                # Try to fix similar options
-                fixed_opts = self._fix_similar_options(question_text, opts)
-                if fixed_opts is None:
-                    continue
-                
-                # Validate
-                if not self._validate_mc_options(fixed_opts, question_text):
-                    continue
-                
-                # Get correct answer
-                ans_raw = q.get("ans") or q.get("correct_answer") or "A"
-                letter = self._normalize_mc_letter(ans_raw, fixed_opts)
-                if letter is None:
-                    letter = "A"  # Default fallback
-                
-                # Build final question with safe defaults
-                all_questions.append({
-                    "question_type": "multiple_choice",
-                    "section": section,
-                    "question": question_text[:500],
-                    "options": fixed_opts,
-                    "correct_answer": letter,
-                    "study_topic": (str(q.get("topic", ""))[:30] or question_text[:30]),
-                    "difficulty": q.get("diff", "moderate"),
-                    "asked_in": q.get("asked_in", "Placement test"),
-                    "why_students_fail": q.get("why_fail", "Common mistake"),
-                    "explanation": q.get("explanation", "Refer to study material"),
-                })
-                
-                if len(all_questions) >= PLAN_QUESTION_COUNT:
-                    break
-            
+        for batch in results:
+            all_questions.extend(batch)
             if len(all_questions) >= PLAN_QUESTION_COUNT:
                 break
         
-        # SAFETY: If we somehow got < 15, don't fail - return what we have with padding
-        if len(all_questions) < PLAN_QUESTION_COUNT:
-            logger.warning(f"Generated only {len(all_questions)}/{PLAN_QUESTION_COUNT} questions, attempting recovery...")
-            # At minimum, return best-effort result rather than error
-            if len(all_questions) == 0:
-                # ABSOLUTE FALLBACK: Return minimal valid questions
-                return self._generate_minimal_fallback_questions()
+        if len(all_questions) == 0:
+            logger.warning("All batches failed, using fallback")
+            return self._generate_minimal_fallback_questions()
         
         return all_questions[:PLAN_QUESTION_COUNT]
 
@@ -1001,6 +932,111 @@ Format: [{{"q":"...","opts":["A)","B)","C)","D)"],"ans":"A|B|C|D","topic":"...",
         
         return None
 
+    def _parse_and_validate_batch(self, content: str, section: str) -> list[dict]:
+        """Parse JSON batch with STRICT validation. Returns ONLY valid questions."""
+        try:
+            content = content.strip()
+            data = json.loads(content)
+            
+            if not isinstance(data, list):
+                return []
+            
+            valid_questions = []
+            for item in data:
+                q = self._extract_question_strict(item, section)
+                if q:
+                    valid_questions.append(q)
+                if len(valid_questions) >= 5:
+                    break
+            
+            return valid_questions
+        except json.JSONDecodeError:
+            return []
+        except Exception:
+            return []
+    
+    def _extract_question_strict(self, item: dict, section: str) -> Optional[dict]:
+        """Extract ONE question with STRICT field validation."""
+        try:
+            if not isinstance(item, dict):
+                return None
+            
+            # Question text - REQUIRED
+            q_text = item.get("q") or item.get("question") or ""
+            if not q_text or len(str(q_text).strip()) < 10:
+                return None
+            q_text = str(q_text).strip()[:500]
+            
+            # Options - MUST be exactly 4
+            opts_raw = item.get("opts") or item.get("options") or []
+            if not isinstance(opts_raw, list) or len(opts_raw) != 4:
+                return None
+            
+            opts = [str(o).strip() for o in opts_raw]
+            opts = self._normalize_mc_options(opts)
+            if opts is None:
+                return None
+            
+            fixed_opts = self._fix_similar_options(q_text, opts)
+            if fixed_opts is None:
+                return None
+            
+            if not self._validate_mc_options(fixed_opts, q_text):
+                return None
+            
+            # Correct answer - STRICT validation
+            ans_raw = str(item.get("ans") or item.get("correct_answer") or "").upper().strip()
+            if ans_raw not in ("A", "B", "C", "D"):
+                # Try to extract A-D from string
+                match = re.search(r"[A-D]", ans_raw)
+                if not match:
+                    return None
+                ans_raw = match.group(0)
+            
+            # Difficulty - STRICT (must normalize to exact value)
+            diff_raw = str(item.get("diff") or item.get("difficulty") or "moderate").strip().lower()
+            if diff_raw in ("easy", "e"):
+                difficulty = "easy"
+            elif diff_raw in ("moderate", "mod", "m"):
+                difficulty = "moderate"
+            elif diff_raw in ("tricky", "trick", "t", "hard"):
+                difficulty = "tricky"
+            else:
+                difficulty = "moderate"
+            
+            # Other fields with safe defaults
+            topic = str(item.get("topic") or item.get("study_topic") or "").strip()[:60]
+            if not topic:
+                topic = q_text[:30]
+            
+            asked_in = str(item.get("asked_in") or "").strip()[:200]
+            if not asked_in:
+                asked_in = "Placement test"
+            
+            explain = str(item.get("explain") or item.get("explanation") or "").strip()[:500]
+            if not explain:
+                explain = "Refer to study material"
+            
+            why_fail = str(item.get("why_fail") or item.get("why_students_fail") or "").strip()[:500]
+            if not why_fail:
+                why_fail = "Common mistake"
+            
+            # FINAL QUESTION - All fields validated
+            return {
+                "question_type": "multiple_choice",
+                "section": section,
+                "question": q_text,
+                "options": fixed_opts,
+                "correct_answer": ans_raw,
+                "study_topic": topic,
+                "difficulty": difficulty,
+                "asked_in": asked_in,
+                "why_students_fail": why_fail,
+                "explanation": explain,
+            }
+        except Exception:
+            return None
+    
     def _parse_batch_lenient(self, content: str, section: str) -> list[dict]:
         """Parse batch response leniently - accept any valid JSON structure."""
         try:
@@ -1008,14 +1044,40 @@ Format: [{{"q":"...","opts":["A)","B)","C)","D)"],"ans":"A|B|C|D","topic":"...",
             # Try direct array parse
             data = json.loads(content)
             if isinstance(data, list):
-                return data[:5]  # Max 5 per batch
+                # Normalize difficulty values to full names
+                for item in data[:5]:
+                    if isinstance(item, dict):
+                        diff = item.get("diff") or item.get("difficulty", "moderate")
+                        # Normalize abbreviated values
+                        if diff in ("e", "easy"):
+                            item["difficulty"] = "easy"
+                        elif diff in ("m", "mod", "moderate"):
+                            item["difficulty"] = "moderate"
+                        elif diff in ("t", "tricky", "hard"):
+                            item["difficulty"] = "tricky"
+                        else:
+                            item["difficulty"] = "moderate"  # Default to moderate
+                return data[:5]
             elif isinstance(data, dict):
                 # Try common keys for questions array
                 for key in ("questions", "data", "items", "results"):
                     if key in data and isinstance(data[key], list):
+                        # Normalize difficulty values
+                        for item in data[key][:5]:
+                            if isinstance(item, dict):
+                                diff = item.get("diff") or item.get("difficulty", "moderate")
+                                if diff in ("e", "easy"):
+                                    item["difficulty"] = "easy"
+                                elif diff in ("m", "mod", "moderate"):
+                                    item["difficulty"] = "moderate"
+                                elif diff in ("t", "tricky", "hard"):
+                                    item["difficulty"] = "tricky"
+                                else:
+                                    item["difficulty"] = "moderate"
                         return data[key][:5]
             return []
-        except:
+        except Exception as e:
+            logger.error("Lenient parse failed: %s", e)
             return []
     
     def _generate_minimal_fallback_questions(self) -> list[dict]:
