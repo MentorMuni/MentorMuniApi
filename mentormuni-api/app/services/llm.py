@@ -285,11 +285,11 @@ Each item: {{"question":"...","question_type":"yes_no|multiple_choice|scenario|c
         logger.info("Generated %d skill questions from LLM", len(all_questions))
         
         if len(all_questions) == 0:
-            logger.warning("All skill batches failed, generating fallback...")
-            return self._generate_minimal_fallback_questions()
+            logger.warning("All skill batches failed, using skill fallback...")
+            return self._generate_minimal_fallback_questions(question_type="skill")
         elif len(all_questions) < PLAN_QUESTION_COUNT:
             logger.warning("Got %d skill questions, need %d. Padding with fallback.", len(all_questions), PLAN_QUESTION_COUNT)
-            fallback = self._generate_minimal_fallback_questions()
+            fallback = self._generate_minimal_fallback_questions(question_type="skill")
             all_questions.extend(fallback[len(all_questions):])
         
         return all_questions[:PLAN_QUESTION_COUNT]
@@ -464,11 +464,11 @@ Each item: {{"question":"...","question_type":"yes_no|multiple_choice","options"
         logger.info("Generated %d interview questions from LLM", len(all_questions))
         
         if len(all_questions) == 0:
-            logger.warning("All interview batches failed, generating fallback...")
-            return self._generate_minimal_fallback_questions()
+            logger.warning("All interview batches failed, using skill fallback...")
+            return self._generate_minimal_fallback_questions(question_type="skill")
         elif len(all_questions) < PLAN_QUESTION_COUNT:
             logger.warning("Got %d interview questions, need %d. Padding with fallback.", len(all_questions), PLAN_QUESTION_COUNT)
-            fallback = self._generate_minimal_fallback_questions()
+            fallback = self._generate_minimal_fallback_questions(question_type="skill")
             all_questions.extend(fallback[len(all_questions):])
         
         return all_questions[:PLAN_QUESTION_COUNT]
@@ -1193,35 +1193,70 @@ CRITICAL RULES:
             logger.error("Lenient parse failed: %s", e)
             return []
     
-    def _generate_minimal_fallback_questions(self) -> list[dict]:
+    def _generate_minimal_fallback_questions(self, question_type: str = "aptitude") -> list[dict]:
         """ABSOLUTE FALLBACK: Return minimal but valid questions when all else fails.
         
         This ensures the API NEVER returns an error - worst case, returns basic questions.
-        """
-        logger.warning("FALLBACK: Returning minimal hardcoded questions")
         
-        fallback_questions = [
-            # Quantitative
-            {"question_type": "multiple_choice", "section": "quantitative", "question": "What is 20% of 150?", "options": ["A) 20", "B) 30", "C) 50", "D) 75"], "correct_answer": "B", "study_topic": "Percentage", "difficulty": "easy", "asked_in": "Placement test", "why_students_fail": "Calculation error", "explanation": "20% of 150 = 0.20 × 150 = 30"},
-            {"question_type": "multiple_choice", "section": "quantitative", "question": "A train travels 60 km/hr. How far in 5 hours?", "options": ["A) 200 km", "B) 250 km", "C) 300 km", "D) 350 km"], "correct_answer": "C", "study_topic": "Distance-Speed-Time", "difficulty": "easy", "asked_in": "Placement test", "why_students_fail": "Forgot formula", "explanation": "Distance = Speed × Time = 60 × 5 = 300 km"},
-            {"question_type": "multiple_choice", "section": "quantitative", "question": "Ratio 2:3. If first is 10, what is second?", "options": ["A) 13", "B) 15", "C) 20", "D) 25"], "correct_answer": "B", "study_topic": "Ratio", "difficulty": "easy", "asked_in": "Placement test", "why_students_fail": "Cross-multiply error", "explanation": "2:3 = 10:x → x = (10×3)/2 = 15"},
-            {"question_type": "multiple_choice", "section": "quantitative", "question": "Profit on Rs 100 cost at 30% profit?", "options": ["A) Rs 25", "B) Rs 30", "C) Rs 35", "D) Rs 40"], "correct_answer": "B", "study_topic": "Profit-Loss", "difficulty": "easy", "asked_in": "Placement test", "why_students_fail": "Percentage confusion", "explanation": "Profit = 30% × 100 = Rs 30"},
-            {"question_type": "multiple_choice", "section": "quantitative", "question": "Average of 10, 20, 30, 40?", "options": ["A) 22", "B) 24", "C) 25", "D) 30"], "correct_answer": "C", "study_topic": "Average", "difficulty": "easy", "asked_in": "Placement test", "why_students_fail": "Division error", "explanation": "(10+20+30+40)/4 = 100/4 = 25"},
-            
-            # Logical
-            {"question_type": "multiple_choice", "section": "logical", "question": "If All A are B, and All B are C. Then?", "options": ["A) All A are C", "B) Some A are C", "C) No A is C", "D) Cannot determine"], "correct_answer": "A", "study_topic": "Syllogism", "difficulty": "moderate", "asked_in": "Placement test", "why_students_fail": "Logic confusion", "explanation": "Transitive property: A⊆B and B⊆C means A⊆C"},
-            {"question_type": "multiple_choice", "section": "logical", "question": "3, 6, 12, 24, ?", "options": ["A) 36", "B) 42", "C) 48", "D) 52"], "correct_answer": "C", "study_topic": "Pattern", "difficulty": "moderate", "asked_in": "Placement test", "why_students_fail": "Missed doubling pattern", "explanation": "Each number is double the previous: 3, 6, 12, 24, 48"},
-            {"question_type": "multiple_choice", "section": "logical", "question": "2, 5, 10, 17, ?", "options": ["A) 24", "B) 25", "C) 26", "D) 27"], "correct_answer": "C", "study_topic": "Series", "difficulty": "moderate", "asked_in": "Placement test", "why_students_fail": "Didn't identify pattern", "explanation": "Differences: 3, 5, 7... next is 26"},
-            {"question_type": "multiple_choice", "section": "logical", "question": "If BOOK is 4329, COOK is?", "options": ["A) 3229", "B) 2329", "C) 4229", "D) 3429"], "correct_answer": "A", "study_topic": "Coding", "difficulty": "moderate", "asked_in": "Placement test", "why_students_fail": "Wrong letter mapping", "explanation": "B=4, O=3, O=3, K=9. COOK = C=2,O=3,O=3,K=9"},
-            {"question_type": "multiple_choice", "section": "logical", "question": "Find odd one: Red, Green, Blue, Fast", "options": ["A) Red", "B) Green", "C) Fast", "D) Blue"], "correct_answer": "C", "study_topic": "Classification", "difficulty": "easy", "asked_in": "Placement test", "why_students_fail": "Didn't categorize", "explanation": "Red, Green, Blue are colors. Fast is not a color"},
-            
-            # Verbal
-            {"question_type": "multiple_choice", "section": "verbal", "question": "Choose correct form: He __ going to the store.", "options": ["A) are", "B) is", "C) am", "D) be"], "correct_answer": "B", "study_topic": "Verb Agreement", "difficulty": "easy", "asked_in": "Placement test", "why_students_fail": "Subject-verb confusion", "explanation": "'He' is singular, uses 'is'"},
-            {"question_type": "multiple_choice", "section": "verbal", "question": "Spotting error: The team are playing good.", "options": ["A) The", "B) team", "C) are", "D) good"], "correct_answer": "D", "study_topic": "Error Spotting", "difficulty": "moderate", "asked_in": "Placement test", "why_students_fail": "Adverb usage", "explanation": "'good' should be 'well' (adverb for playing)"},
-            {"question_type": "multiple_choice", "section": "verbal", "question": "Synonym of 'Abundant'?", "options": ["A) Scarce", "B) Plentiful", "C) Rare", "D) Limited"], "correct_answer": "B", "study_topic": "Vocabulary", "difficulty": "easy", "asked_in": "Placement test", "why_students_fail": "Vocab gap", "explanation": "Abundant means Plentiful (in large quantity)"},
-            {"question_type": "multiple_choice", "section": "verbal", "question": "Which is correct? 'Between you and I' or 'Between you and me'?", "options": ["A) Between you and I", "B) Between you and me", "C) Both same", "D) Neither"], "correct_answer": "B", "study_topic": "Grammar", "difficulty": "moderate", "asked_in": "Placement test", "why_students_fail": "Pronoun case error", "explanation": "Preposition 'between' takes objective case: 'me'"},
-            {"question_type": "multiple_choice", "section": "verbal", "question": "Complete: 'He is ____ to succeed.'", "options": ["A) likely", "B) unlike", "C) unlike to", "D) unlike on"], "correct_answer": "A", "study_topic": "Sentence Completion", "difficulty": "easy", "asked_in": "Placement test", "why_students_fail": "Wrong idiom", "explanation": "'likely to succeed' is correct phrase"},
-        ]
+        Args:
+            question_type: "aptitude" or "skill" (for different fallback sets)
+        """
+        logger.warning(f"FALLBACK: Returning minimal hardcoded {question_type} questions")
+        
+        if question_type == "skill":
+            # SKILL READINESS FALLBACK: Mix of question types
+            fallback_questions = [
+                # Yes/No questions
+                {"question_type": "yes_no", "question": "Have you used version control systems like Git?", "correct_answer": "Yes", "study_topic": "Version Control", "explanation": "Git is fundamental for professional development"},
+                {"question_type": "yes_no", "question": "Do you understand object-oriented programming concepts?", "correct_answer": "Yes", "study_topic": "OOP Fundamentals", "explanation": "OOP is essential for software development"},
+                {"question_type": "yes_no", "question": "Are you familiar with writing unit tests?", "correct_answer": "Yes", "study_topic": "Testing Fundamentals", "explanation": "Unit testing ensures code quality"},
+                {"question_type": "yes_no", "question": "Have you worked with relational databases?", "correct_answer": "Yes", "study_topic": "Databases", "explanation": "Database knowledge is crucial"},
+                
+                # Multiple Choice questions
+                {"question_type": "multiple_choice", "question": "What is the primary purpose of a design pattern?", "options": ["A) To make code faster", "B) To provide reusable solutions to common problems", "C) To reduce file size", "D) To simplify variable names"], "correct_answer": "B", "study_topic": "Design Patterns", "explanation": "Design patterns solve recurring design problems"},
+                {"question_type": "multiple_choice", "question": "Which principle promotes writing maintainable code?", "options": ["A) DRY (Don't Repeat Yourself)", "B) Write code quickly", "C) Use every language feature", "D) Avoid documentation"], "correct_answer": "A", "study_topic": "Code Principles", "explanation": "DRY reduces bugs and improves maintainability"},
+                {"question_type": "multiple_choice", "question": "What does API stand for?", "options": ["A) Application Process Interface", "B) Application Programming Interface", "C) Advanced Programming Instruction", "D) Application Protocol Internet"], "correct_answer": "B", "study_topic": "APIs", "explanation": "API enables communication between software systems"},
+                {"question_type": "multiple_choice", "question": "Which is NOT a benefit of code refactoring?", "options": ["A) Improved readability", "B) Reduced technical debt", "C) Faster code execution", "D) Better maintainability"], "correct_answer": "C", "study_topic": "Refactoring", "explanation": "Refactoring improves code quality, not speed"},
+                
+                # Scenario questions
+                {"question_type": "scenario", "question": "Your code has a bug in production. What should you do first?", "options": ["A) Blame the QA team", "B) Reproduce the issue locally", "C) Deploy a hotfix immediately", "D) Wait for the next release"], "correct_answer": "B", "study_topic": "Debugging", "explanation": "Always reproduce locally to understand the root cause"},
+                {"question_type": "scenario", "question": "You need to add a new feature. What's the best approach?", "options": ["A) Modify existing code directly", "B) Create a new branch and make changes", "C) Edit files on production server", "D) Copy-paste code from StackOverflow"], "correct_answer": "B", "study_topic": "Git Workflow", "explanation": "Branching ensures safe development and code review"},
+                
+                # Code MCQ questions
+                {"question_type": "code_mcq", "question": "What will this code output?\nlet x = 5;\nlet y = x++;\nconsole.log(y);", "options": ["A) 5", "B) 6", "C) undefined", "D) null"], "correct_answer": "A", "study_topic": "JavaScript Operators", "explanation": "Post-increment returns original value before incrementing"},
+                {"question_type": "code_mcq", "question": "Identify the bug:\nfunction add(a, b) {\n  return a + b\n}\nadd(2, 3);", "options": ["A) Missing semicolon", "B) Wrong parameter names", "C) No bug present", "D) Missing return statement"], "correct_answer": "C", "study_topic": "JavaScript Basics", "explanation": "Code is correct; semicolons are optional in JavaScript"},
+                {"question_type": "code_mcq", "question": "What does this code do?\narr.map(x => x * 2);", "options": ["A) Modifies original array", "B) Returns new array with doubled values", "C) Sorts the array", "D) Filters the array"], "correct_answer": "B", "study_topic": "Array Methods", "explanation": "map() returns new array without modifying original"},
+                
+                # Additional scenario question
+                {"question_type": "scenario", "question": "Your teammate's code breaks existing tests. What do you do?", "options": ["A) Deploy to production anyway", "B) Discuss with teammate and fix together", "C) Blame QA for bad tests", "D) Revert without discussion"], "correct_answer": "B", "study_topic": "Team Collaboration", "explanation": "Communication and collaboration lead to better solutions"},
+                
+                # Additional multiple choice question
+                {"question_type": "multiple_choice", "question": "What is the main purpose of code review?", "options": ["A) To slow down development", "B) To find bugs early and share knowledge", "C) To blame developers", "D) To enforce strict rules"], "correct_answer": "B", "study_topic": "Code Quality", "explanation": "Code reviews catch issues and improve team knowledge"},
+            ]
+        else:
+            # APTITUDE FALLBACK: All MCQs with sections
+            fallback_questions = [
+                # Quantitative
+                {"question_type": "multiple_choice", "section": "quantitative", "question": "What is 20% of 150?", "options": ["A) 20", "B) 30", "C) 50", "D) 75"], "correct_answer": "B", "study_topic": "Percentage", "difficulty": "easy", "asked_in": "Placement test", "why_students_fail": "Calculation error", "explanation": "20% of 150 = 0.20 × 150 = 30"},
+                {"question_type": "multiple_choice", "section": "quantitative", "question": "A train travels 60 km/hr. How far in 5 hours?", "options": ["A) 200 km", "B) 250 km", "C) 300 km", "D) 350 km"], "correct_answer": "C", "study_topic": "Distance-Speed-Time", "difficulty": "easy", "asked_in": "Placement test", "why_students_fail": "Forgot formula", "explanation": "Distance = Speed × Time = 60 × 5 = 300 km"},
+                {"question_type": "multiple_choice", "section": "quantitative", "question": "Ratio 2:3. If first is 10, what is second?", "options": ["A) 13", "B) 15", "C) 20", "D) 25"], "correct_answer": "B", "study_topic": "Ratio", "difficulty": "easy", "asked_in": "Placement test", "why_students_fail": "Cross-multiply error", "explanation": "2:3 = 10:x → x = (10×3)/2 = 15"},
+                {"question_type": "multiple_choice", "section": "quantitative", "question": "Profit on Rs 100 cost at 30% profit?", "options": ["A) Rs 25", "B) Rs 30", "C) Rs 35", "D) Rs 40"], "correct_answer": "B", "study_topic": "Profit-Loss", "difficulty": "easy", "asked_in": "Placement test", "why_students_fail": "Percentage confusion", "explanation": "Profit = 30% × 100 = Rs 30"},
+                {"question_type": "multiple_choice", "section": "quantitative", "question": "Average of 10, 20, 30, 40?", "options": ["A) 22", "B) 24", "C) 25", "D) 30"], "correct_answer": "C", "study_topic": "Average", "difficulty": "easy", "asked_in": "Placement test", "why_students_fail": "Division error", "explanation": "(10+20+30+40)/4 = 100/4 = 25"},
+                
+                # Logical
+                {"question_type": "multiple_choice", "section": "logical", "question": "If All A are B, and All B are C. Then?", "options": ["A) All A are C", "B) Some A are C", "C) No A is C", "D) Cannot determine"], "correct_answer": "A", "study_topic": "Syllogism", "difficulty": "moderate", "asked_in": "Placement test", "why_students_fail": "Logic confusion", "explanation": "Transitive property: A⊆B and B⊆C means A⊆C"},
+                {"question_type": "multiple_choice", "section": "logical", "question": "3, 6, 12, 24, ?", "options": ["A) 36", "B) 42", "C) 48", "D) 52"], "correct_answer": "C", "study_topic": "Pattern", "difficulty": "moderate", "asked_in": "Placement test", "why_students_fail": "Missed doubling pattern", "explanation": "Each number is double the previous: 3, 6, 12, 24, 48"},
+                {"question_type": "multiple_choice", "section": "logical", "question": "2, 5, 10, 17, ?", "options": ["A) 24", "B) 25", "C) 26", "D) 27"], "correct_answer": "C", "study_topic": "Series", "difficulty": "moderate", "asked_in": "Placement test", "why_students_fail": "Didn't identify pattern", "explanation": "Differences: 3, 5, 7... next is 26"},
+                {"question_type": "multiple_choice", "section": "logical", "question": "If BOOK is 4329, COOK is?", "options": ["A) 3229", "B) 2329", "C) 4229", "D) 3429"], "correct_answer": "A", "study_topic": "Coding", "difficulty": "moderate", "asked_in": "Placement test", "why_students_fail": "Wrong letter mapping", "explanation": "B=4, O=3, O=3, K=9. COOK = C=2,O=3,O=3,K=9"},
+                {"question_type": "multiple_choice", "section": "logical", "question": "Find odd one: Red, Green, Blue, Fast", "options": ["A) Red", "B) Green", "C) Fast", "D) Blue"], "correct_answer": "C", "study_topic": "Classification", "difficulty": "easy", "asked_in": "Placement test", "why_students_fail": "Didn't categorize", "explanation": "Red, Green, Blue are colors. Fast is not a color"},
+                
+                # Verbal
+                {"question_type": "multiple_choice", "section": "verbal", "question": "Choose correct form: He __ going to the store.", "options": ["A) are", "B) is", "C) am", "D) be"], "correct_answer": "B", "study_topic": "Verb Agreement", "difficulty": "easy", "asked_in": "Placement test", "why_students_fail": "Subject-verb confusion", "explanation": "'He' is singular, uses 'is'"},
+                {"question_type": "multiple_choice", "section": "verbal", "question": "Spotting error: The team are playing good.", "options": ["A) The", "B) team", "C) are", "D) good"], "correct_answer": "D", "study_topic": "Error Spotting", "difficulty": "moderate", "asked_in": "Placement test", "why_students_fail": "Adverb usage", "explanation": "'good' should be 'well' (adverb for playing)"},
+                {"question_type": "multiple_choice", "section": "verbal", "question": "Synonym of 'Abundant'?", "options": ["A) Scarce", "B) Plentiful", "C) Rare", "D) Limited"], "correct_answer": "B", "study_topic": "Vocabulary", "difficulty": "easy", "asked_in": "Placement test", "why_students_fail": "Vocab gap", "explanation": "Abundant means Plentiful (in large quantity)"},
+                {"question_type": "multiple_choice", "section": "verbal", "question": "Which is correct? 'Between you and I' or 'Between you and me'?", "options": ["A) Between you and I", "B) Between you and me", "C) Both same", "D) Neither"], "correct_answer": "B", "study_topic": "Grammar", "difficulty": "moderate", "asked_in": "Placement test", "why_students_fail": "Pronoun case error", "explanation": "Preposition 'between' takes objective case: 'me'"},
+                {"question_type": "multiple_choice", "section": "verbal", "question": "Complete: 'He is ____ to succeed.'", "options": ["A) likely", "B) unlike", "C) unlike to", "D) unlike on"], "correct_answer": "A", "study_topic": "Sentence Completion", "difficulty": "easy", "asked_in": "Placement test", "why_students_fail": "Wrong idiom", "explanation": "'likely to succeed' is correct phrase"},
+            ]
         
         return fallback_questions
         content = content.strip()
