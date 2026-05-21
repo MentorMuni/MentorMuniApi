@@ -269,6 +269,16 @@ OUTPUT ONLY JSON ARRAY. No extra text."""
                 if not isinstance(q, dict) or "question" not in q:
                     continue
                 
+                question_text = str(q["question"]).strip()
+                if not question_text:
+                    continue
+                
+                # Schema requires non-empty study_topic and explanation
+                study_topic = str(q.get("study_topic", "")).strip()[:60]
+                if not study_topic:
+                    study_topic = question_text[:60] + ("..." if len(question_text) > 60 else "")
+                explanation = self._explanation_or_default(q.get("explanation"))
+                
                 # FLEXIBLE validation: accept more questions
                 qt = str(q.get("question_type", "")).strip().lower()
                 if qt == "yes_no":
@@ -277,16 +287,17 @@ OUTPUT ONLY JSON ARRAY. No extra text."""
                         continue
                     all_questions.append({
                         "question_type": "yes_no",
-                        "question": str(q["question"]).strip(),
+                        "question": question_text,
                         "correct_answer": yn,
-                        "study_topic": str(q.get("study_topic", ""))[:60],
+                        "study_topic": study_topic,
+                        "explanation": explanation,
                     })
                 elif qt in ("multiple_choice", "scenario", "code_mcq"):
                     opts = self._normalize_mc_options(q.get("options"))
                     if opts is None:
                         continue
                     # For skill questions, allow generic concept-based detection (works for any skill)
-                    fixed_opts = self._fix_similar_options(q.get("question", ""), opts, allow_concept_based=True)
+                    fixed_opts = self._fix_similar_options(question_text, opts, allow_concept_based=True)
                     if fixed_opts is None:
                         fixed_opts = opts  # FLEXIBLE: use raw if fix fails
                     letter = self._normalize_mc_letter(q.get("correct_answer"), fixed_opts)
@@ -294,10 +305,11 @@ OUTPUT ONLY JSON ARRAY. No extra text."""
                         continue
                     all_questions.append({
                         "question_type": qt,
-                        "question": str(q["question"]).strip(),
+                        "question": question_text,
                         "options": fixed_opts,
                         "correct_answer": letter,
-                        "study_topic": str(q.get("study_topic", ""))[:60],
+                        "study_topic": study_topic,
+                        "explanation": explanation,
                     })
         
         logger.info("Generated %d skill questions from LLM", len(all_questions))
@@ -475,6 +487,16 @@ OUTPUT ONLY JSON ARRAY. No extra text."""
                 if not isinstance(q, dict) or "question" not in q:
                     continue
                 
+                question_text = str(q["question"]).strip()
+                if not question_text:
+                    continue
+                
+                # Schema requires non-empty study_topic and explanation
+                study_topic = str(q.get("study_topic", "")).strip()[:60]
+                if not study_topic:
+                    study_topic = question_text[:60] + ("..." if len(question_text) > 60 else "")
+                explanation = self._explanation_or_default(q.get("explanation"))
+                
                 qt = str(q.get("question_type", "")).strip().lower()
                 if qt == "yes_no":
                     yn = self._parse_yes_no_answer(q.get("correct_answer"))
@@ -482,16 +504,17 @@ OUTPUT ONLY JSON ARRAY. No extra text."""
                         continue
                     all_questions.append({
                         "question_type": "yes_no",
-                        "question": str(q["question"]).strip(),
+                        "question": question_text,
                         "correct_answer": yn,
-                        "study_topic": str(q.get("study_topic", ""))[:60],
+                        "study_topic": study_topic,
+                        "explanation": explanation,
                     })
                 elif qt in ("multiple_choice", "scenario", "code_mcq"):
                     opts = self._normalize_mc_options(q.get("options"))
                     if opts is None:
                         continue
                     # For interview questions, allow generic concept-based detection (works for any skill)
-                    fixed_opts = self._fix_similar_options(q.get("question", ""), opts, allow_concept_based=True)
+                    fixed_opts = self._fix_similar_options(question_text, opts, allow_concept_based=True)
                     if fixed_opts is None:
                         fixed_opts = opts  # FLEXIBLE: use raw if fix fails
                     letter = self._normalize_mc_letter(q.get("correct_answer"), fixed_opts)
@@ -499,10 +522,11 @@ OUTPUT ONLY JSON ARRAY. No extra text."""
                         continue
                     all_questions.append({
                         "question_type": qt,
-                        "question": str(q["question"]).strip(),
+                        "question": question_text,
                         "options": fixed_opts,
                         "correct_answer": letter,
-                        "study_topic": str(q.get("study_topic", ""))[:60],
+                        "study_topic": study_topic,
+                        "explanation": explanation,
                     })
         
         logger.info("Generated %d interview questions from LLM", len(all_questions))
