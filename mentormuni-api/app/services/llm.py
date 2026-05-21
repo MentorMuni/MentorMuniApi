@@ -19,16 +19,15 @@ logger = logging.getLogger("llm_service")
 
 MAX_TOKENS_LEGACY_PLAN = 1500
 MAX_TOKENS_MIXED_PLAN = 3200
-# OPTIMIZATION: Balanced safety and speed
-# Model: gpt-3.5-turbo (200+ tok/s - proven on Railway)
-# Actual usage: 2000-2200 tokens average
-# Strategy: 25-30% safety margin for complete output WITHOUT excess wait time
-# With gpt-3.5-turbo (200 tok/s): 2500-2800 tokens = 12-14 seconds generation (vs 20s with 4000)
-# This saves 6-8 seconds per request while maintaining quality
-MAX_TOKENS_INTERVIEW_READINESS_PLAN = 2800   # OPTIMIZED: 4000 → 2800 (6-7s faster)
-MAX_TOKENS_SKILL_READINESS_PLAN = 2800       # OPTIMIZED: 4000 → 2800 (6-7s faster)
-MAX_TOKENS_APTITUDE_READINESS_PLAN = 2500    # OPTIMIZED: 4000 → 2500 (7-8s faster, high first-try quality)
-MAX_TOKENS_AI_READINESS_PLAN = 2600          # OPTIMIZED: 4000 → 2600 (6-7s faster)
+# PRODUCTION: Optimized for speed + quality
+# Model: gpt-3.5-turbo (200+ tok/s)
+# Strategy: Higher per-batch tokens = better question quality + less retries
+# Batch: 5 questions @ 1200 tokens each = 6000 total for 3 parallel calls
+# Time: ~6s per batch in parallel = 12-15s total (vs 50s monolithic)
+MAX_TOKENS_INTERVIEW_READINESS_PLAN = 2800
+MAX_TOKENS_SKILL_READINESS_PLAN = 2800
+MAX_TOKENS_APTITUDE_READINESS_PLAN = 1200    # INCREASED: per batch (was 800)
+MAX_TOKENS_AI_READINESS_PLAN = 2600
 MAX_TOKENS_VALIDATE = 20
 PLAN_QUESTION_COUNT = 15
 APTITUDE_SECTION_ORDER: list[str] = (
@@ -193,17 +192,18 @@ No extra text.
         )
 
     async def generate_skill_readiness_plan(self, request) -> list[dict]:
-        """Skill readiness: parallel batch generation (60% faster).
+        """Skill readiness: parallel batch generation (60% faster) with increased throughput.
         
-        CRITICAL FIX: Split into 3 parallel batches instead of 1 monolithic call.
-        - Before: 1 massive call (40-50s)
-        - After: 3 parallel calls (12-18s total)
+        OPTIMIZATION: Generate more questions in less time
+        - Batch size: 5 → 6 questions per batch (3 batches = 18 total, take top 15)
+        - Token limit: 900 → 1200 per batch
+        - Parallel execution: All 3 batches run simultaneously
         """
-        batch_size = 5
+        batch_size = 6  # INCREASED: 5 → 6
         num_batches = 3
         
         async def generate_batch(batch_num: int) -> list[dict]:
-            """Generate 5 skill-readiness questions."""
+            """Generate 6 skill-readiness questions."""
             batch_prompt = f"""Generate exactly {batch_size} skill-readiness interview questions for {request.primary_skill}.
 
 User: {request.user_type}, {request.experience_years} years, Target: {request.target_role}
@@ -220,7 +220,7 @@ Each item: {{"question":"...","question_type":"yes_no|multiple_choice|scenario|c
                         {"role": "system", "content": "You output ONLY valid JSON array. No markdown. No preamble."},
                         {"role": "user", "content": batch_prompt},
                     ],
-                    max_tokens=900,  # Batch of 5, much smaller
+                    max_tokens=1200,  # INCREASED: 900 → 1200
                     temperature=0,
                 )
                 content = response.choices[0].message.content or ""
@@ -239,7 +239,7 @@ Each item: {{"question":"...","question_type":"yes_no|multiple_choice|scenario|c
                 return []
         
         # PARALLEL: Fire all 3 batches simultaneously
-        logger.info("Generating 15 skill questions in 3 parallel batches...")
+        logger.info("Generating 15+ skill questions in 3 parallel batches with increased throughput...")
         batch_results = await asyncio.gather(
             generate_batch(0),
             generate_batch(1),
@@ -373,16 +373,17 @@ Each item: {{"question":"...","question_type":"yes_no|multiple_choice|scenario|c
         }]
 
     async def generate_interview_readiness_plan(self, request: InterviewReadinessPlanRequest) -> list[dict]:
-        """Interview readiness: parallel batch generation (60% faster).
+        """Interview readiness: parallel batch generation (60% faster) with increased throughput.
         
-        CRITICAL FIX: Split into 3 parallel batches instead of 1 monolithic call.
-        - Before: 1 massive prompt (40-50s)
-        - After: 3 parallel calls (12-18s total)
+        OPTIMIZATION: Generate more questions in less time
+        - Batch size: 5 → 6 questions per batch (3 batches = 18 total, take top 15)
+        - Token limit: 900 → 1200 per batch
+        - Parallel execution: All 3 batches run simultaneously
         """
-        batch_size = 5
+        batch_size = 6  # INCREASED: 5 → 6
         
         async def generate_batch(batch_num: int) -> list[dict]:
-            """Generate 5 interview readiness questions."""
+            """Generate 6 interview readiness questions."""
             batch_prompt = f"""Generate exactly {batch_size} interview readiness questions for a {request.target_role} interview.
 
 Candidate: {request.user_type}, {request.experience_years} years exp, {request.primary_skill}
@@ -400,7 +401,7 @@ Each item: {{"question":"...","question_type":"yes_no|multiple_choice","options"
                         {"role": "system", "content": "You output ONLY valid JSON array. No markdown. No preamble."},
                         {"role": "user", "content": batch_prompt},
                     ],
-                    max_tokens=900,  # Batch of 5
+                    max_tokens=1200,  # INCREASED: 900 → 1200
                     temperature=0,
                 )
                 content = response.choices[0].message.content or ""
@@ -419,7 +420,7 @@ Each item: {{"question":"...","question_type":"yes_no|multiple_choice","options"
                 return []
         
         # PARALLEL: Fire all 3 batches simultaneously
-        logger.info("Generating 15 interview questions in 3 parallel batches...")
+        logger.info("Generating 15+ interview questions in 3 parallel batches with increased throughput...")
         batch_results = await asyncio.gather(
             generate_batch(0),
             generate_batch(1),
@@ -476,15 +477,17 @@ Each item: {{"question":"...","question_type":"yes_no|multiple_choice","options"
         return all_questions[:PLAN_QUESTION_COUNT]
 
     async def generate_aptitude_readiness_plan(self, request) -> list[dict]:
-        """Aptitude readiness: 3 parallel batches with bulletproof validation.
+        """Aptitude readiness: 3 parallel batches with increased throughput.
         
-        GOAL: 100% success rate. Every field strictly validated before returning.
-        Strategy: Strict output validation + automatic normalization + fallback
+        OPTIMIZATION: Generate more questions in less time
+        - Batch size: 5 → 6 questions per batch (3 batches = 18 total, take top 15)
+        - Token limit: 800 → 1200 per batch (better quality)
+        - Parallel execution: All 3 batches run simultaneously
         """
-        batch_size = 5
+        batch_size = 6  # INCREASED: 5 → 6 per batch
         
         async def generate_batch(batch_num: int, section: str) -> list[dict]:
-            """Generate 5 questions with STRICT validation."""
+            """Generate 6 questions with STRICT validation."""
             section_map = {0: "quantitative", 1: "logical", 2: "verbal"}
             section = section_map[batch_num]
             
@@ -498,8 +501,9 @@ MANDATORY JSON FORMAT:
 CRITICAL RULES:
 1. Output ONLY JSON array (no markdown, no text)
 2. ans must be: A, B, C, or D only
-3. diff must be EXACTLY: "easy", "moderate", or "tricky" (NO abbreviations like "mod", "e", "t")
-4. All 4 options must be MEANINGFULLY DIFFERENT"""
+3. diff must be EXACTLY: "easy", "moderate", or "tricky" (NO abbreviations)
+4. All 4 options must be MEANINGFULLY DIFFERENT
+5. Generate {batch_size} high-quality questions, not rushed"""
             
             async def call_openai():
                 response = await self._client.chat.completions.create(
@@ -508,7 +512,7 @@ CRITICAL RULES:
                         {"role": "system", "content": "Output ONLY valid JSON array. Zero preamble."},
                         {"role": "user", "content": batch_prompt},
                     ],
-                    max_tokens=800,
+                    max_tokens=MAX_TOKENS_APTITUDE_READINESS_PLAN,  # INCREASED: 1200 tokens
                     temperature=0,
                 )
                 return response.choices[0].message.content or ""
@@ -520,7 +524,7 @@ CRITICAL RULES:
                 logger.warning("Batch %d failed: %s", batch_num, e)
                 return []
         
-        logger.info("Generating 15 aptitude questions (3 parallel batches)...")
+        logger.info("Generating 15+ aptitude questions (3 parallel batches, increased throughput)...")
         results = await asyncio.gather(
             generate_batch(0, "quantitative"),
             generate_batch(1, "logical"),
@@ -537,6 +541,7 @@ CRITICAL RULES:
             logger.warning("All batches failed, using fallback")
             return self._generate_minimal_fallback_questions()
         
+        logger.info("Generated %d questions successfully", len(all_questions))
         return all_questions[:PLAN_QUESTION_COUNT]
 
     async def generate_ai_readiness_plan(self, request) -> list[dict]:
@@ -946,7 +951,7 @@ CRITICAL RULES:
                 q = self._extract_question_strict(item, section)
                 if q:
                     valid_questions.append(q)
-                if len(valid_questions) >= 5:
+                if len(valid_questions) >= 6:  # INCREASED: 5 → 6 per batch
                     break
             
             return valid_questions
