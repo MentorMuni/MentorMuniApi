@@ -285,7 +285,8 @@ OUTPUT ONLY JSON ARRAY. No extra text."""
                     opts = self._normalize_mc_options(q.get("options"))
                     if opts is None:
                         continue
-                    fixed_opts = self._fix_similar_options(q.get("question", ""), opts)
+                    # For skill questions, allow generic concept-based detection (works for any skill)
+                    fixed_opts = self._fix_similar_options(q.get("question", ""), opts, allow_concept_based=True)
                     if fixed_opts is None:
                         fixed_opts = opts  # FLEXIBLE: use raw if fix fails
                     letter = self._normalize_mc_letter(q.get("correct_answer"), fixed_opts)
@@ -356,7 +357,8 @@ OUTPUT ONLY JSON ARRAY. No extra text."""
                     elif qt in ("multiple_choice", "scenario", "code_mcq"):
                         opts = self._normalize_mc_options(x.get("options"))
                         # BUG FIX: Add validation to ensure options are distinct and relevant
-                        if opts is None or not self._validate_mc_options(opts, q):
+                        # For skill readiness, allow concept-based questions with similar options
+                        if opts is None or not self._validate_mc_options(opts, q, allow_concept_based=True):
                             logger.debug("Skipping MCQ with invalid/duplicate options: %s", q[:60])
                             continue
                         letter = self._normalize_mc_letter(x.get("correct_answer"), opts)
@@ -406,14 +408,14 @@ CONTEXT: Real interview scenario, placement-focused
 
 CRITICAL RULES:
 1. Generate EXACTLY {batch_size} questions
-2. Mix types: yes_no, multiple_choice, scenario (distribute evenly)
+2. Mix types: yes_no, multiple_choice, scenario, code_mcq (distribute evenly)
 3. Test REAL understanding, NOT memorization
 4. Include practical gotchas, edge cases, real-world scenarios
 5. Return ONLY valid JSON array (no markdown, no preamble, no text)
 
 QUALITY STANDARDS:
 ✓ Each option must be PLAUSIBLE (make candidates think)
-✓ Options must be MEANINGFULLY DIFFERENT (>98% similar = reject)
+✓ Options must be MEANINGFULLY DIFFERENT
 ✓ Avoid obvious answers and trivial questions
 ✓ Include production bugs, performance issues, design tradeoffs
 ✓ Explanations must explain WHY the answer is correct
@@ -422,11 +424,13 @@ JSON FORMAT (each item must be valid):
 - yes_no: {{"question_type":"yes_no", "question":"will this work/is this true?", "correct_answer":"Yes", "study_topic":"topic", "explanation":"why"}}
 - multiple_choice: {{"question_type":"multiple_choice", "question":"...", "options":["opt1","opt2","opt3","opt4"], "correct_answer":"A", "study_topic":"topic", "explanation":"why"}}
 - scenario: {{"question_type":"scenario", "question":"production situation: what would you do?", "options":["approach1","approach2","approach3","approach4"], "correct_answer":"B", "study_topic":"topic", "explanation":"why"}}
+- code_mcq: {{"question_type":"code_mcq", "question":"code snippet: what outputs/what's the bug?", "options":["output1","output2","output3","output4"], "correct_answer":"C", "study_topic":"topic", "explanation":"why"}}
 
-CRITICAL - For Multiple Choice/Scenario:
+CRITICAL - For Multiple Choice/Scenario/Code MCQ:
 ✓ Must have exactly 4 options
 ✓ Options must NOT start with "A)" - just plain text
-✓ All options must be different (check >98% similarity)
+✓ All options must be different (no exact duplicates)
+✓ Similar-sounding options OK for concept comparisons (e.g., "controlled vs uncontrolled")
 ✓ Include 2 reasonable approaches, 2 tricky/wrong ones
 
 OUTPUT ONLY JSON ARRAY. No extra text."""
@@ -482,18 +486,19 @@ OUTPUT ONLY JSON ARRAY. No extra text."""
                         "correct_answer": yn,
                         "study_topic": str(q.get("study_topic", ""))[:60],
                     })
-                elif qt == "multiple_choice":
+                elif qt in ("multiple_choice", "scenario", "code_mcq"):
                     opts = self._normalize_mc_options(q.get("options"))
                     if opts is None:
                         continue
-                    fixed_opts = self._fix_similar_options(q.get("question", ""), opts)
+                    # For interview questions, allow generic concept-based detection (works for any skill)
+                    fixed_opts = self._fix_similar_options(q.get("question", ""), opts, allow_concept_based=True)
                     if fixed_opts is None:
                         fixed_opts = opts  # FLEXIBLE: use raw if fix fails
                     letter = self._normalize_mc_letter(q.get("correct_answer"), fixed_opts)
                     if letter is None:
                         continue
                     all_questions.append({
-                        "question_type": "multiple_choice",
+                        "question_type": qt,
                         "question": str(q["question"]).strip(),
                         "options": fixed_opts,
                         "correct_answer": letter,
@@ -707,7 +712,7 @@ CRITICAL RULES:
                     continue
                 
                 # TRY FIX: Attempt to auto-fix similar options before rejecting
-                fixed_opts = self._fix_similar_options(q, opts)
+                fixed_opts = self._fix_similar_options(q, opts, allow_concept_based=False)
                 if fixed_opts is None:
                     logger.debug("Skipping aptitude MCQ with unfixable similar options: %s", q[:60])
                     continue
@@ -782,7 +787,7 @@ CRITICAL RULES:
                     continue
                 
                 # TRY FIX: Attempt to auto-fix similar options before rejecting
-                fixed_opts = self._fix_similar_options(q, opts)
+                fixed_opts = self._fix_similar_options(q, opts, allow_concept_based=False)
                 if fixed_opts is None:
                     logger.debug("Skipping AI MCQ with unfixable similar options: %s", q[:60])
                     continue
@@ -857,16 +862,76 @@ CRITICAL RULES:
                 return chr(ord("A") + i)
         return None
 
-    def _validate_mc_options(self, options: List[str], question: str = "") -> bool:
+    def _is_concept_based_question(self, question: str, options: List[str]) -> bool:
         """
-        PRODUCTION MCQ VALIDATION: Smart validation with English-language awareness.
+        GENERIC DETECTOR: Identify concept-based questions where options
+        are naturally similar (e.g., "controlled vs uncontrolled", "sync vs async").
         
-        Key insight: Verbal/grammar questions SHOULD have similar-sounding options.
-        This is by design in English language tests.
+        These questions test understanding of nuanced differences and should
+        allow options with higher similarity scores. Works for ANY skill/domain.
         
-        Strategy:
-        - English questions: Only check basic validity (4 options, min length, no exact dupes)
-        - Other questions: Check meaningful distinctness (>98% similar = reject)
+        Returns True if this appears to be a concept/comparison question.
+        """
+        q_lower = question.lower()
+        
+        # Pattern 1: Explicit "vs" or comparison language
+        comparison_keywords = {
+            "vs", "versus", "difference between", "contrast", "compare",
+            "distinction", "differ from", "unlike", "opposite", "alternative"
+        }
+        if any(kw in q_lower for kw in comparison_keywords):
+            return True
+        
+        # Pattern 2: Concept pairs with shared roots (controlled/uncontrolled, sync/async, etc.)
+        # Check if any option pair shares >70% of the first word
+        try:
+            option_words = [opt.split()[0].lower() if opt.split() else "" for opt in options]
+            for i in range(len(option_words)):
+                for j in range(i + 1, len(option_words)):
+                    word1, word2 = option_words[i], option_words[j]
+                    if word1 and word2 and len(word1) > 3:
+                        # Check if words are prefix/suffix variations
+                        if word1.startswith(word2) or word2.startswith(word1):
+                            return True
+                        # Check if words differ by exactly one prefix (un-, re-, non-, etc.)
+                        prefixes = {"un", "re", "non", "semi", "pre", "post"}
+                        for prefix in prefixes:
+                            if (word1.startswith(prefix) and word2 == word1[len(prefix):]) or \
+                               (word2.startswith(prefix) and word1 == word2[len(prefix):]):
+                                return True
+        except Exception:
+            pass
+        
+        # Pattern 3: Domain-specific concept indicators
+        concept_indicators = {
+            "component", "state", "method", "approach", "type", "mode", "pattern",
+            "strategy", "implementation", "design", "structure", "mechanism",
+            "behavior", "characteristic", "property", "feature"
+        }
+        if any(ind in q_lower for ind in concept_indicators):
+            # Count how many options share common words with the question
+            q_words = set(q_lower.split())
+            shared_count = 0
+            for opt in options:
+                if any(word in opt.lower() for word in q_words):
+                    shared_count += 1
+            if shared_count >= 3:  # 3+ options share question concepts
+                return True
+        
+        return False
+
+    def _validate_mc_options(self, options: List[str], question: str = "", allow_concept_based: bool = False) -> bool:
+        """
+        PRODUCTION MCQ VALIDATION: Smart validation with optional concept-awareness.
+        
+        Key insight: Different question types have different validity rules:
+        - Verbal/grammar questions: Similar options are expected (punctuation, word choice)
+        - Concept comparison questions (for skill tests): Similar options are expected (testing nuance)
+        - General knowledge questions (aptitude): Options should be distinctly different
+        
+        Parameters:
+        - allow_concept_based: If True, use generic concept detection for skill/interview tests
+                             If False, use strict validation for aptitude tests
         """
         if len(options) != 4:
             logger.debug("MCQ validation failed: expected 4 options, got %d", len(options))
@@ -880,29 +945,35 @@ CRITICAL RULES:
         # Normalize all options once
         normalized_options = [normalize_option(opt) for opt in options]
         
-        # Check 1: No exact duplicates
+        # Check 1: No exact duplicates (ALWAYS required)
         unique_set = set(normalized_options)
         if len(unique_set) < 4:
             logger.debug("MCQ validation failed: duplicate options in: %s", question[:60])
             return False
         
-        # Check 2: Each option has minimum meaningful length
+        # Check 2: Each option has minimum meaningful length (ALWAYS required)
         for i, norm_opt in enumerate(normalized_options):
             if len(norm_opt) < 3:
                 logger.debug("MCQ validation failed: option[%d] too short in: %s", i, question[:60])
                 return False
         
-        # Check 3: Determine if this is an English/verbal question
-        # Verbal questions legitimately have similar options (grammar, punctuation matter)
+        # Check 3: Detect English/verbal questions
         english_keywords = {"grammar", "verbal", "english", "sentence", "correction", "error", "spotting", "punctuation"}
         is_english_question = any(kw in question.lower() for kw in english_keywords)
         
         if is_english_question:
-            # For English questions: skip similarity checking (similar options are expected)
             logger.debug("Skipping similarity check for English question: %s", question[:60])
             return True
         
-        # Check 4: For non-English questions, validate character similarity (>98% = reject)
+        # Check 4: For skill/interview tests, detect concept-based questions (ONLY if allow_concept_based=True)
+        if allow_concept_based:
+            is_concept_question = self._is_concept_based_question(question, options)
+            
+            if is_concept_question:
+                logger.debug("Skipping strict similarity check for concept-based question: %s", question[:60])
+                return True
+        
+        # Check 5: For general knowledge/aptitude questions, validate character similarity (>98% = reject)
         try:
             for i in range(len(normalized_options)):
                 for j in range(i + 1, len(normalized_options)):
@@ -921,12 +992,13 @@ CRITICAL RULES:
         return True
 
 
-    def _fix_similar_options(self, question: str, options: List[str]) -> Optional[List[str]]:
+    def _fix_similar_options(self, question: str, options: List[str], allow_concept_based: bool = False) -> Optional[List[str]]:
         """
         POST-PROCESSING: Attempt to fix similar options that would fail validation.
         
-        For aptitude tests, we're lenient since similar options are legitimate.
-        This only tries to fix options that are >98% similar (near-identical).
+        Parameters:
+        - allow_concept_based: If True, uses generic concept detection (for skill/interview tests)
+                             If False, uses strict validation (for aptitude tests)
         
         Returns fixed options if fixable, None if unfixable (skip question).
         """
@@ -934,7 +1006,7 @@ CRITICAL RULES:
             return None
         
         # First, try validation as-is
-        if self._validate_mc_options(options, question):
+        if self._validate_mc_options(options, question, allow_concept_based=allow_concept_based):
             return options
         
         # Find which pair(s) are too similar (>98%)
@@ -978,7 +1050,7 @@ CRITICAL RULES:
             return None
         
         # Validate the fixed options
-        if self._validate_mc_options(fixed_options, question):
+        if self._validate_mc_options(fixed_options, question, allow_concept_based=False):
             logger.info("Auto-fixed options in question: %s", question[:60])
             return fixed_options
         
@@ -1041,11 +1113,11 @@ CRITICAL RULES:
             if opts is None:
                 return None
             
-            fixed_opts = self._fix_similar_options(q_text, opts)
+            fixed_opts = self._fix_similar_options(q_text, opts, allow_concept_based=False)
             if fixed_opts is None:
                 return None
             
-            if not self._validate_mc_options(fixed_opts, q_text):
+            if not self._validate_mc_options(fixed_opts, q_text, allow_concept_based=False):
                 return None
             
             # Correct answer - STRICT validation
@@ -1132,7 +1204,7 @@ CRITICAL RULES:
             normalized = [o.lower().strip() for o in opts]
             if len(set(normalized)) < 4:
                 # Has exact duplicates, try to fix
-                fixed_opts = self._fix_similar_options(q_text, opts)
+                fixed_opts = self._fix_similar_options(q_text, opts, allow_concept_based=False)
                 if fixed_opts is None:
                     return None
             else:
