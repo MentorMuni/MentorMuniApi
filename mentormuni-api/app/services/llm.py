@@ -203,14 +203,31 @@ No extra text.
         
         async def generate_batch(batch_num: int) -> list[dict]:
             """Generate 6 skill-readiness questions."""
-            batch_prompt = f"""Generate exactly {batch_size} skill-readiness interview questions for {request.primary_skill}.
+            batch_prompt = f"""Generate exactly {batch_size} high-quality skill-readiness interview questions for {request.primary_skill}.
 
-User: {request.user_type}, {request.experience_years} years, Target: {request.target_role}
+CANDIDATE: {request.user_type}, {request.experience_years} years experience, targeting {request.target_role}
 
-Mix question types evenly: yes/no, multiple_choice, scenario, code_mcq.
+CRITICAL RULES:
+1. Generate EXACTLY {batch_size} questions
+2. Mix types: multiple_choice, scenario, code_mcq, yes_no (distribute evenly)
+3. Test REAL understanding, not memorization
+4. Include practical gotchas, edge cases, real-world scenarios
+5. Return ONLY valid JSON array (no markdown, no preamble, no explanations)
 
-Return ONLY a JSON array. No markdown, no preamble.
-Each item: {{"question":"...","question_type":"yes_no|multiple_choice|scenario|code_mcq","options":["...","...","...","..."],"correct_answer":"Yes|No|A|B|C|D","study_topic":"...","explanation":"..."}}"""
+JSON FORMAT (each item must be valid):
+- multiple_choice: {{"question_type":"multiple_choice", "question":"...", "options":["opt1","opt2","opt3","opt4"], "correct_answer":"A", "study_topic":"...", "explanation":"..."}}
+- scenario: {{"question_type":"scenario", "question":"real-world situation: what would you do?", "options":["approach1","approach2","approach3","approach4"], "correct_answer":"B", "study_topic":"...", "explanation":"..."}}
+- code_mcq: {{"question_type":"code_mcq", "question":"code snippet: what outputs/what's the bug?", "options":["output1","output2","output3","output4"], "correct_answer":"C", "study_topic":"...", "explanation":"..."}}
+- yes_no: {{"question_type":"yes_no", "question":"will this work/is this true?", "correct_answer":"Yes", "study_topic":"...", "explanation":"..."}}
+
+QUALITY CHECKLIST:
+✓ Each question tests core concepts
+✓ Options are plausible (make them think)
+✓ Avoid obvious answers or trivial questions
+✓ Include actual bugs, performance issues, edge cases
+✓ Explanations explain the correct answer
+
+OUTPUT ONLY JSON ARRAY. No extra text."""
             
             async def call_openai():
                 response = await self._client.chat.completions.create(
@@ -382,15 +399,37 @@ Each item: {{"question":"...","question_type":"yes_no|multiple_choice|scenario|c
         
         async def generate_batch(batch_num: int) -> list[dict]:
             """Generate 6 interview readiness questions."""
-            batch_prompt = f"""Generate exactly {batch_size} interview readiness questions for a {request.target_role} interview.
+            batch_prompt = f"""Generate exactly {batch_size} HIGH-QUALITY interview readiness questions for {request.target_role} at {request.target_company_type}.
 
-Candidate: {request.user_type}, {request.experience_years} years exp, {request.primary_skill}
-Company: {request.target_company_type}
+CANDIDATE: {request.user_type}, {request.experience_years} years experience, {request.primary_skill}
+CONTEXT: Real interview scenario, placement-focused
 
-Mix formats: 2-3 yes/no, 2-3 multiple_choice. Include practical scenarios.
+CRITICAL RULES:
+1. Generate EXACTLY {batch_size} questions
+2. Mix types: yes_no, multiple_choice, scenario (distribute evenly)
+3. Test REAL understanding, NOT memorization
+4. Include practical gotchas, edge cases, real-world scenarios
+5. Return ONLY valid JSON array (no markdown, no preamble, no text)
 
-Return ONLY a JSON array. No markdown, no preamble.
-Each item: {{"question":"...","question_type":"yes_no|multiple_choice","options":["...","...","...","..."],"correct_answer":"Yes|No|A|B|C|D","study_topic":"...","explanation":"..."}}"""
+QUALITY STANDARDS:
+✓ Each option must be PLAUSIBLE (make candidates think)
+✓ Options must be MEANINGFULLY DIFFERENT (>98% similar = reject)
+✓ Avoid obvious answers and trivial questions
+✓ Include production bugs, performance issues, design tradeoffs
+✓ Explanations must explain WHY the answer is correct
+
+JSON FORMAT (each item must be valid):
+- yes_no: {{"question_type":"yes_no", "question":"will this work/is this true?", "correct_answer":"Yes", "study_topic":"topic", "explanation":"why"}}
+- multiple_choice: {{"question_type":"multiple_choice", "question":"...", "options":["opt1","opt2","opt3","opt4"], "correct_answer":"A", "study_topic":"topic", "explanation":"why"}}
+- scenario: {{"question_type":"scenario", "question":"production situation: what would you do?", "options":["approach1","approach2","approach3","approach4"], "correct_answer":"B", "study_topic":"topic", "explanation":"why"}}
+
+CRITICAL - For Multiple Choice/Scenario:
+✓ Must have exactly 4 options
+✓ Options must NOT start with "A)" - just plain text
+✓ All options must be different (check >98% similarity)
+✓ Include 2 reasonable approaches, 2 tricky/wrong ones
+
+OUTPUT ONLY JSON ARRAY. No extra text."""
             
             async def call_openai():
                 response = await self._client.chat.completions.create(
@@ -1205,33 +1244,30 @@ CRITICAL RULES:
         
         if question_type == "skill":
             # SKILL READINESS FALLBACK: Mix of question types
+            # NOTE: MCQ/scenario/code_mcq MUST have options field (schema requirement)
             fallback_questions = [
-                # Yes/No questions
+                # Yes/No questions (no options needed)
                 {"question_type": "yes_no", "question": "Have you used version control systems like Git?", "correct_answer": "Yes", "study_topic": "Version Control", "explanation": "Git is fundamental for professional development"},
                 {"question_type": "yes_no", "question": "Do you understand object-oriented programming concepts?", "correct_answer": "Yes", "study_topic": "OOP Fundamentals", "explanation": "OOP is essential for software development"},
                 {"question_type": "yes_no", "question": "Are you familiar with writing unit tests?", "correct_answer": "Yes", "study_topic": "Testing Fundamentals", "explanation": "Unit testing ensures code quality"},
                 {"question_type": "yes_no", "question": "Have you worked with relational databases?", "correct_answer": "Yes", "study_topic": "Databases", "explanation": "Database knowledge is crucial"},
                 
-                # Multiple Choice questions
-                {"question_type": "multiple_choice", "question": "What is the primary purpose of a design pattern?", "options": ["A) To make code faster", "B) To provide reusable solutions to common problems", "C) To reduce file size", "D) To simplify variable names"], "correct_answer": "B", "study_topic": "Design Patterns", "explanation": "Design patterns solve recurring design problems"},
-                {"question_type": "multiple_choice", "question": "Which principle promotes writing maintainable code?", "options": ["A) DRY (Don't Repeat Yourself)", "B) Write code quickly", "C) Use every language feature", "D) Avoid documentation"], "correct_answer": "A", "study_topic": "Code Principles", "explanation": "DRY reduces bugs and improves maintainability"},
-                {"question_type": "multiple_choice", "question": "What does API stand for?", "options": ["A) Application Process Interface", "B) Application Programming Interface", "C) Advanced Programming Instruction", "D) Application Protocol Internet"], "correct_answer": "B", "study_topic": "APIs", "explanation": "API enables communication between software systems"},
-                {"question_type": "multiple_choice", "question": "Which is NOT a benefit of code refactoring?", "options": ["A) Improved readability", "B) Reduced technical debt", "C) Faster code execution", "D) Better maintainability"], "correct_answer": "C", "study_topic": "Refactoring", "explanation": "Refactoring improves code quality, not speed"},
+                # Multiple Choice questions (requires options field)
+                {"question_type": "multiple_choice", "question": "What is the primary purpose of a design pattern?", "options": ["To make code faster", "To provide reusable solutions to common problems", "To reduce file size", "To simplify variable names"], "correct_answer": "B", "study_topic": "Design Patterns", "explanation": "Design patterns solve recurring design problems"},
+                {"question_type": "multiple_choice", "question": "Which principle promotes writing maintainable code?", "options": ["DRY (Don't Repeat Yourself)", "Write code quickly", "Use every language feature", "Avoid documentation"], "correct_answer": "A", "study_topic": "Code Principles", "explanation": "DRY reduces bugs and improves maintainability"},
+                {"question_type": "multiple_choice", "question": "What does API stand for?", "options": ["Application Process Interface", "Application Programming Interface", "Advanced Programming Instruction", "Application Protocol Internet"], "correct_answer": "B", "study_topic": "APIs", "explanation": "API enables communication between software systems"},
+                {"question_type": "multiple_choice", "question": "Which is NOT a benefit of code refactoring?", "options": ["Improved readability", "Reduced technical debt", "Faster code execution", "Better maintainability"], "correct_answer": "C", "study_topic": "Refactoring", "explanation": "Refactoring improves code quality, not speed"},
+                {"question_type": "multiple_choice", "question": "What is the main purpose of code review?", "options": ["To slow down development", "To find bugs early and share knowledge", "To blame developers", "To enforce strict rules"], "correct_answer": "B", "study_topic": "Code Quality", "explanation": "Code reviews catch issues and improve team knowledge"},
                 
-                # Scenario questions
-                {"question_type": "scenario", "question": "Your code has a bug in production. What should you do first?", "options": ["A) Blame the QA team", "B) Reproduce the issue locally", "C) Deploy a hotfix immediately", "D) Wait for the next release"], "correct_answer": "B", "study_topic": "Debugging", "explanation": "Always reproduce locally to understand the root cause"},
-                {"question_type": "scenario", "question": "You need to add a new feature. What's the best approach?", "options": ["A) Modify existing code directly", "B) Create a new branch and make changes", "C) Edit files on production server", "D) Copy-paste code from StackOverflow"], "correct_answer": "B", "study_topic": "Git Workflow", "explanation": "Branching ensures safe development and code review"},
+                # Scenario questions (requires options field)
+                {"question_type": "scenario", "question": "Your code has a bug in production. What should you do first?", "options": ["Blame the QA team", "Reproduce the issue locally", "Deploy a hotfix immediately", "Wait for the next release"], "correct_answer": "B", "study_topic": "Debugging", "explanation": "Always reproduce locally to understand the root cause"},
+                {"question_type": "scenario", "question": "You need to add a new feature. What's the best approach?", "options": ["Modify existing code directly", "Create a new branch and make changes", "Edit files on production server", "Copy-paste code from StackOverflow"], "correct_answer": "B", "study_topic": "Git Workflow", "explanation": "Branching ensures safe development and code review"},
+                {"question_type": "scenario", "question": "Your teammate's code breaks existing tests. What do you do?", "options": ["Deploy to production anyway", "Discuss with teammate and fix together", "Blame QA for bad tests", "Revert without discussion"], "correct_answer": "B", "study_topic": "Team Collaboration", "explanation": "Communication and collaboration lead to better solutions"},
                 
-                # Code MCQ questions
-                {"question_type": "code_mcq", "question": "What will this code output?\nlet x = 5;\nlet y = x++;\nconsole.log(y);", "options": ["A) 5", "B) 6", "C) undefined", "D) null"], "correct_answer": "A", "study_topic": "JavaScript Operators", "explanation": "Post-increment returns original value before incrementing"},
-                {"question_type": "code_mcq", "question": "Identify the bug:\nfunction add(a, b) {\n  return a + b\n}\nadd(2, 3);", "options": ["A) Missing semicolon", "B) Wrong parameter names", "C) No bug present", "D) Missing return statement"], "correct_answer": "C", "study_topic": "JavaScript Basics", "explanation": "Code is correct; semicolons are optional in JavaScript"},
-                {"question_type": "code_mcq", "question": "What does this code do?\narr.map(x => x * 2);", "options": ["A) Modifies original array", "B) Returns new array with doubled values", "C) Sorts the array", "D) Filters the array"], "correct_answer": "B", "study_topic": "Array Methods", "explanation": "map() returns new array without modifying original"},
-                
-                # Additional scenario question
-                {"question_type": "scenario", "question": "Your teammate's code breaks existing tests. What do you do?", "options": ["A) Deploy to production anyway", "B) Discuss with teammate and fix together", "C) Blame QA for bad tests", "D) Revert without discussion"], "correct_answer": "B", "study_topic": "Team Collaboration", "explanation": "Communication and collaboration lead to better solutions"},
-                
-                # Additional multiple choice question
-                {"question_type": "multiple_choice", "question": "What is the main purpose of code review?", "options": ["A) To slow down development", "B) To find bugs early and share knowledge", "C) To blame developers", "D) To enforce strict rules"], "correct_answer": "B", "study_topic": "Code Quality", "explanation": "Code reviews catch issues and improve team knowledge"},
+                # Code MCQ questions (requires options field)
+                {"question_type": "code_mcq", "question": "What will this code output?\nlet x = 5;\nlet y = x++;\nconsole.log(y);", "options": ["5", "6", "undefined", "null"], "correct_answer": "A", "study_topic": "JavaScript Operators", "explanation": "Post-increment returns original value before incrementing"},
+                {"question_type": "code_mcq", "question": "Identify the bug:\nfunction add(a, b) { return a + b }\nadd(2, 3);", "options": ["Missing semicolon", "Wrong parameter names", "No bug present", "Missing return statement"], "correct_answer": "C", "study_topic": "JavaScript Basics", "explanation": "Code is correct; semicolons are optional in JavaScript"},
+                {"question_type": "code_mcq", "question": "What does this code do?\narr.map(x => x * 2);", "options": ["Modifies original array", "Returns new array with doubled values", "Sorts the array", "Filters the array"], "correct_answer": "B", "study_topic": "Array Methods", "explanation": "map() returns new array without modifying original"},
             ]
         else:
             # APTITUDE FALLBACK: All MCQs with sections

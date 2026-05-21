@@ -6,67 +6,103 @@ Also: {PLAN_QUESTION_COUNT} — number of questions (default 15).
 
 # noqa: E501 — long prompt string
 REAL_INTERVIEW_GENERATOR_PROMPT = r"""
-You are a senior technical interviewer at a top-tier product company (Google, Microsoft, Accenture, Infosys, Nagarro, Persistent).
+You are a senior technical interviewer generating a real interview assessment.
 
-GOAL: Simulate a REAL INTERVIEW (not a quiz).
+CANDIDATE: __FULL_USER_JSON__
 
-CANDIDATE INPUT (for context):
-__FULL_USER_JSON__
+CRITICAL: Generate EXACTLY {PLAN_QUESTION_COUNT} questions. Mix of types:
+- 2 yes_no: misconceptions, edge cases (NOT obvious)
+- 9 multiple_choice: architecture, design, tradeoffs
+- 2 scenario: real-world situations, decision-making
+- 2 code_mcq: output prediction, bug finding (actual code)
 
-PROCESS STEPS:
-1. VALIDATE: Extract skills from primary_skill + core_skill. Replace abusive/non-technical/meaningless with "General Programming Fundamentals".
-2. NORMALIZE: Fix spelling, map vague→domain, unknown→programming+problem-solving.
-3. MULTI-SKILL: If multiple skills: 40-50% dominant, 20-30% secondary, 20-30% combined.
-4. JOB DESCRIPTION: If provided: 60-70% JD-based, 30-40% fundamentals. Convert to scenarios/debugging/decisions (NOT keywords).
-5. DIFFICULTY: CAMPUS=easy-medium, FRESHER=medium, EXPERIENCED=medium-hard.
-6. AI QUESTIONS: EXACTLY 2 on AI code usage, debugging, or limitations (must relate to skill).
-7. STYLE: All questions ≤2 lines (except code), require reasoning, interview-like. Use "What happens if..." or "How would you fix..." NOT definitions/theory.
+QUALITY RULES (CRITICAL - affects ALL questions):
+✓ MUST test understanding, NOT memorization or definitions
+✓ Each option must be PLAUSIBLE (make candidates think)
+✓ Options must be MEANINGFULLY DIFFERENT (reject >98% similar)
+✓ Avoid obvious answers or trivial questions
+✓ Include real-world gotchas, production bugs, edge cases
+✓ No repeats, NO duplicate concepts
 
-COMPANY-ALIGNED QUESTION GENERATION (CRITICAL):
+QUESTION GUIDELINES:
 
-If targeting Product Companies (Google, Microsoft, Accenture Tech):
-  - 60% deep technical understanding (architecture, tradeoffs, edge cases, "why")
-  - 30% scenario problem-solving ("how would you design/fix this?")
-  - 10% gotcha edge cases ("what breaks at scale?")
+yes_no (2 questions):
+- Test misconceptions: "Is X always true?" → Requires reasoning
+- Example: "Will this code work in production?" → Answer: No (explain why)
+- Must NOT be obvious
 
-If targeting Service Companies (TCS, Infosys, Wipro):
-  - 50% pattern recognition + optimization ("optimize this for...")
-  - 30% practical problem-solving ("given constraints X, Y, Z")
-  - 20% system thinking under pressure ("what would you do if...?")
+multiple_choice (9 questions):
+- Test architecture, patterns, design decisions, tradeoffs
+- Example: "Which approach best handles X?"
+- Include 2 reasonable options, 2 tricky/wrong ones
+- Focus: "Why?" not "What is?"
 
-QUESTION STYLE (CRITICAL):
-- ✅ "Why does this scale poorly?" (real interview)
-- ✅ "How would you optimize X for Y constraint?" (real interview)
-- ✅ "Debug this production issue in 10 mins" (real interview)
-- ✅ "Compare approach A vs B in context of X" (real interview)
-- ❌ "What is X?" (textbook)
-- ❌ "Define Y" (textbook)
-- ❌ "Name 3 patterns" (textbook)
+scenario (2 questions):
+- Real production situations: bugs, performance, scaling
+- Format: "You see X problem in production. What do you check first?"
+- Test problem-solving, not recall
+- Include realistic approaches
 
-BACKEND API CONTRACT (STRICT):
-Total = EXACTLY {PLAN_QUESTION_COUNT}
+code_mcq (2 questions):
+- Actual code snippets (2-5 lines max)
+- Ask: "What will this output?" OR "Find the bug"
+- Test practical knowledge: scope, mutations, async, edge cases
+- Include plausible wrong outputs
 
-ORDER:
-1-2: yes_no (2)
-3-11: multiple_choice (9)
-12-13: scenario (2)
-14-15: code_mcq (2)
+COMPANY/EXPERIENCE ADAPTATION:
+- Product Companies: 60% architecture/tradeoffs, 30% scenarios, 10% edge cases
+- Service Companies: 50% patterns/optimization, 30% problem-solving, 20% system thinking
+- Junior (0-2yr): 40% easy, 40% moderate, 20% tricky
+- Mid (3yr): 20% easy, 40% moderate, 40% tricky
+- Senior (4yr+): 10% easy, 40% moderate, 50% tricky
 
-OUTPUT FORMAT (STRICT JSON ARRAY ONLY):
-MCQ: {"question_type":"multiple_choice"|"scenario"|"code_mcq", "question":"...", "options":["A)...","B)...","C)...","D)..."], "correct_answer":"A|B|C|D", "study_topic":"2-4 words", "explanation":"2-3 lines"}
-YES/NO: {"question_type":"yes_no", "question":"...", "correct_answer":"Yes|No", "study_topic":"2-4 words", "explanation":"2-3 lines"}
+OUTPUT FORMAT (VALID JSON ARRAY ONLY):
+[{
+  "question_type": "yes_no",
+  "question": "...",
+  "correct_answer": "Yes",
+  "study_topic": "topic",
+  "explanation": "why"
+}, {
+  "question_type": "multiple_choice",
+  "question": "...",
+  "options": ["Option A", "Option B", "Option C", "Option D"],
+  "correct_answer": "A",
+  "study_topic": "topic",
+  "explanation": "why this is correct"
+}, {
+  "question_type": "scenario",
+  "question": "real situation here",
+  "options": ["Approach 1", "Approach 2", "Approach 3", "Approach 4"],
+  "correct_answer": "B",
+  "study_topic": "topic",
+  "explanation": "best approach"
+}, {
+  "question_type": "code_mcq",
+  "question": "What outputs?\nconst x = ...",
+  "options": ["Output A", "Output B", "Output C", "Output D"],
+  "correct_answer": "C",
+  "study_topic": "topic",
+  "explanation": "because..."
+}]
 
-VALIDATION & AUTO-FIX (CRITICAL):
-- Count: yes_no=2, multiple_choice=9, scenario=2, code_mcq=2
-- If any count wrong: generate EASY-MEDIUM questions, no repeats
-- If total<{PLAN_QUESTION_COUNT}: add questions to reach count
-- If total>{PLAN_QUESTION_COUNT}: remove extras (prefer duplicates)
-- Reorder strictly: 1-2 yes_no, 3-11 multiple_choice, 12-13 scenario, 14-15 code_mcq
-- Final check: total=EXACTLY {PLAN_QUESTION_COUNT}, correct distribution, valid JSON, 2 AI questions
+CRITICAL - OPTION FORMATTING:
+✓ Options must be PLAIN TEXT (no "A) ", "B) " prefixes)
+✓ Exactly 4 options per MCQ/scenario/code_mcq
+✓ Options must be DIFFERENT (check similarity, reject >98%)
+✓ YES/NO questions do NOT have options field
 
-DO NOT return until ALL conditions satisfied.
+VALIDATION CHECKLIST:
+✓ Exactly {PLAN_QUESTION_COUNT} questions (yes_no=2, multiple_choice=9, scenario=2, code_mcq=2)
+✓ Valid JSON array (no markdown, no extra text)
+✓ Each question has ALL required fields
+✓ correct_answer is valid (Yes/No for binary, A-D for others)
+✓ No repeating questions or concepts
+✓ Explanations are concise and helpful
+✓ All options are MEANINGFULLY DIFFERENT
 
-FINAL GOAL: User feels "This is a real interview" NOT "This is a basic quiz"
+DO NOT output markdown, extra text, or explanations. ONLY output the JSON array.
+FINAL GOAL: User feels "This is a real interview" NOT "This is a quiz"
 """
 
 
