@@ -192,14 +192,13 @@ No extra text.
         )
 
     async def generate_skill_readiness_plan(self, request) -> list[dict]:
-        """Skill readiness: parallel batch generation (60% faster) with increased throughput.
+        """Skill readiness: parallel batch generation with flexible validation.
         
-        OPTIMIZATION: Generate more questions in less time
-        - Batch size: 5 → 6 questions per batch (3 batches = 18 total, take top 15)
-        - Token limit: 900 → 1200 per batch
-        - Parallel execution: All 3 batches run simultaneously
+        STRATEGY: Generate 18 questions (6 per batch × 3 batches) to ensure 15+
+        - More flexible validation to accept questions
+        - Fallback mechanism to pad if needed
         """
-        batch_size = 6  # INCREASED: 5 → 6
+        batch_size = 6
         num_batches = 3
         
         async def generate_batch(batch_num: int) -> list[dict]:
@@ -220,7 +219,7 @@ Each item: {{"question":"...","question_type":"yes_no|multiple_choice|scenario|c
                         {"role": "system", "content": "You output ONLY valid JSON array. No markdown. No preamble."},
                         {"role": "user", "content": batch_prompt},
                     ],
-                    max_tokens=1200,  # INCREASED: 900 → 1200
+                    max_tokens=1200,
                     temperature=0,
                 )
                 content = response.choices[0].message.content or ""
@@ -239,7 +238,7 @@ Each item: {{"question":"...","question_type":"yes_no|multiple_choice|scenario|c
                 return []
         
         # PARALLEL: Fire all 3 batches simultaneously
-        logger.info("Generating 15+ skill questions in 3 parallel batches with increased throughput...")
+        logger.info("Generating 15+ skill questions in 3 parallel batches...")
         batch_results = await asyncio.gather(
             generate_batch(0),
             generate_batch(1),
@@ -253,7 +252,7 @@ Each item: {{"question":"...","question_type":"yes_no|multiple_choice|scenario|c
                 if not isinstance(q, dict) or "question" not in q:
                     continue
                 
-                # Validate & process
+                # FLEXIBLE validation: accept more questions
                 qt = str(q.get("question_type", "")).strip().lower()
                 if qt == "yes_no":
                     yn = self._parse_yes_no_answer(q.get("correct_answer"))
@@ -271,9 +270,7 @@ Each item: {{"question":"...","question_type":"yes_no|multiple_choice|scenario|c
                         continue
                     fixed_opts = self._fix_similar_options(q.get("question", ""), opts)
                     if fixed_opts is None:
-                        continue
-                    if not self._validate_mc_options(fixed_opts, q.get("question", "")):
-                        continue
+                        fixed_opts = opts  # FLEXIBLE: use raw if fix fails
                     letter = self._normalize_mc_letter(q.get("correct_answer"), fixed_opts)
                     if letter is None:
                         continue
@@ -284,15 +281,16 @@ Each item: {{"question":"...","question_type":"yes_no|multiple_choice|scenario|c
                         "correct_answer": letter,
                         "study_topic": str(q.get("study_topic", ""))[:60],
                     })
-                
-                if len(all_questions) >= PLAN_QUESTION_COUNT:
-                    break
-            
-            if len(all_questions) >= PLAN_QUESTION_COUNT:
-                break
         
-        if len(all_questions) < PLAN_QUESTION_COUNT:
-            raise ValueError(f"Only got {len(all_questions)}/{PLAN_QUESTION_COUNT} questions")
+        logger.info("Generated %d skill questions from LLM", len(all_questions))
+        
+        if len(all_questions) == 0:
+            logger.warning("All skill batches failed, generating fallback...")
+            return self._generate_minimal_fallback_questions()
+        elif len(all_questions) < PLAN_QUESTION_COUNT:
+            logger.warning("Got %d skill questions, need %d. Padding with fallback.", len(all_questions), PLAN_QUESTION_COUNT)
+            fallback = self._generate_minimal_fallback_questions()
+            all_questions.extend(fallback[len(all_questions):])
         
         return all_questions[:PLAN_QUESTION_COUNT]
 
@@ -451,9 +449,7 @@ Each item: {{"question":"...","question_type":"yes_no|multiple_choice","options"
                         continue
                     fixed_opts = self._fix_similar_options(q.get("question", ""), opts)
                     if fixed_opts is None:
-                        continue
-                    if not self._validate_mc_options(fixed_opts, q.get("question", "")):
-                        continue
+                        fixed_opts = opts  # FLEXIBLE: use raw if fix fails
                     letter = self._normalize_mc_letter(q.get("correct_answer"), fixed_opts)
                     if letter is None:
                         continue
@@ -464,30 +460,32 @@ Each item: {{"question":"...","question_type":"yes_no|multiple_choice","options"
                         "correct_answer": letter,
                         "study_topic": str(q.get("study_topic", ""))[:60],
                     })
-                
-                if len(all_questions) >= PLAN_QUESTION_COUNT:
-                    break
-            
-            if len(all_questions) >= PLAN_QUESTION_COUNT:
-                break
         
-        if len(all_questions) < PLAN_QUESTION_COUNT:
-            raise ValueError(f"Only got {len(all_questions)}/{PLAN_QUESTION_COUNT} questions")
+        logger.info("Generated %d interview questions from LLM", len(all_questions))
+        
+        if len(all_questions) == 0:
+            logger.warning("All interview batches failed, generating fallback...")
+            return self._generate_minimal_fallback_questions()
+        elif len(all_questions) < PLAN_QUESTION_COUNT:
+            logger.warning("Got %d interview questions, need %d. Padding with fallback.", len(all_questions), PLAN_QUESTION_COUNT)
+            fallback = self._generate_minimal_fallback_questions()
+            all_questions.extend(fallback[len(all_questions):])
         
         return all_questions[:PLAN_QUESTION_COUNT]
 
     async def generate_aptitude_readiness_plan(self, request) -> list[dict]:
-        """Aptitude readiness: 3 parallel batches with increased throughput.
+        """Aptitude readiness: 3 parallel batches with flexible validation.
         
-        OPTIMIZATION: Generate more questions in less time
-        - Batch size: 5 → 6 questions per batch (3 batches = 18 total, take top 15)
-        - Token limit: 800 → 1200 per batch (better quality)
-        - Parallel execution: All 3 batches run simultaneously
+        STRATEGY: Generate more questions than needed to account for stricter validation
+        - Batch size: 6 questions per batch (3 batches = 18 total)
+        - Token limit: 1200 per batch (better completeness)
+        - Flexible validation: Accept questions even if not perfect
+        - Fallback: Use hardcoded questions if needed
         """
-        batch_size = 6  # INCREASED: 5 → 6 per batch
+        batch_size = 6
         
         async def generate_batch(batch_num: int, section: str) -> list[dict]:
-            """Generate 6 questions with STRICT validation."""
+            """Generate 6 questions per batch with flexible parsing."""
             section_map = {0: "quantitative", 1: "logical", 2: "verbal"}
             section = section_map[batch_num]
             
@@ -512,19 +510,26 @@ CRITICAL RULES:
                         {"role": "system", "content": "Output ONLY valid JSON array. Zero preamble."},
                         {"role": "user", "content": batch_prompt},
                     ],
-                    max_tokens=MAX_TOKENS_APTITUDE_READINESS_PLAN,  # INCREASED: 1200 tokens
+                    max_tokens=MAX_TOKENS_APTITUDE_READINESS_PLAN,
                     temperature=0,
                 )
                 return response.choices[0].message.content or ""
             
             try:
                 content = await self.guard_layer_aptitude.run_with_timeout(call_openai())
-                return self._parse_and_validate_batch(content, section)
+                # Try STRICT parsing first
+                strict_questions = self._parse_and_validate_batch(content, section, strict=True)
+                if len(strict_questions) >= batch_size - 2:  # Need at least 4 out of 6
+                    return strict_questions
+                # Fall back to FLEXIBLE parsing if strict fails
+                logger.warning("Batch %d: strict parsing got %d, trying flexible...", batch_num, len(strict_questions))
+                flexible_questions = self._parse_and_validate_batch(content, section, strict=False)
+                return flexible_questions
             except Exception as e:
                 logger.warning("Batch %d failed: %s", batch_num, e)
                 return []
         
-        logger.info("Generating 15+ aptitude questions (3 parallel batches, increased throughput)...")
+        logger.info("Generating 15+ aptitude questions (3 parallel batches)...")
         results = await asyncio.gather(
             generate_batch(0, "quantitative"),
             generate_batch(1, "logical"),
@@ -534,14 +539,17 @@ CRITICAL RULES:
         all_questions = []
         for batch in results:
             all_questions.extend(batch)
-            if len(all_questions) >= PLAN_QUESTION_COUNT:
-                break
+        
+        logger.info("Generated %d questions from LLM", len(all_questions))
         
         if len(all_questions) == 0:
             logger.warning("All batches failed, using fallback")
             return self._generate_minimal_fallback_questions()
+        elif len(all_questions) < PLAN_QUESTION_COUNT:
+            logger.warning("Got %d questions, need %d. Padding with fallback.", len(all_questions), PLAN_QUESTION_COUNT)
+            fallback = self._generate_minimal_fallback_questions()
+            all_questions.extend(fallback[len(all_questions):])
         
-        logger.info("Generated %d questions successfully", len(all_questions))
         return all_questions[:PLAN_QUESTION_COUNT]
 
     async def generate_ai_readiness_plan(self, request) -> list[dict]:
@@ -937,8 +945,17 @@ CRITICAL RULES:
         
         return None
 
-    def _parse_and_validate_batch(self, content: str, section: str) -> list[dict]:
-        """Parse JSON batch with STRICT validation. Returns ONLY valid questions."""
+    def _parse_and_validate_batch(self, content: str, section: str, strict: bool = True) -> list[dict]:
+        """Parse JSON batch with configurable validation.
+        
+        Args:
+            content: JSON string from LLM
+            section: Question section (quantitative, logical, verbal)
+            strict: If True, use rigorous validation. If False, accept more questions.
+        
+        Returns:
+            List of valid questions (up to 6 per batch)
+        """
         try:
             content = content.strip()
             data = json.loads(content)
@@ -948,10 +965,13 @@ CRITICAL RULES:
             
             valid_questions = []
             for item in data:
-                q = self._extract_question_strict(item, section)
+                if strict:
+                    q = self._extract_question_strict(item, section)
+                else:
+                    q = self._extract_question_flexible(item, section)
                 if q:
                     valid_questions.append(q)
-                if len(valid_questions) >= 6:  # INCREASED: 5 → 6 per batch
+                if len(valid_questions) >= 6:
                     break
             
             return valid_questions
@@ -1027,6 +1047,94 @@ CRITICAL RULES:
                 why_fail = "Common mistake"
             
             # FINAL QUESTION - All fields validated
+            return {
+                "question_type": "multiple_choice",
+                "section": section,
+                "question": q_text,
+                "options": fixed_opts,
+                "correct_answer": ans_raw,
+                "study_topic": topic,
+                "difficulty": difficulty,
+                "asked_in": asked_in,
+                "why_students_fail": why_fail,
+                "explanation": explain,
+            }
+        except Exception:
+            return None
+    
+    def _extract_question_flexible(self, item: dict, section: str) -> Optional[dict]:
+        """Extract question with FLEXIBLE validation - accept more questions for throughput.
+        
+        This function is more lenient with option validation to ensure we get 15 questions.
+        It still validates core fields but skips aggressive similarity checking.
+        """
+        try:
+            if not isinstance(item, dict):
+                return None
+            
+            # Question text - REQUIRED
+            q_text = item.get("q") or item.get("question") or ""
+            if not q_text or len(str(q_text).strip()) < 10:
+                return None
+            q_text = str(q_text).strip()[:500]
+            
+            # Options - MUST be exactly 4
+            opts_raw = item.get("opts") or item.get("options") or []
+            if not isinstance(opts_raw, list) or len(opts_raw) != 4:
+                return None
+            
+            opts = [str(o).strip() for o in opts_raw]
+            opts = self._normalize_mc_options(opts)
+            if opts is None:
+                return None
+            
+            # FLEXIBLE: Skip the fix and validation - just use raw options
+            # Only check for exact duplicates (most basic check)
+            normalized = [o.lower().strip() for o in opts]
+            if len(set(normalized)) < 4:
+                # Has exact duplicates, try to fix
+                fixed_opts = self._fix_similar_options(q_text, opts)
+                if fixed_opts is None:
+                    return None
+            else:
+                fixed_opts = opts
+            
+            # Correct answer - flexible parsing
+            ans_raw = str(item.get("ans") or item.get("correct_answer") or "").upper().strip()
+            if ans_raw not in ("A", "B", "C", "D"):
+                match = re.search(r"[A-D]", ans_raw)
+                if not match:
+                    return None
+                ans_raw = match.group(0)
+            
+            # Difficulty - normalize
+            diff_raw = str(item.get("diff") or item.get("difficulty") or "moderate").strip().lower()
+            if diff_raw in ("easy", "e"):
+                difficulty = "easy"
+            elif diff_raw in ("moderate", "mod", "m"):
+                difficulty = "moderate"
+            elif diff_raw in ("tricky", "trick", "t", "hard"):
+                difficulty = "tricky"
+            else:
+                difficulty = "moderate"
+            
+            # Other fields with safe defaults
+            topic = str(item.get("topic") or item.get("study_topic") or "").strip()[:60]
+            if not topic:
+                topic = q_text[:30]
+            
+            asked_in = str(item.get("asked_in") or "").strip()[:200]
+            if not asked_in:
+                asked_in = "Placement test"
+            
+            explain = str(item.get("explain") or item.get("explanation") or "").strip()[:500]
+            if not explain:
+                explain = "Refer to study material"
+            
+            why_fail = str(item.get("why_fail") or item.get("why_students_fail") or "").strip()[:500]
+            if not why_fail:
+                why_fail = "Common mistake"
+            
             return {
                 "question_type": "multiple_choice",
                 "section": section,
