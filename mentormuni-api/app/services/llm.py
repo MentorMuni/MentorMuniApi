@@ -471,12 +471,42 @@ VALIDATION CHECKLIST:
             company_focus = "applied {skill} depth, real production debugging, design tradeoffs, code review judgement, scaling basics"
             difficulty_target = "30% easy-placement, 50% moderate, 20% hard"
         
-        if exp_years <= 1:
-            exp_band = "junior (0-1y) — fundamentals heavy, light system design"
-        elif exp_years <= 4:
-            exp_band = "mid-level (2-4y) — applied depth, design tradeoffs, debugging skill"
-        else:
-            exp_band = "senior (5+y) — architecture, leadership scenarios, scaling, mentoring decisions"
+        if exp_years == 0:  # 1st-3rd year student, no professional experience
+            exp_band = "college student (0-1y, no prof exp) — placement interview fundamentals"
+            yes_no_guidance = "PLACEMENT yes/no questions testing NON-OBVIOUS fundamentals (e.g., 'Will this HashMap code throw ConcurrentModificationException if modified during iteration?', 'Can a constructor throw an exception in Java?', 'Will String comparison using == ever work correctly?')"
+            banned_for_level = "- Trivial quiz questions (what is inheritance), basic definitions"
+            good_for_level = "- Real placement interview: HashMap iteration bugs, exception propagation, string pool behavior, method overriding vs overloading traps, generics type erasure"
+            difficulty_target = "70% placement-interview-medium, 25% placement-interview-hard, 5% placement-interview-tricky"
+        elif exp_years <= 1:  # 4th year student, fresh graduate
+            exp_band = "4th year student / graduate (1-2y) — real placement interview level"
+            yes_no_guidance = "PLACEMENT yes/no questions about common placement interview gotchas (e.g., 'Will modifying a List while iterating cause ConcurrentModificationException even in single-threaded code?', 'Can you catch multiple exceptions in one catch block using | operator?', 'Will this recursion cause StackOverflowError or OutOfMemoryError first?')"
+            banned_for_level = "- Trivial quiz questions, basic definitions"
+            good_for_level = "- Real placement scenarios: ConcurrentModificationException, exception hierarchy, recursion vs iteration, HashMap collisions, equals/hashCode contract, generics wildcards"
+            difficulty_target = "60% placement-interview-medium, 35% placement-interview-hard, 5% placement-interview-expert"
+        elif exp_years <= 2:  # 1-2 years professional
+            exp_band = "junior professional (1-2y) — placement + internship interview level"
+            yes_no_guidance = "INTERVIEW yes/no about production-relevant gotchas (e.g., 'Will ConcurrentHashMap prevent all race conditions in multi-threaded code?', 'Can synchronized blocks deadlock?', 'Will WeakHashMap entries disappear unexpectedly in production?')"
+            banned_for_level = "- Beginner definitions, trivial yes/no"
+            good_for_level = "- Concurrency basics: synchronized vs volatile, lock ordering, deadlock scenarios, collections thread-safety, memory visibility, weak references, connection pool issues"
+            difficulty_target = "50% interview-hard, 40% interview-tricky, 10% interview-expert"
+        elif exp_years <= 4:  # 2-4 years professional
+            exp_band = "mid-level (2-4y) — MNC real interview: production bugs, debugging"
+            yes_no_guidance = "REAL INTERVIEW yes/no about production failure patterns (e.g., 'Can a memory leak occur even with proper null assignment?', 'Will String.intern() cause memory leaks in Tomcat?', 'Can GC pauses occur even with low heap utilization?')"
+            banned_for_level = "- Placement basics, beginner questions"
+            good_for_level = "- Memory leaks (static collections, listeners, thread locals), GC tuning, connection pool starvation, deadlock scenarios, race conditions in production, performance debugging"
+            difficulty_target = "30% interview-hard, 50% interview-tricky, 20% interview-expert"
+        elif exp_years <= 7:  # 5-7 years professional
+            exp_band = "senior (5-7y) — MNC/product real interview: system design, architectural decisions"
+            yes_no_guidance = "EXPERT yes/no about subtle production issues (e.g., 'Can a final field visibility guarantee be violated if not initialized in constructor?', 'Will removing synchronized from a method break existing code relying on it?', 'Can OutOfMemoryError in one thread crash the entire JVM?')"
+            banned_for_level = "- Basics, junior-level questions"
+            good_for_level = "- Memory model edge cases, happens-before relationships, CAS operations, architectural tradeoffs at scale, distributed consistency, performance optimization at system level"
+            difficulty_target = "20% interview-hard, 40% interview-tricky, 40% interview-expert"
+        else:  # 8+ years professional
+            exp_band = "principal/staff (8+y) — MNC/FAANG real interview: deep systems, architecture at scale"
+            yes_no_guidance = "DEEP EXPERT yes/no requiring 8+ years production experience (e.g., 'Can safepoint bias locking interaction with G1GC cause unpredictable pause times?', 'Will a StampedLock guarantee ordering across different lock modes?', 'Can deserialization bypass final field guarantees in all JVM implementations?')"
+            banned_for_level = "- Anything below expert level"
+            good_for_level = "- JVM internals (safepoint bias, escape analysis, TLAB), low-latency optimization, distributed system design, consistency guarantees, kernel-level interactions, production failure analysis"
+            difficulty_target = "5% interview-hard, 25% interview-tricky, 70% interview-expert"
         
         async def generate_batch(batch_num: int) -> list[dict]:
             """Generate 6 interview readiness questions calibrated to company and experience."""
@@ -501,48 +531,64 @@ CANDIDATE CONTEXT:
 - Difficulty target: {difficulty_target}
 - This batch type mix: {type_mix}
 
-WHAT TO ASK (real interview-grade):
-- Specific {request.primary_skill} questions an interviewer would actually ask
+WHAT TO ASK (real interview-grade, CALIBRATED TO {exp_band}):
+- Specific {request.primary_skill} questions an interviewer would actually ask for a {exp_band} professional
 - Code-output / spot-the-bug questions with realistic 5-10 line snippets
 - Production scenarios ("Service down at 2 AM", "API latency spiked to 3s", "DB deadlocks under load")
 - Design tradeoff questions ("Why use queue vs direct call?", "When does caching hurt?")
 - Behavioral signals embedded in scenarios ("Senior engineer disagrees with your approach — what do you do?")
 - For {request.target_role}: role-specific challenges (e.g., frontend → render perf, backend → DB indexing, devops → CI/CD failures)
 
-BANNED (these are unprofessional and will be rejected):
-- "What does API stand for?" / "What is OOP?" / "What is REST?" — definition recall
+YES/NO QUESTIONS (CRITICAL - must be appropriate for {exp_band}):
+{yes_no_guidance}
+- Each yes/no MUST test a specific, non-obvious technical claim
+- Each yes/no MUST require EXPERIENCE to answer correctly (not just "Can you read the docs?")
+- Do NOT repeat the same yes/no question multiple times
+
+BANNED (these are unprofessional and will be REJECTED — real interviews do NOT ask these):
+- Quiz-style recall questions: "What does API stand for?", "What is OOP?", "What is a design pattern?"
+- Trivial definitions: "What is inheritance?", "What is polymorphism?", "What is encapsulation?"
 - "Have you used Git/Docker/AWS?" — yes/no trivia
 - "What is the purpose of code review?" — process opinion questions
 - "Should you write tests?" — leading questions with one obvious answer
 - "What is 2+2?" / arithmetic / aptitude-style — this is NOT an aptitude test
-- Questions answerable from a one-line Google search
+- Questions answerable from a one-line Google search or beginner tutorial
+- Duplicate or near-duplicate questions in the same batch
+- Questions from the WRONG programming language
+- Generic SDLC questions that don't test {request.primary_skill}
 
-GOOD EXAMPLE PATTERNS:
-- code_mcq: "What is the output?\\n[realistic code with concurrency issue, off-by-one, or async timing bug]"
-- scenario: "User reports the feature you shipped is causing intermittent crashes for 5% of users. Logs are clean. What's your first 30-min action plan?" (4 plausible approaches)
-- multiple_choice: "Which is the BEST reason to use [specific pattern X] over [pattern Y] for [specific use case Z]?"
-- yes_no: A specific non-obvious behavior claim like "Does Promise.all reject as soon as the first promise rejects, even if others are still pending?"
+THIS IS A REAL TECHNICAL INTERVIEW — not a quiz. Even college students should face REAL interview scenarios from TCS, Infosys, Nagarro, product companies. The difficulty is calibrated, but NOT simplified away entirely.
+
+GOOD EXAMPLE PATTERNS (calibrated to {exp_band}):
+{good_for_level}
+- code_mcq: "What is the output?\\n[realistic {request.primary_skill} code with concurrency issue, off-by-one, or memory model subtlety]"
+- scenario: "User reports the feature you shipped is causing intermittent crashes for 5% of users. Logs show [specific technical clues]. Your first 30-min action plan?" (4 plausible approaches from beginner to advanced)
+- multiple_choice: "Which is the BEST reason to use [specific pattern X] over [pattern Y] for [specific use case Z]? Why are the others suboptimal?"
+- yes_no: "[Specific non-obvious behavior claim unique to {request.primary_skill} at {exp_band} level]"
 
 JSON FORMAT (output ONLY a valid JSON array — no markdown, no preamble):
 [
   {{"question_type":"multiple_choice","question":"...","options":["opt1","opt2","opt3","opt4"],"correct_answer":"A","study_topic":"specific topic","explanation":"correct reason + why others wrong"}},
   {{"question_type":"scenario","question":"realistic production situation","options":["approach1","approach2","approach3","approach4"],"correct_answer":"B","study_topic":"...","explanation":"..."}},
-  {{"question_type":"code_mcq","question":"What does this print?\\nactual realistic code","options":["output1","output2","output3","output4"],"correct_answer":"C","study_topic":"...","explanation":"..."}},
-  {{"question_type":"yes_no","question":"a specific non-obvious technical claim","correct_answer":"Yes","study_topic":"...","explanation":"..."}}
+  {{"question_type":"code_mcq","question":"What does this print?\\n[actual {request.primary_skill} code]","options":["output1","output2","output3","output4"],"correct_answer":"C","study_topic":"...","explanation":"..."}},
+  {{"question_type":"yes_no","question":"[specific non-obvious {request.primary_skill} behavior for {exp_band} level]","correct_answer":"Yes","study_topic":"...","explanation":"..."}}
 ]
 
 CRITICAL RULES FOR OPTIONS:
 ✓ Exactly 4 options for MCQ/scenario/code_mcq
 ✓ Options are plain text (do NOT prefix with "A)", "B)", etc.)
-✓ No exact duplicates
+✓ No exact duplicates in ANY question or option
 ✓ Similar wording OK for concept comparisons ("controlled vs uncontrolled", "sync vs async")
 ✓ 2 plausible-sounding wrong answers, 1 distractor, 1 correct
+✓ YES/NO QUESTIONS MUST HAVE UNIQUE TOPICS — never repeat the same yes/no within batch or across batches
 
 VALIDATION CHECKLIST:
-✓ {batch_size} questions, none generic
-✓ Each calibrated to {company_tier}
-✓ Specific to {request.primary_skill} (NOT generic process questions)
-✓ Realistic difficulty for {exp_band}
+✓ EXACTLY {batch_size} questions, NONE DUPLICATE
+✓ Each calibrated to {company_tier} AND {exp_band}
+✓ Specific to {request.primary_skill} (NOT generic process or other languages)
+✓ Realistic difficulty for {exp_band} — not too easy, not impossible
+✓ YES/NO QUESTIONS are unique and non-trivial
+✓ CODE is in {request.primary_skill}, NOT other languages
 ✓ Output is ONLY JSON array — no extra text"""
             
             async def call_openai():
