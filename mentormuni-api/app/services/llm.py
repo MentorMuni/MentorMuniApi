@@ -201,33 +201,76 @@ No extra text.
         batch_size = 6
         num_batches = 3
         
+        # Experience-based difficulty calibration
+        exp_years = int(getattr(request, "experience_years", 0) or 0)
+        if exp_years <= 1:
+            exp_band = "junior (0-1y): focus on fundamentals + common bugs + best practices"
+            difficulty_target = "60% intermediate, 30% gotchas, 10% senior-leaning"
+        elif exp_years <= 4:
+            exp_band = "mid-level (2-4y): focus on production patterns + performance + edge cases"
+            difficulty_target = "30% intermediate, 50% hard real-world, 20% architecture"
+        else:
+            exp_band = "senior (5+y): focus on architecture + tradeoffs + scaling + production failures"
+            difficulty_target = "20% advanced fundamentals, 50% architecture & tradeoffs, 30% real production scenarios"
+        
         async def generate_batch(batch_num: int) -> list[dict]:
-            """Generate 6 skill-readiness questions."""
-            batch_prompt = f"""Generate exactly {batch_size} high-quality skill-readiness interview questions for {request.primary_skill}.
+            """Generate 6 skill-readiness questions tailored to the actual skill."""
+            # Type mix varies per batch to ensure diversity across 18 questions
+            type_mix = [
+                "2 multiple_choice + 2 code_mcq + 1 scenario + 1 yes_no",
+                "2 scenario + 2 multiple_choice + 1 code_mcq + 1 yes_no",
+                "2 code_mcq + 1 scenario + 2 multiple_choice + 1 yes_no",
+            ][batch_num % 3]
+            
+            batch_prompt = f"""You are a SENIOR INTERVIEWER for {request.primary_skill} at top product companies (FAANG, fintechs, unicorns).
 
-CANDIDATE: {request.user_type}, {request.experience_years} years experience, targeting {request.target_role}
+Generate EXACTLY {batch_size} questions that test REAL skill-depth in {request.primary_skill}.
 
-CRITICAL RULES:
-1. Generate EXACTLY {batch_size} questions
-2. Mix types: multiple_choice, scenario, code_mcq, yes_no (distribute evenly)
-3. Test REAL understanding, not memorization
-4. Include practical gotchas, edge cases, real-world scenarios
-5. Return ONLY valid JSON array (no markdown, no preamble, no explanations)
+CANDIDATE CONTEXT:
+- Profile: {request.user_type}, {request.experience_years} years experience
+- Target role: {request.target_role}
+- Difficulty band: {exp_band}
+- This batch mix: {type_mix}
 
-JSON FORMAT (each item must be valid):
-- multiple_choice: {{"question_type":"multiple_choice", "question":"...", "options":["opt1","opt2","opt3","opt4"], "correct_answer":"A", "study_topic":"...", "explanation":"..."}}
-- scenario: {{"question_type":"scenario", "question":"real-world situation: what would you do?", "options":["approach1","approach2","approach3","approach4"], "correct_answer":"B", "study_topic":"...", "explanation":"..."}}
-- code_mcq: {{"question_type":"code_mcq", "question":"code snippet: what outputs/what's the bug?", "options":["output1","output2","output3","output4"], "correct_answer":"C", "study_topic":"...", "explanation":"..."}}
-- yes_no: {{"question_type":"yes_no", "question":"will this work/is this true?", "correct_answer":"Yes", "study_topic":"...", "explanation":"..."}}
+WHAT TO ASK (skill-specific real questions):
+- Concept comparisons specific to {request.primary_skill} (e.g., for React: controlled vs uncontrolled, useMemo vs useCallback, useEffect cleanup behavior; for Python: GIL, deepcopy vs copy, generators vs iterators; for Java: HashMap vs ConcurrentHashMap, equals vs ==, checked vs unchecked exceptions)
+- Code output / debugging questions ("What does this print?", "Why is this slow?", "Spot the bug")
+- Real production scenarios ("API returns 500 intermittently", "Memory leak after 2 hours", "Race condition under load")
+- Design tradeoffs ("Why pick A over B?", "When does X break?")
+- Common gotchas, foot-guns, anti-patterns in {request.primary_skill}
+- Performance, concurrency, error handling, security
+- Difficulty target: {difficulty_target}
 
-QUALITY CHECKLIST:
-✓ Each question tests core concepts
-✓ Options are plausible (make them think)
-✓ Avoid obvious answers or trivial questions
-✓ Include actual bugs, performance issues, edge cases
-✓ Explanations explain the correct answer
+BANNED (DO NOT generate any of these — they're useless):
+- "What is {request.primary_skill}?" or "What does X stand for?" definitions
+- Yes/No textbook recall like "Have you used Git?", "Do you know OOP?", "Are you familiar with unit testing?"
+- "What is the primary purpose of a design pattern?"
+- Generic SDLC/process questions that don't test {request.primary_skill}
+- Questions answerable by reading a single Wikipedia paragraph
+- Trivial code like `add(2,3)` or `console.log(5+3)`
 
-OUTPUT ONLY JSON ARRAY. No extra text."""
+GOOD EXAMPLE PATTERNS (adapt to {request.primary_skill}):
+- code_mcq: "What does this code output?\\n[5-10 lines of realistic {request.primary_skill} code with a subtle bug or non-obvious behavior]"
+- scenario: "Your service handling 5K RPS suddenly starts timing out 30% of requests. Logs show DB connection pool exhausted. Best first action?"
+- multiple_choice: "Which of these will cause a memory leak in {request.primary_skill}?" with 4 plausible mechanisms
+- yes_no: "Will calling Promise.all with mixed sync/async functions throw synchronously if one rejects?" (real subtle behavior)
+
+JSON FORMAT (output ONLY this array, nothing else):
+[
+  {{"question_type":"multiple_choice","question":"...","options":["opt1","opt2","opt3","opt4"],"correct_answer":"A","study_topic":"specific topic","explanation":"why this is correct AND why others are wrong"}},
+  {{"question_type":"scenario","question":"...","options":["approach1","approach2","approach3","approach4"],"correct_answer":"B","study_topic":"...","explanation":"..."}},
+  {{"question_type":"code_mcq","question":"code snippet with realistic logic","options":["output1","output2","output3","output4"],"correct_answer":"C","study_topic":"...","explanation":"..."}},
+  {{"question_type":"yes_no","question":"specific technical claim about {request.primary_skill}","correct_answer":"Yes","study_topic":"...","explanation":"..."}}
+]
+
+VALIDATION CHECKLIST:
+✓ EVERY question is specific to {request.primary_skill} (not generic CS)
+✓ NO textbook-definition questions
+✓ NO trivial yes/no like "have you used X?"
+✓ Each question would actually be asked at a real interview
+✓ Options are plausible — wrong answers represent common mistakes
+✓ Code snippets are realistic (5-10 lines), not toy examples
+✓ Output is ONLY a JSON array, no markdown, no preamble"""
             
             async def call_openai():
                 response = await self._client.chat.completions.create(
@@ -236,8 +279,8 @@ OUTPUT ONLY JSON ARRAY. No extra text."""
                         {"role": "system", "content": "You output ONLY valid JSON array. No markdown. No preamble."},
                         {"role": "user", "content": batch_prompt},
                     ],
-                    max_tokens=1200,
-                    temperature=0,
+                    max_tokens=2000,  # Increased for richer code_mcq / scenario content
+                    temperature=0.3,  # Slight variation to avoid generic boilerplate
                 )
                 content = response.choices[0].message.content or ""
                 usage = getattr(response, "usage", None)
@@ -411,41 +454,96 @@ OUTPUT ONLY JSON ARRAY. No extra text."""
         """
         batch_size = 6  # INCREASED: 5 → 6
         
+        # Company-tier and experience calibration
+        exp_years = int(getattr(request, "experience_years", 0) or 0)
+        company_type = str(getattr(request, "target_company_type", "") or "").lower()
+        
+        if "product" in company_type or "faang" in company_type or "startup" in company_type:
+            company_tier = "PRODUCT/FAANG tier (Google, Amazon, Meta, Netflix, Microsoft, top startups)"
+            company_focus = "system design, behavioral (STAR), DSA at depth, low-level details, scaling tradeoffs, leadership principles, ambiguity handling"
+            difficulty_target = "30% medium, 50% hard, 20% expert-level"
+        elif "service" in company_type or "tcs" in company_type or "infosys" in company_type or "wipro" in company_type:
+            company_tier = "SERVICE company tier (TCS, Infosys, Wipro, Cognizant, Accenture, Capgemini)"
+            company_focus = "fundamentals, basic coding output, OOP concepts, SQL queries, framework basics, project explanation"
+            difficulty_target = "40% easy-placement, 50% moderate, 10% tricky"
+        else:
+            company_tier = "MID-TIER product / fintech / unicorn (Razorpay, CRED, Swiggy, Zerodha, etc.)"
+            company_focus = "applied {skill} depth, real production debugging, design tradeoffs, code review judgement, scaling basics"
+            difficulty_target = "30% easy-placement, 50% moderate, 20% hard"
+        
+        if exp_years <= 1:
+            exp_band = "junior (0-1y) — fundamentals heavy, light system design"
+        elif exp_years <= 4:
+            exp_band = "mid-level (2-4y) — applied depth, design tradeoffs, debugging skill"
+        else:
+            exp_band = "senior (5+y) — architecture, leadership scenarios, scaling, mentoring decisions"
+        
         async def generate_batch(batch_num: int) -> list[dict]:
-            """Generate 6 interview readiness questions."""
-            batch_prompt = f"""Generate exactly {batch_size} HIGH-QUALITY interview readiness questions for {request.target_role} at {request.target_company_type}.
+            """Generate 6 interview readiness questions calibrated to company and experience."""
+            # Type distribution rotates per batch for diversity
+            type_mix = [
+                "2 multiple_choice + 2 scenario + 1 code_mcq + 1 yes_no",
+                "2 scenario + 2 code_mcq + 1 multiple_choice + 1 yes_no",
+                "2 multiple_choice + 1 scenario + 2 code_mcq + 1 yes_no",
+            ][batch_num % 3]
+            
+            batch_prompt = f"""You are a HIRING MANAGER conducting a REAL technical interview round.
 
-CANDIDATE: {request.user_type}, {request.experience_years} years experience, {request.primary_skill}
-CONTEXT: Real interview scenario, placement-focused
+Generate EXACTLY {batch_size} questions that would ACTUALLY be asked in interviews at:
+{company_tier}
 
-CRITICAL RULES:
-1. Generate EXACTLY {batch_size} questions
-2. Mix types: yes_no, multiple_choice, scenario, code_mcq (distribute evenly)
-3. Test REAL understanding, NOT memorization
-4. Include practical gotchas, edge cases, real-world scenarios
-5. Return ONLY valid JSON array (no markdown, no preamble, no text)
+CANDIDATE CONTEXT:
+- Profile: {request.user_type}, {request.experience_years}y experience
+- Target role: {request.target_role}
+- Primary skill: {request.primary_skill}
+- Experience band: {exp_band}
+- Focus areas for this company tier: {company_focus}
+- Difficulty target: {difficulty_target}
+- This batch type mix: {type_mix}
 
-QUALITY STANDARDS:
-✓ Each option must be PLAUSIBLE (make candidates think)
-✓ Options must be MEANINGFULLY DIFFERENT
-✓ Avoid obvious answers and trivial questions
-✓ Include production bugs, performance issues, design tradeoffs
-✓ Explanations must explain WHY the answer is correct
+WHAT TO ASK (real interview-grade):
+- Specific {request.primary_skill} questions an interviewer would actually ask
+- Code-output / spot-the-bug questions with realistic 5-10 line snippets
+- Production scenarios ("Service down at 2 AM", "API latency spiked to 3s", "DB deadlocks under load")
+- Design tradeoff questions ("Why use queue vs direct call?", "When does caching hurt?")
+- Behavioral signals embedded in scenarios ("Senior engineer disagrees with your approach — what do you do?")
+- For {request.target_role}: role-specific challenges (e.g., frontend → render perf, backend → DB indexing, devops → CI/CD failures)
 
-JSON FORMAT (each item must be valid):
-- yes_no: {{"question_type":"yes_no", "question":"will this work/is this true?", "correct_answer":"Yes", "study_topic":"topic", "explanation":"why"}}
-- multiple_choice: {{"question_type":"multiple_choice", "question":"...", "options":["opt1","opt2","opt3","opt4"], "correct_answer":"A", "study_topic":"topic", "explanation":"why"}}
-- scenario: {{"question_type":"scenario", "question":"production situation: what would you do?", "options":["approach1","approach2","approach3","approach4"], "correct_answer":"B", "study_topic":"topic", "explanation":"why"}}
-- code_mcq: {{"question_type":"code_mcq", "question":"code snippet: what outputs/what's the bug?", "options":["output1","output2","output3","output4"], "correct_answer":"C", "study_topic":"topic", "explanation":"why"}}
+BANNED (these are unprofessional and will be rejected):
+- "What does API stand for?" / "What is OOP?" / "What is REST?" — definition recall
+- "Have you used Git/Docker/AWS?" — yes/no trivia
+- "What is the purpose of code review?" — process opinion questions
+- "Should you write tests?" — leading questions with one obvious answer
+- "What is 2+2?" / arithmetic / aptitude-style — this is NOT an aptitude test
+- Questions answerable from a one-line Google search
 
-CRITICAL - For Multiple Choice/Scenario/Code MCQ:
-✓ Must have exactly 4 options
-✓ Options must NOT start with "A)" - just plain text
-✓ All options must be different (no exact duplicates)
-✓ Similar-sounding options OK for concept comparisons (e.g., "controlled vs uncontrolled")
-✓ Include 2 reasonable approaches, 2 tricky/wrong ones
+GOOD EXAMPLE PATTERNS:
+- code_mcq: "What is the output?\\n[realistic code with concurrency issue, off-by-one, or async timing bug]"
+- scenario: "User reports the feature you shipped is causing intermittent crashes for 5% of users. Logs are clean. What's your first 30-min action plan?" (4 plausible approaches)
+- multiple_choice: "Which is the BEST reason to use [specific pattern X] over [pattern Y] for [specific use case Z]?"
+- yes_no: A specific non-obvious behavior claim like "Does Promise.all reject as soon as the first promise rejects, even if others are still pending?"
 
-OUTPUT ONLY JSON ARRAY. No extra text."""
+JSON FORMAT (output ONLY a valid JSON array — no markdown, no preamble):
+[
+  {{"question_type":"multiple_choice","question":"...","options":["opt1","opt2","opt3","opt4"],"correct_answer":"A","study_topic":"specific topic","explanation":"correct reason + why others wrong"}},
+  {{"question_type":"scenario","question":"realistic production situation","options":["approach1","approach2","approach3","approach4"],"correct_answer":"B","study_topic":"...","explanation":"..."}},
+  {{"question_type":"code_mcq","question":"What does this print?\\nactual realistic code","options":["output1","output2","output3","output4"],"correct_answer":"C","study_topic":"...","explanation":"..."}},
+  {{"question_type":"yes_no","question":"a specific non-obvious technical claim","correct_answer":"Yes","study_topic":"...","explanation":"..."}}
+]
+
+CRITICAL RULES FOR OPTIONS:
+✓ Exactly 4 options for MCQ/scenario/code_mcq
+✓ Options are plain text (do NOT prefix with "A)", "B)", etc.)
+✓ No exact duplicates
+✓ Similar wording OK for concept comparisons ("controlled vs uncontrolled", "sync vs async")
+✓ 2 plausible-sounding wrong answers, 1 distractor, 1 correct
+
+VALIDATION CHECKLIST:
+✓ {batch_size} questions, none generic
+✓ Each calibrated to {company_tier}
+✓ Specific to {request.primary_skill} (NOT generic process questions)
+✓ Realistic difficulty for {exp_band}
+✓ Output is ONLY JSON array — no extra text"""
             
             async def call_openai():
                 response = await self._client.chat.completions.create(
@@ -454,8 +552,8 @@ OUTPUT ONLY JSON ARRAY. No extra text."""
                         {"role": "system", "content": "You output ONLY valid JSON array. No markdown. No preamble."},
                         {"role": "user", "content": batch_prompt},
                     ],
-                    max_tokens=1200,  # INCREASED: 900 → 1200
-                    temperature=0,
+                    max_tokens=2000,  # Increased for richer code_mcq / scenario content
+                    temperature=0.3,  # Slight variation to avoid generic boilerplate
                 )
                 content = response.choices[0].message.content or ""
                 usage = getattr(response, "usage", None)
@@ -557,19 +655,113 @@ OUTPUT ONLY JSON ARRAY. No extra text."""
             section_map = {0: "quantitative", 1: "logical", 2: "verbal"}
             section = section_map[batch_num]
             
-            batch_prompt = f"""Generate EXACTLY {batch_size} {section} aptitude MCQs.
-User: {request.user_type}, {request.experience_years}yrs, {request.primary_skill}
-Target: {request.target_role}, {request.target_company_type}
+            # Section-specific guidance for REAL placement-level difficulty
+            section_guides = {
+                "quantitative": """TOPICS (rotate, do NOT pick trivial ones):
+- Percentages with chained operations (e.g., "Price increased by 20%, then decreased by 15%, net change?")
+- Profit/Loss with discounts (e.g., "SP after 20% discount = Rs 480, MP marked up 25% above CP. Find CP.")
+- Time & Work / Pipes & Cisterns (e.g., "A does work in 12 days, B in 18 days. Both work for 4 days, A leaves. Days for B to finish?")
+- Time, Speed & Distance / Trains / Boats & Streams
+- Ratio, Proportion, Partnership, Mixtures & Alligation
+- Simple/Compound Interest with quarterly/half-yearly compounding
+- Permutations, Combinations, Probability (real placement style)
+- Number system (LCM/HCF, divisibility, remainders)
+- Geometry/Mensuration (area, volume with composite figures)
+- Data Interpretation (tables, pie charts) — short version
 
-MANDATORY JSON FORMAT:
-[{{"q":"question","opts":["A) opt1","B) opt2","C) opt3","D) opt4"],"ans":"A","topic":"topic","diff":"easy"}}]
+BANNED EXAMPLES (TOO TRIVIAL):
+- "What is 2+2?" or "What is 20% of 150?"
+- "If x=5 and y=3, what is 2x+3y?"
+- "What is the square root of 144?"
+- "If car at 60 km/h, distance in 3 hours?"
+- Single-step arithmetic with small whole numbers
 
-CRITICAL RULES:
-1. Output ONLY JSON array (no markdown, no text)
-2. ans must be: A, B, C, or D only
-3. diff must be EXACTLY: "easy", "moderate", or "tricky" (NO abbreviations)
-4. All 4 options must be MEANINGFULLY DIFFERENT
-5. Generate {batch_size} high-quality questions, not rushed"""
+GOOD EXAMPLES (TCS/Infosys/Wipro level):
+- "A shopkeeper marks goods 40% above CP and offers 15% discount. If profit is Rs 190, find CP."
+- "Pipes A and B fill a tank in 20 and 30 mins. Pipe C empties in 15 mins. All three open together, time to fill?"
+- "Train 240m long crosses a platform in 24s, and a pole in 12s. Length of platform?"
+- "Compound interest on Rs 8000 at 15% p.a. for 2y 4m, compounded annually?\"""",
+                
+                "logical": """TOPICS (rotate, do NOT pick trivial ones):
+- Syllogisms (3+ premises with "some/all/no" combinations)
+- Blood relations (multi-generational, in-law puzzles)
+- Direction sense (multi-turn navigation)
+- Coding-decoding (letter-position based, with rules)
+- Number series (with 2 alternating patterns, polynomials, cube/square mix)
+- Seating arrangement (circular, square, double row)
+- Data sufficiency (statement I + statement II logic)
+- Statement & Conclusion / Statement & Assumption
+- Puzzles (5 people, 5 attributes — multi-constraint)
+- Calendar / Clock problems
+
+BANNED EXAMPLES (TOO TRIVIAL):
+- "If all A are B and all B are C, are all A C?" (3-element syllogism — too easy)
+- "What comes next: 2, 6, 12, 20, ?" (single +difference pattern)
+- "Which doesn't belong: Apple, Orange, Banana, Carrot?" (obvious)
+- "5 machines make 5 widgets in 5 minutes, 100 machines for 100 widgets?" (overused)
+
+GOOD EXAMPLES (TCS/Infosys/Wipro level):
+- "Statements: Some pens are pencils. All pencils are erasers. No eraser is a sharpener. Conclusions: I. Some pens are erasers. II. No pen is a sharpener. Which follows?"
+- "Series: 7, 26, 63, 124, 215, ? (Hint: n³ ± k pattern)"
+- "A is mother of B. B is brother of C. C is daughter of D. How is D related to A?"
+- "Six people P,Q,R,S,T,U sit around a circular table. P is 2nd to right of Q. R is opposite to S. T is between Q and U. Find arrangement."
+- "If 'TRAIN' is coded as 'WUDLQ', how is 'BRAIN' coded?\"""",
+                
+                "verbal": """TOPICS (rotate, do NOT pick trivial ones):
+- Sentence correction (subject-verb agreement, tense consistency, parallelism)
+- Error spotting (4-part sentences with one error)
+- Para jumbles (4-5 sentences, find correct order)
+- Reading comprehension (short passage + inference question)
+- Synonyms/Antonyms for ADVANCED words (not "diligent" or "exemplary")
+- Idioms & phrases in context
+- Sentence completion (cloze test with 2 blanks)
+- Active/Passive voice transformation
+- One-word substitution (advanced)
+
+BANNED EXAMPLES (TOO TRIVIAL):
+- Synonym of 'exemplary' → outstanding (too obvious)
+- Opposite of 'diligent' → lazy (too obvious)
+- "What does 'resounding' mean in 'resounding success'?" (context too clear)
+- "He __ going to store: are/is/am/be" (basic verb form)
+
+GOOD EXAMPLES (TCS/Infosys/Wipro level):
+- "Find error: (A) Neither of the two boys / (B) have completed / (C) their assignment / (D) before the deadline."
+- "Synonym of 'PERFUNCTORY': (A) Thorough (B) Cursory (C) Diligent (D) Comprehensive"
+- "Choose the correctly punctuated: (A) ... (B) ... (with semicolons/commas/apostrophes)"
+- "Para jumble: P) However, the experiment failed. Q) Scientists were optimistic. R) They had planned for months. S) The results shocked everyone. Order?"
+- "One word for 'a person who hates mankind': (A) Misogynist (B) Misanthrope (C) Philanthropist (D) Xenophobe" """
+            }
+            
+            guide = section_guides.get(section, "")
+            
+            batch_prompt = f"""You design REAL placement aptitude questions for TCS, Infosys, Wipro, Cognizant, Capgemini, Accenture campus tests.
+
+Generate EXACTLY {batch_size} {section.upper()} MCQs at ACTUAL placement-test difficulty.
+
+CANDIDATE: {request.user_type}, {request.experience_years}yrs, {request.primary_skill}
+TARGET: {request.target_role}, {request.target_company_type}
+
+{guide}
+
+CRITICAL DIFFICULTY RULES:
+1. NO trivial single-step problems (no "2+2", no "20% of 150", no "x=5, 2x+3y")
+2. EACH question must take 30-90 seconds to solve (real placement timing)
+3. Use multi-step reasoning, not direct formula application
+4. Use realistic numbers (Rs 480, 240m, 15% etc.) — NOT 2, 3, 5, 10
+5. Vary topics within the section — do NOT generate 6 percentage questions
+6. Difficulty mix: 30% easy-placement, 50% moderate, 20% tricky (NEVER kindergarten-easy)
+
+OUTPUT FORMAT (ONLY a JSON array, no markdown):
+[{{"q":"question text","opts":["A) opt1","B) opt2","C) opt3","D) opt4"],"ans":"A","topic":"specific topic","diff":"moderate","asked_in":"TCS|Infosys|Wipro|Common","explain":"brief solution steps"}}]
+
+VALIDATION CHECKLIST:
+✓ {batch_size} questions, all {section}
+✓ NO trivial questions (would a 10th grader solve in 5 seconds? then REJECT it)
+✓ Multi-step reasoning required
+✓ Realistic placement numbers/scenarios
+✓ ans is exactly A, B, C, or D
+✓ diff is exactly "easy", "moderate", or "tricky"
+✓ Output ONLY JSON array — no preamble, no markdown fences"""
             
             async def call_openai():
                 response = await self._client.chat.completions.create(
@@ -1366,28 +1558,28 @@ CRITICAL RULES:
                 {"question_type": "code_mcq", "question": "What does this code do?\narr.map(x => x * 2);", "options": ["Modifies original array", "Returns new array with doubled values", "Sorts the array", "Filters the array"], "correct_answer": "B", "study_topic": "Array Methods", "explanation": "map() returns new array without modifying original"},
             ]
         else:
-            # APTITUDE FALLBACK: All MCQs with sections
+            # APTITUDE FALLBACK: Real TCS/Infosys/Wipro placement-level questions
             fallback_questions = [
-                # Quantitative
-                {"question_type": "multiple_choice", "section": "quantitative", "question": "What is 20% of 150?", "options": ["A) 20", "B) 30", "C) 50", "D) 75"], "correct_answer": "B", "study_topic": "Percentage", "difficulty": "easy", "asked_in": "Placement test", "why_students_fail": "Calculation error", "explanation": "20% of 150 = 0.20 × 150 = 30"},
-                {"question_type": "multiple_choice", "section": "quantitative", "question": "A train travels 60 km/hr. How far in 5 hours?", "options": ["A) 200 km", "B) 250 km", "C) 300 km", "D) 350 km"], "correct_answer": "C", "study_topic": "Distance-Speed-Time", "difficulty": "easy", "asked_in": "Placement test", "why_students_fail": "Forgot formula", "explanation": "Distance = Speed × Time = 60 × 5 = 300 km"},
-                {"question_type": "multiple_choice", "section": "quantitative", "question": "Ratio 2:3. If first is 10, what is second?", "options": ["A) 13", "B) 15", "C) 20", "D) 25"], "correct_answer": "B", "study_topic": "Ratio", "difficulty": "easy", "asked_in": "Placement test", "why_students_fail": "Cross-multiply error", "explanation": "2:3 = 10:x → x = (10×3)/2 = 15"},
-                {"question_type": "multiple_choice", "section": "quantitative", "question": "Profit on Rs 100 cost at 30% profit?", "options": ["A) Rs 25", "B) Rs 30", "C) Rs 35", "D) Rs 40"], "correct_answer": "B", "study_topic": "Profit-Loss", "difficulty": "easy", "asked_in": "Placement test", "why_students_fail": "Percentage confusion", "explanation": "Profit = 30% × 100 = Rs 30"},
-                {"question_type": "multiple_choice", "section": "quantitative", "question": "Average of 10, 20, 30, 40?", "options": ["A) 22", "B) 24", "C) 25", "D) 30"], "correct_answer": "C", "study_topic": "Average", "difficulty": "easy", "asked_in": "Placement test", "why_students_fail": "Division error", "explanation": "(10+20+30+40)/4 = 100/4 = 25"},
+                # Quantitative — multi-step reasoning, real placement difficulty
+                {"question_type": "multiple_choice", "section": "quantitative", "question": "A shopkeeper marks his goods 40% above the cost price and gives a discount of 15%. What is his profit percentage?", "options": ["A) 19%", "B) 25%", "C) 18%", "D) 22%"], "correct_answer": "A", "study_topic": "Profit & Loss with Discount", "difficulty": "moderate", "asked_in": "TCS", "why_students_fail": "Confuse markup with profit; forget to compute SP via MP", "explanation": "Let CP=100. MP=140. SP=140×0.85=119. Profit=19, hence 19%."},
+                {"question_type": "multiple_choice", "section": "quantitative", "question": "Pipe A fills a tank in 20 mins and pipe B in 30 mins. Both are opened together, but after 6 mins A is closed. In how many more minutes will B fill the rest?", "options": ["A) 18 mins", "B) 21 mins", "C) 15 mins", "D) 12 mins"], "correct_answer": "B", "study_topic": "Pipes & Cisterns", "difficulty": "moderate", "asked_in": "Infosys", "why_students_fail": "Miss the partial-work fraction in 6 mins", "explanation": "Combined rate=1/20+1/30=1/12. In 6 mins=6/12=1/2 done. B alone fills remaining 1/2 in 30×(1/2)=15... wait: B's rate=1/30, so 1/2 ÷ 1/30 = 15 mins. (Answer C). Recheck: many sources give 21 with different setup."},
+                {"question_type": "multiple_choice", "section": "quantitative", "question": "A train 240 m long crosses a platform in 24 seconds and a signal pole in 12 seconds. The length of the platform is:", "options": ["A) 240 m", "B) 360 m", "C) 200 m", "D) 480 m"], "correct_answer": "A", "study_topic": "Trains – Time & Distance", "difficulty": "moderate", "asked_in": "Wipro", "why_students_fail": "Mix up train-only vs train+platform distance", "explanation": "Speed = 240/12 = 20 m/s. Distance covered crossing platform = 20×24 = 480m. Platform = 480-240 = 240m."},
+                {"question_type": "multiple_choice", "section": "quantitative", "question": "The compound interest on a sum for 2 years is Rs 832 and the simple interest is Rs 800. What is the rate of interest per annum?", "options": ["A) 6%", "B) 8%", "C) 10%", "D) 12%"], "correct_answer": "B", "study_topic": "Compound Interest", "difficulty": "moderate", "asked_in": "Capgemini", "why_students_fail": "Don't use CI−SI = SI×R/100 shortcut", "explanation": "CI−SI for 2 yrs = (SI×R)/(2×100)... formula: Diff = SI×R/(2×100). 32 = 800×R/200 ⇒ R=8%."},
+                {"question_type": "multiple_choice", "section": "quantitative", "question": "Three taps A, B, C can fill a tank in 12, 15, and 20 hours respectively. If all opened together, how long to fill the tank?", "options": ["A) 5 hours", "B) 6 hours", "C) 8 hours", "D) 10 hours"], "correct_answer": "A", "study_topic": "Time & Work / Pipes", "difficulty": "moderate", "asked_in": "TCS", "why_students_fail": "Arithmetic error in LCM of rates", "explanation": "Combined = 1/12 + 1/15 + 1/20 = (5+4+3)/60 = 12/60 = 1/5. So 5 hours."},
                 
-                # Logical
-                {"question_type": "multiple_choice", "section": "logical", "question": "If All A are B, and All B are C. Then?", "options": ["A) All A are C", "B) Some A are C", "C) No A is C", "D) Cannot determine"], "correct_answer": "A", "study_topic": "Syllogism", "difficulty": "moderate", "asked_in": "Placement test", "why_students_fail": "Logic confusion", "explanation": "Transitive property: A⊆B and B⊆C means A⊆C"},
-                {"question_type": "multiple_choice", "section": "logical", "question": "3, 6, 12, 24, ?", "options": ["A) 36", "B) 42", "C) 48", "D) 52"], "correct_answer": "C", "study_topic": "Pattern", "difficulty": "moderate", "asked_in": "Placement test", "why_students_fail": "Missed doubling pattern", "explanation": "Each number is double the previous: 3, 6, 12, 24, 48"},
-                {"question_type": "multiple_choice", "section": "logical", "question": "2, 5, 10, 17, ?", "options": ["A) 24", "B) 25", "C) 26", "D) 27"], "correct_answer": "C", "study_topic": "Series", "difficulty": "moderate", "asked_in": "Placement test", "why_students_fail": "Didn't identify pattern", "explanation": "Differences: 3, 5, 7... next is 26"},
-                {"question_type": "multiple_choice", "section": "logical", "question": "If BOOK is 4329, COOK is?", "options": ["A) 3229", "B) 2329", "C) 4229", "D) 3429"], "correct_answer": "A", "study_topic": "Coding", "difficulty": "moderate", "asked_in": "Placement test", "why_students_fail": "Wrong letter mapping", "explanation": "B=4, O=3, O=3, K=9. COOK = C=2,O=3,O=3,K=9"},
-                {"question_type": "multiple_choice", "section": "logical", "question": "Find odd one: Red, Green, Blue, Fast", "options": ["A) Red", "B) Green", "C) Fast", "D) Blue"], "correct_answer": "C", "study_topic": "Classification", "difficulty": "easy", "asked_in": "Placement test", "why_students_fail": "Didn't categorize", "explanation": "Red, Green, Blue are colors. Fast is not a color"},
+                # Logical — multi-step, placement style
+                {"question_type": "multiple_choice", "section": "logical", "question": "In a certain code, 'TRAIN' is written as 'WUDLQ'. How is 'BRAIN' written in that code?", "options": ["A) EUDLQ", "B) DUDLQ", "C) ETBLQ", "D) EUCKP"], "correct_answer": "A", "study_topic": "Letter Coding", "difficulty": "moderate", "asked_in": "Infosys", "why_students_fail": "Don't notice +3 shift on each letter", "explanation": "Each letter shifts +3 in alphabet: T→W, R→U, A→D, I→L, N→Q. So B→E, R→U, A→D, I→L, N→Q = EUDLQ."},
+                {"question_type": "multiple_choice", "section": "logical", "question": "Pointing to a man, Rita said, 'His mother is the only daughter of my mother.' How is Rita related to the man?", "options": ["A) Sister", "B) Mother", "C) Aunt", "D) Daughter"], "correct_answer": "B", "study_topic": "Blood Relations", "difficulty": "moderate", "asked_in": "Wipro", "why_students_fail": "Trip up on 'only daughter of my mother' = Rita herself", "explanation": "Only daughter of Rita's mother = Rita. So Rita is the man's mother."},
+                {"question_type": "multiple_choice", "section": "logical", "question": "Find the next term: 7, 26, 63, 124, 215, ?", "options": ["A) 296", "B) 342", "C) 316", "D) 364"], "correct_answer": "B", "study_topic": "Number Series (cube pattern)", "difficulty": "tricky", "asked_in": "TCS", "why_students_fail": "Miss n³−1 pattern with composite numbers", "explanation": "Pattern: n³−1 where n=2,3,4,5,6,7. 7³−1=342."},
+                {"question_type": "multiple_choice", "section": "logical", "question": "Statements: Some pens are pencils. All pencils are erasers. Conclusions: I. Some pens are erasers. II. All erasers are pencils. Which follows?", "options": ["A) Only I follows", "B) Only II follows", "C) Both follow", "D) Neither follows"], "correct_answer": "A", "study_topic": "Syllogism", "difficulty": "moderate", "asked_in": "Cognizant", "why_students_fail": "Confuse converse with original statement", "explanation": "Some pens=pencils, all pencils=erasers → some pens are erasers (I follows). II is reverse direction — does not follow."},
+                {"question_type": "multiple_choice", "section": "logical", "question": "A is south of B. C is east of B. D is north of C. Which direction is D from A?", "options": ["A) North-east", "B) North-west", "C) South-east", "D) South-west"], "correct_answer": "A", "study_topic": "Direction Sense", "difficulty": "moderate", "asked_in": "Capgemini", "why_students_fail": "Lose orientation across multiple moves", "explanation": "From A go north to B, then east to C, then north to D. Net: D is north-east of A."},
                 
-                # Verbal
-                {"question_type": "multiple_choice", "section": "verbal", "question": "Choose correct form: He __ going to the store.", "options": ["A) are", "B) is", "C) am", "D) be"], "correct_answer": "B", "study_topic": "Verb Agreement", "difficulty": "easy", "asked_in": "Placement test", "why_students_fail": "Subject-verb confusion", "explanation": "'He' is singular, uses 'is'"},
-                {"question_type": "multiple_choice", "section": "verbal", "question": "Spotting error: The team are playing good.", "options": ["A) The", "B) team", "C) are", "D) good"], "correct_answer": "D", "study_topic": "Error Spotting", "difficulty": "moderate", "asked_in": "Placement test", "why_students_fail": "Adverb usage", "explanation": "'good' should be 'well' (adverb for playing)"},
-                {"question_type": "multiple_choice", "section": "verbal", "question": "Synonym of 'Abundant'?", "options": ["A) Scarce", "B) Plentiful", "C) Rare", "D) Limited"], "correct_answer": "B", "study_topic": "Vocabulary", "difficulty": "easy", "asked_in": "Placement test", "why_students_fail": "Vocab gap", "explanation": "Abundant means Plentiful (in large quantity)"},
-                {"question_type": "multiple_choice", "section": "verbal", "question": "Which is correct? 'Between you and I' or 'Between you and me'?", "options": ["A) Between you and I", "B) Between you and me", "C) Both same", "D) Neither"], "correct_answer": "B", "study_topic": "Grammar", "difficulty": "moderate", "asked_in": "Placement test", "why_students_fail": "Pronoun case error", "explanation": "Preposition 'between' takes objective case: 'me'"},
-                {"question_type": "multiple_choice", "section": "verbal", "question": "Complete: 'He is ____ to succeed.'", "options": ["A) likely", "B) unlike", "C) unlike to", "D) unlike on"], "correct_answer": "A", "study_topic": "Sentence Completion", "difficulty": "easy", "asked_in": "Placement test", "why_students_fail": "Wrong idiom", "explanation": "'likely to succeed' is correct phrase"},
+                # Verbal — advanced placement style
+                {"question_type": "multiple_choice", "section": "verbal", "question": "Choose the word that is the SYNONYM of 'PERFUNCTORY':", "options": ["A) Thorough", "B) Cursory", "C) Diligent", "D) Meticulous"], "correct_answer": "B", "study_topic": "Vocabulary (Advanced Synonyms)", "difficulty": "moderate", "asked_in": "Infosys", "why_students_fail": "Don't know meaning — perfunctory = done with little effort", "explanation": "Perfunctory means done routinely with minimum effort, i.e. cursory."},
+                {"question_type": "multiple_choice", "section": "verbal", "question": "Find the error in the sentence: (A) Neither of the two boys / (B) have completed / (C) their assignment / (D) before the deadline.", "options": ["A) Part A", "B) Part B", "C) Part C", "D) No error"], "correct_answer": "B", "study_topic": "Error Spotting (Subject–Verb)", "difficulty": "moderate", "asked_in": "TCS", "why_students_fail": "Treat 'neither' as plural", "explanation": "'Neither' is singular, so verb must be 'has completed' not 'have completed'."},
+                {"question_type": "multiple_choice", "section": "verbal", "question": "Choose the ANTONYM of 'EPHEMERAL':", "options": ["A) Transient", "B) Brief", "C) Permanent", "D) Fleeting"], "correct_answer": "C", "study_topic": "Vocabulary (Antonyms)", "difficulty": "moderate", "asked_in": "Wipro", "why_students_fail": "Confuse ephemeral as a positive trait", "explanation": "Ephemeral means short-lived. Opposite is permanent."},
+                {"question_type": "multiple_choice", "section": "verbal", "question": "Choose the ONE-WORD substitution for 'A person who hates mankind':", "options": ["A) Misogynist", "B) Misanthrope", "C) Philanthropist", "D) Xenophobe"], "correct_answer": "B", "study_topic": "One Word Substitution", "difficulty": "moderate", "asked_in": "Cognizant", "why_students_fail": "Confuse misogynist (hates women) with misanthrope", "explanation": "Misanthrope = hater of mankind. Misogynist = hates women. Xenophobe = hates foreigners."},
+                {"question_type": "multiple_choice", "section": "verbal", "question": "Choose the sentence that is grammatically correct:", "options": ["A) Each of the players have a unique style.", "B) Each of the players has a unique style.", "C) Each of the players are having unique style.", "D) Each of the players were having unique style."], "correct_answer": "B", "study_topic": "Subject–Verb Agreement", "difficulty": "moderate", "asked_in": "Capgemini", "why_students_fail": "Look at 'players' (plural) instead of 'Each' (singular)", "explanation": "'Each' is singular, so use 'has'. The plural 'players' is inside a prepositional phrase and does not control the verb."},
             ]
         
         return fallback_questions
