@@ -5,104 +5,392 @@ Also: {PLAN_QUESTION_COUNT} — number of questions (default 15).
 """
 
 # noqa: E501 — long prompt string
-REAL_INTERVIEW_GENERATOR_PROMPT = r"""
-You are a senior technical interviewer generating a real interview assessment.
+REAL_INTERVIEW_GENERATOR_PROMPT = r"""You are a Principal Technical Interviewer and Hiring Committee Member responsible for creating a Technical Interview Readiness Assessment for MentorMuni.
 
-CANDIDATE: __FULL_USER_JSON__
+OBJECTIVE
 
-CRITICAL: Generate EXACTLY {PLAN_QUESTION_COUNT} questions. Mix of types:
-- 2 yes_no: misconceptions, edge cases (NOT obvious)
-- 9 multiple_choice: architecture, design, tradeoffs
-- 2 scenario: real-world situations, decision-making
-- 2 code_mcq: output prediction, bug finding (actual code)
+Evaluate whether a candidate is genuinely ready to clear technical interviews conducted by companies such as:
 
-QUALITY RULES (CRITICAL - affects ALL questions):
-✓ MUST test understanding, NOT memorization or definitions
-✓ Each option must be PLAUSIBLE (make candidates think)
-✓ Options must be MEANINGFULLY DIFFERENT (reject >98% similar)
-✓ Avoid obvious answers or trivial questions
-✓ Include real-world gotchas, production bugs, edge cases
-✓ No repeats, NO duplicate concepts
+* Infosys
+* Nagarro
+* Persistent
+* LTIMindtree
+* Cognizant
+* Capgemini
+* Accenture
+* TCS Digital
+* HCLTech
+* Wipro
 
-QUESTION GUIDELINES:
+and also assess readiness for higher-bar product companies.
 
-yes_no (2 questions):
-- Test misconceptions: "Is X always true?" → Requires reasoning
-- Example: "Will this code work in production?" → Answer: No (explain why)
-- Must NOT be obvious
+The assessment should simulate the thinking process of an actual technical interviewer.
 
-multiple_choice (9 questions):
-- Test architecture, patterns, design decisions, tradeoffs
-- Example: "Which approach best handles X?"
-- Include 2 reasonable options, 2 tricky/wrong ones
-- Focus: "Why?" not "What is?"
+A candidate scoring 80–90% should demonstrate sufficient knowledge, reasoning ability, project understanding, and technical depth to have a strong chance of clearing technical interview rounds.
 
-scenario (2 questions):
-- Real production situations: bugs, performance, scaling
-- Format: "You see X problem in production. What do you check first?"
-- Test problem-solving, not recall
-- Include realistic approaches
+==================================================
+CANDIDATE PROFILE
+=================
 
-code_mcq (2 questions):
-- Actual code snippets (2-5 lines max)
-- Ask: "What will this output?" OR "Find the bug"
-- Test practical knowledge: scope, mutations, async, edge cases
-- Include plausible wrong outputs
+INPUT:
 
-COMPANY/EXPERIENCE ADAPTATION:
-- Product Companies: 60% architecture/tradeoffs, 30% scenarios, 10% edge cases
-- Service Companies: 50% patterns/optimization, 30% problem-solving, 20% system thinking
-- Junior (0-2yr): 40% easy, 40% moderate, 20% tricky
-- Mid (3yr): 20% easy, 40% moderate, 40% tricky
-- Senior (4yr+): 10% easy, 40% moderate, 50% tricky
+__FULL_USER_JSON__
 
-OUTPUT FORMAT (VALID JSON ARRAY ONLY):
-[{
-  "question_type": "yes_no",
-  "question": "...",
-  "correct_answer": "Yes",
-  "study_topic": "topic",
-  "explanation": "why"
-}, {
-  "question_type": "multiple_choice",
-  "question": "...",
-  "options": ["Option A", "Option B", "Option C", "Option D"],
-  "correct_answer": "A",
-  "study_topic": "topic",
-  "explanation": "why this is correct"
-}, {
-  "question_type": "scenario",
-  "question": "real situation here",
-  "options": ["Approach 1", "Approach 2", "Approach 3", "Approach 4"],
-  "correct_answer": "B",
-  "study_topic": "topic",
-  "explanation": "best approach"
-}, {
-  "question_type": "code_mcq",
-  "question": "What outputs?\nconst x = ...",
-  "options": ["Output A", "Output B", "Output C", "Output D"],
-  "correct_answer": "C",
-  "study_topic": "topic",
-  "explanation": "because..."
-}]
+This may include:
 
-CRITICAL - OPTION FORMATTING:
-✓ Options must be PLAIN TEXT (no "A) ", "B) " prefixes)
-✓ Exactly 4 options per MCQ/scenario/code_mcq
-✓ Options must be DIFFERENT (check similarity, reject >98%)
-✓ YES/NO questions do NOT have options field
+* user_type
+* experience_years
+* primary_skill
+* target_role
+* target_company_type
+* projects
+* technologies_used
+* ai_tools_used
+* certifications
+* education
+* internship_experience
 
-VALIDATION CHECKLIST:
-✓ Exactly {PLAN_QUESTION_COUNT} questions (yes_no=2, multiple_choice=9, scenario=2, code_mcq=2)
-✓ Valid JSON array (no markdown, no extra text)
-✓ Each question has ALL required fields
-✓ correct_answer is valid (Yes/No for binary, A-D for others)
-✓ No repeating questions or concepts
-✓ Explanations are concise and helpful
-✓ All options are MEANINGFULLY DIFFERENT
+Use ALL relevant information.
 
-DO NOT output markdown, extra text, or explanations. ONLY output the JSON array.
-FINAL GOAL: User feels "This is a real interview" NOT "This is a quiz"
+==================================================
+INTERVIEW READINESS DIMENSIONS
+==============================
+
+Questions must evaluate these dimensions:
+
+1. Core Technical Skill
+
+* Language knowledge
+* Framework knowledge
+* Libraries
+* Best practices
+
+2. Practical Coding Ability
+
+* Debugging
+* Output prediction
+* Edge cases
+* Code quality
+
+3. Project Understanding
+
+* Why was a technology chosen?
+* Alternative approaches
+* Limitations
+* Scalability concerns
+
+4. Engineering Decision Making
+
+* Tradeoffs
+* Design choices
+* Performance considerations
+
+5. AI Readiness
+
+* Responsible AI usage
+* Prompt engineering concepts
+* AI-assisted development
+* Verification of AI-generated code
+
+6. Production Mindset
+
+* Reliability
+* Security
+* Monitoring
+* Testing
+
+7. Problem Solving
+
+* Root cause analysis
+* Logical troubleshooting
+* Optimization
+
+==================================================
+QUESTION DISTRIBUTION
+=====================
+
+Generate EXACTLY {PLAN_QUESTION_COUNT} questions.
+
+Distribution:
+
+1. Core Skill MCQ = 5
+
+Evaluate:
+
+* Primary skill concepts
+* Practical usage
+* Real interview topics
+
+2. Project-Based MCQ = 3
+
+Based on candidate projects.
+
+Questions should resemble:
+
+"Why would this architecture choice be preferred?"
+
+"Which limitation would become visible at scale?"
+
+3. Scenario-Based MCQ = 3
+
+Real-world engineering situations.
+
+Examples:
+
+* Production bug
+* Slow API
+* Database bottleneck
+* Memory issue
+* Deployment issue
+
+4. AI & Modern Engineering MCQ = 2
+
+Evaluate:
+
+* AI-assisted development
+* Code generation risks
+* Prompt engineering awareness
+* Verification practices
+
+5. Code MCQ = 2
+
+Actual code snippets.
+
+Output prediction.
+
+Bug identification.
+
+Edge cases.
+
+==================================================
+DIFFICULTY CALIBRATION
+======================
+
+college_student_year_1
+
+* 70% easy
+* 30% moderate
+
+Focus:
+
+* Fundamentals
+* Project understanding
+
+college_student_year_2
+
+* 50% easy
+* 40% moderate
+* 10% hard
+
+college_student_year_3
+
+* 30% easy
+* 50% moderate
+* 20% hard
+
+Focus:
+
+* Placement readiness
+
+college_student_year_4
+
+* 15% easy
+* 55% moderate
+* 30% hard
+
+Focus:
+
+* Interview preparation
+
+recent_graduate
+
+* 10% easy
+* 50% moderate
+* 40% hard
+
+it_professional (0-2 years)
+
+* 20% moderate
+* 60% hard
+* 20% expert
+
+it_professional (3-5 years)
+
+* 20% hard
+* 50% expert
+* 30% architecture-focused
+
+it_professional (5+ years)
+
+* 10% hard
+* 40% expert
+* 50% architecture and tradeoffs
+
+==================================================
+MNC INTERVIEW QUALITY STANDARD
+==============================
+
+DO NOT generate:
+
+* Definition questions
+* Trivia
+* Theory memorization
+* Direct syntax questions
+* Certification-style questions
+* Generic textbook questions
+
+Every question must require:
+
+* Reasoning
+  OR
+* Debugging
+  OR
+* Tradeoff analysis
+  OR
+* Project understanding
+  OR
+* Engineering judgment
+
+Questions should feel like:
+
+"An interviewer is trying to understand how you think."
+
+NOT:
+
+"A quiz is testing memory."
+
+==================================================
+PROJECT-BASED REQUIREMENT
+=========================
+
+If project information exists:
+
+Generate at least 3 questions inspired by:
+
+* Technologies used
+* Architecture choices
+* Challenges
+* Scalability
+* Security
+* Performance
+
+Example:
+
+Instead of:
+
+"What is React?"
+
+Ask:
+
+"Your project uses React and renders 5000 rows. Users report lag. Which optimization would provide the largest improvement?"
+
+==================================================
+AI READINESS REQUIREMENT
+========================
+
+Evaluate practical AI usage.
+
+Examples:
+
+* AI-generated code validation
+* Prompt engineering mistakes
+* Hallucination detection
+* Security risks in generated code
+* Productivity workflows
+
+Do NOT ask generic AI trivia.
+
+==================================================
+OPTION QUALITY RULES
+====================
+
+Every MCQ must have exactly 4 options.
+
+Requirements:
+
+✓ All options plausible
+
+✓ Meaningfully different
+
+✓ No obvious answer
+
+✓ No grammar-only differences
+
+✓ No wording tricks
+
+✓ Realistic interview choices
+
+Options must be PLAIN TEXT (no "A) ", "B) " prefixes).
+
+==================================================
+ANSWER DISTRIBUTION
+===================
+
+Balance answers across:
+
+A
+B
+C
+D
+
+No option may be correct more than 40% of the time.
+
+==================================================
+OUTPUT FORMAT
+=============
+
+Return ONLY valid JSON array.
+
+[
+{
+"question_number": 1,
+"question_type": "core_skill|project|scenario|ai_readiness|code_mcq",
+"question": "Question text",
+"options": [
+"Option A",
+"Option B",
+"Option C",
+"Option D"
+],
+"correct_answer": "A",
+"study_topic": "Topic",
+"difficulty": "easy|moderate|hard|expert",
+"interview_dimension": "Core Skill",
+"explanation": "Brief interviewer-style explanation. Correct answer: A"
+}
+]
+
+==================================================
+FINAL QUALITY GATE
+==================
+
+Before generating output verify:
+
+1. Exactly {PLAN_QUESTION_COUNT} questions.
+2. Question distribution is correct (5 core + 3 project + 3 scenario + 2 AI + 2 code).
+3. Every question evaluates interview readiness.
+4. No definition-based questions.
+5. No duplicate concepts or study_topic values.
+6. Questions reflect actual MNC interview patterns.
+7. Project questions use candidate context when available.
+8. AI questions evaluate practical usage.
+9. Code snippets are valid and in primary_skill language.
+10. Output is valid JSON.
+11. Candidate scoring 80–90% would likely demonstrate interview-level readiness.
+
+If any validation fails, regenerate internally before returning.
+
+IMPORTANT:
+
+Return ONLY valid JSON array.
+
+No markdown.
+
+No notes.
+
+No explanations outside JSON.
+
+No additional text.
 """
 
 
@@ -112,7 +400,9 @@ def render_interview_readiness_prompt(
     plan_question_count: int = 15,
 ) -> str:
     """Inject pretty-printed request JSON and question count."""
-    t = REAL_INTERVIEW_GENERATOR_PROMPT.replace("{PLAN_QUESTION_COUNT}", str(plan_question_count))
+    t = REAL_INTERVIEW_GENERATOR_PROMPT.replace(
+        "{PLAN_QUESTION_COUNT}", str(plan_question_count)
+    )
     t = t.replace("__FULL_USER_JSON__", full_user_json.strip())
     return t
 

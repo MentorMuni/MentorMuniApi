@@ -1,54 +1,363 @@
 """Prompt template for POST /interview-ready/aptitude-readiness/plan.
 
-CRITICAL: This prompt must be CONCISE to reduce token count while maintaining quality.
-Placeholders: __USER_TYPE__, __EXPERIENCE_YEARS__, __PRIMARY_SKILL__, __TARGET_ROLE__, __TARGET_COMPANY_TYPE__
+Placeholders: **USER_TYPE**, **EXPERIENCE_YEARS**, **PRIMARY_SKILL**, **TARGET_ROLE**, **TARGET_COMPANY_TYPE**
 """
 
-# OPTIMIZED CONCISE PROMPT (500 tokens vs 2000 before)
-APTITUDE_READINESS_PROMPT = r"""You are a placement aptitude test designer (TCS/Infosys/Wipro level).
+# noqa: E501 — long prompt string
+APTITUDE_READINESS_PROMPT = r"""You are a Senior Placement Aptitude Assessment Designer responsible for creating Skill Readiness Assessments for engineering students preparing for campus and off-campus placements.
 
-TASK: Generate EXACTLY 15 multiple choice questions for campus placement.
+OBJECTIVE
 
-STRUCTURE:
-Q1-5: Quantitative (percentages, ratios, time & work, profit/loss, geometry)
-Q6-10: Logical (syllogisms, coding, pattern recognition, puzzles)
-Q11-15: Verbal (sentence correction, error spotting, comprehension)
+Evaluate whether a candidate is ready to clear aptitude screening rounds conducted by companies such as Infosys, Wipro, Dassault Systèmes, Persistent, Cognizant, Capgemini, Accenture, TCS Digital, LTIMindtree, HCLTech, Tech Mahindra, and similar organizations.
 
-OUTPUT FORMAT (ONLY JSON, NO MARKDOWN):
+INPUT VARIABLES
+
+* USER_TYPE: **USER_TYPE**
+* EXPERIENCE_YEARS: **EXPERIENCE_YEARS**
+* PRIMARY_SKILL: **PRIMARY_SKILL**
+* TARGET_ROLE: **TARGET_ROLE**
+* TARGET_COMPANY_TYPE: **TARGET_COMPANY_TYPE**
+
+==================================================
+MNC PLACEMENT QUALITY STANDARD (MANDATORY)
+==========================================
+
+This assessment MUST resemble real aptitude rounds used in engineering campus placements.
+
+DO NOT generate school-level aptitude questions.
+
+DO NOT generate one-step arithmetic questions.
+
+DO NOT generate questions that can be solved through direct formula substitution alone.
+
+Every question must require at least one of:
+
+* Multi-step reasoning
+* Pattern identification
+* Logical inference
+* Elimination strategy
+* Quantitative analysis
+* Critical reading
+* Data interpretation
+* Decision making
+
+The goal is to distinguish between:
+
+* Average engineering students
+* Placement-ready students
+* High-performing students capable of clearing MNC aptitude rounds
+
+At least 70% of questions must require 2–4 reasoning steps.
+
+At least 30% of questions should include common placement traps or distractors.
+
+No question should be solvable in under 15 seconds by an average engineering student.
+
+==================================================
+MANDATORY QUESTION DISTRIBUTION
+===============================
+
+Generate EXACTLY 15 questions.
+
+Questions 1–5:
+Quantitative Aptitude
+
+Questions 6–10:
+Logical Reasoning
+
+Questions 11–15:
+Verbal Ability
+
+==================================================
+SECTION-WISE TOPIC COVERAGE
+===========================
+
+QUANTITATIVE (Q1-Q5)
+
+Select 5 UNIQUE topics from:
+
+* Percentages
+* Ratio and Proportion
+* Profit and Loss
+* Time and Work
+* Time Speed Distance
+* Pipes and Cisterns
+* Mixtures and Allegations
+* Probability
+* Permutation and Combination
+* Geometry
+* Mensuration
+* Averages
+* Data Interpretation
+* Compound Interest
+* Simple Interest
+
+Requirements:
+
+* Use placement-level calculations
+* Prefer multi-concept problems
+* Include realistic distractors
+* Avoid direct formula recall
+
+==================================================
+
+LOGICAL REASONING (Q6-Q10)
+
+Select 5 UNIQUE topics from:
+
+* Coding Decoding
+* Blood Relations
+* Direction Sense
+* Number Series
+* Letter Series
+* Syllogisms
+* Statement and Assumption
+* Statement and Conclusion
+* Data Sufficiency
+* Ranking and Ordering
+* Seating Arrangement
+* Logical Puzzle
+
+Requirements:
+
+* Require deduction
+* Avoid obvious patterns
+* Avoid single-step answers
+* Use elimination-based reasoning
+
+==================================================
+
+VERBAL ABILITY (Q11-Q15)
+
+Select 5 UNIQUE topics from:
+
+* Sentence Correction
+* Error Spotting
+* Reading Comprehension
+* Para Jumbles
+* Sentence Arrangement
+* Vocabulary in Context
+* Critical Reasoning
+* Inference Based Questions
+* Fill in the Blank
+* Sentence Improvement
+
+Requirements:
+
+* Focus on comprehension and reasoning
+* Avoid simple synonym/antonym memorization
+* Use professional/business communication style where appropriate
+
+==================================================
+DIFFICULTY DISTRIBUTION (STRICT)
+================================
+
+Generate EXACTLY:
+
+* 3 Easy
+* 10 Moderate
+* 2 Tricky
+
+Difficulty Definitions
+
+EASY:
+
+* Basic placement level
+* 1–2 reasoning steps
+
+MODERATE:
+
+* Typical Infosys/Wipro/Persistent level
+* 2–4 reasoning steps
+* Requires careful analysis
+
+TRICKY:
+
+* Dassault Systems / Advanced Placement level
+* Multiple concepts
+* High-quality distractors
+* Tests deep reasoning
+
+Distribute difficulty across all sections.
+
+==================================================
+QUESTION QUALITY RULES
+======================
+
+Every question MUST:
+
+✓ Have exactly one correct answer
+
+✓ Test reasoning rather than memorization
+
+✓ Reflect real placement aptitude patterns
+
+✓ Use realistic values and scenarios
+
+✓ Have plausible distractors
+
+✓ Avoid ambiguity
+
+✓ Be solvable without external knowledge
+
+✓ Be appropriate for engineering students
+
+DO NOT GENERATE:
+
+✗ School-level arithmetic
+
+✗ Direct textbook examples
+
+✗ Trivial vocabulary questions
+
+✗ Ambiguous wording
+
+✗ Multiple correct answers
+
+✗ Repeated concepts
+
+✗ Repeated study topics
+
+✗ Puzzle questions requiring excessive calculations
+
+==================================================
+OPTION QUALITY RULES
+====================
+
+Each question MUST contain EXACTLY 4 options.
+
+Requirements:
+
+✓ All options must be meaningfully different
+
+✓ No punctuation-only differences
+
+✓ No grammar-only differences
+
+✓ No pronoun-only differences
+
+✓ Every option must be plausible
+
+✓ Every option must contain at least 3 characters
+
+✓ Correct answers should be balanced across A/B/C/D
+
+No option letter may be correct more than 5 times.
+
+==================================================
+TOPIC UNIQUENESS
+================
+
+All 15 questions MUST test different concepts.
+
+Each question MUST have a unique study_topic.
+
+Do NOT generate multiple questions from the same concept family.
+
+Examples of duplicates:
+
+* Time and Work + Combined Work Variation
+* Coding Decoding + Similar Coding Pattern
+* Error Spotting + Same Grammar Rule
+* Percentage + Successive Percentage Variation
+
+Treat these as the same family.
+
+==================================================
+PLACEMENT REALISM
+=================
+
+asked_in must be one of:
+
+* Infosys
+* Wipro
+* Dassault Systems
+* Persistent
+* Cognizant
+* Capgemini
+* Accenture
+* TCS
+* Common
+
+Use realistic mappings.
+
+Examples:
+
+* Data Interpretation → Infosys / Cognizant
+* Statement Conclusion → Capgemini / Accenture
+* Coding Decoding → Wipro
+* Time and Work → TCS
+* Critical Reasoning → Dassault Systems
+
+==================================================
+OUTPUT FORMAT
+=============
+
+Return ONLY valid JSON.
+
 {
-  "questions": [
-    {
-      "question_type": "multiple_choice",
-      "section": "quantitative|logical|verbal",
-      "question": "Clear question",
-      "options": ["A) option1", "B) option2", "C) option3", "D) option4"],
-      "correct_answer": "A|B|C|D",
-      "study_topic": "Topic (2-5 words)",
-      "difficulty": "easy|moderate|tricky",
-      "asked_in": "TCS|Infosys|Wipro|Cognizant|Capgemini|Common",
-      "why_students_fail": "One reason",
-      "explanation": "Brief solution"
-    },
-    ... 14 more objects ...
-  ]
+"questions": [
+{
+"question_number": 1,
+"question_type": "multiple_choice",
+"section": "quantitative",
+"question": "Question text",
+"options": [
+"A) Option 1",
+"B) Option 2",
+"C) Option 3",
+"D) Option 4"
+],
+"correct_answer": "A",
+"study_topic": "Time and Work",
+"difficulty": "moderate",
+"asked_in": "Infosys",
+"why_students_fail": "Misapplies combined work formula",
+"explanation": "Short placement-level explanation"
+}
+]
 }
 
-CRITICAL RULES:
-1. ALL OPTIONS MUST BE MEANINGFULLY DIFFERENT (not just punctuation/pronoun changes)
-2. NEVER generate: "option, was" vs "option was" OR "She likes" vs "He likes"
-3. Each option ≥3 chars
-4. Difficulty mix: 70% moderate, 20% easy, 10% tricky
-5. Return ONLY valid JSON (no markdown, no preamble)
-6. DIFFICULTY VALUES MUST BE EXACT: "easy" (not "e"), "moderate" (not "mod"), "tricky" (not "t")
+==================================================
+FINAL VALIDATION GATE
+=====================
 
-CANDIDATE: __USER_TYPE__, __EXPERIENCE_YEARS__ yrs, __PRIMARY_SKILL__, Target: __TARGET_ROLE__, Company: __TARGET_COMPANY_TYPE__
+Before returning the response, verify:
 
-VALIDATE BEFORE RETURNING:
-✓ Exactly 15 questions
-✓ Q1-5 quantitative, Q6-10 logical, Q11-15 verbal
-✓ 4 distinct options per question
-✓ Valid JSON only
-✓ difficulty is exactly: "easy", "moderate", or "tricky" (NOT abbreviated)"""
+1. Exactly 15 questions generated.
+2. Q1-Q5 are Quantitative.
+3. Q6-Q10 are Logical Reasoning.
+4. Q11-Q15 are Verbal Ability.
+5. Exactly 4 options per question.
+6. Exactly 1 correct answer per question.
+7. Difficulty distribution is exactly:
+
+   * 3 Easy
+   * 10 Moderate
+   * 2 Tricky
+8. All 15 study_topic values are unique.
+9. No duplicate concept families.
+10. All options are meaningfully different.
+11. Correct answers are balanced across A/B/C/D.
+12. Questions match MNC placement aptitude standards.
+13. No school-level or formula-only questions.
+14. Output is valid JSON.
+15. No text outside JSON.
+
+If any validation fails, regenerate internally before returning the final response.
+
+IMPORTANT:
+
+Return ONLY valid JSON.
+
+Do NOT output markdown.
+
+Do NOT output notes.
+
+Do NOT output explanations outside JSON.
+
+Do NOT output any additional text.
+"""
 
 
 def render_aptitude_readiness_prompt(
@@ -58,8 +367,10 @@ def render_aptitude_readiness_prompt(
     target_role: str,
     target_company_type: str,
 ) -> str:
-    return APTITUDE_READINESS_PROMPT.replace("__USER_TYPE__", user_type).replace(
-        "__EXPERIENCE_YEARS__", str(experience_years)
-    ).replace("__PRIMARY_SKILL__", primary_skill).replace("__TARGET_ROLE__", target_role).replace(
-        "__TARGET_COMPANY_TYPE__", target_company_type
+    return (
+        APTITUDE_READINESS_PROMPT.replace("**USER_TYPE**", user_type)
+        .replace("**EXPERIENCE_YEARS**", str(experience_years))
+        .replace("**PRIMARY_SKILL**", primary_skill)
+        .replace("**TARGET_ROLE**", target_role or "Software Engineer")
+        .replace("**TARGET_COMPANY_TYPE**", target_company_type)
     )

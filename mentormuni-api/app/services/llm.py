@@ -19,14 +19,11 @@ logger = logging.getLogger("llm_service")
 
 MAX_TOKENS_LEGACY_PLAN = 1500
 MAX_TOKENS_MIXED_PLAN = 3200
-# PRODUCTION: Optimized for speed + quality
-# Model: gpt-3.5-turbo (200+ tok/s)
-# Strategy: Higher per-batch tokens = better question quality + less retries
-# Batch: 5 questions @ 1200 tokens each = 6000 total for 3 parallel calls
-# Time: ~6s per batch in parallel = 12-15s total (vs 50s monolithic)
-MAX_TOKENS_INTERVIEW_READINESS_PLAN = 2800
-MAX_TOKENS_SKILL_READINESS_PLAN = 2800
-MAX_TOKENS_APTITUDE_READINESS_PLAN = 1200    # INCREASED: per batch (was 800)
+# Skill / interview / aptitude readiness: GPT-4.1 for question quality & answer accuracy
+READINESS_PLAN_MODEL = "gpt-4.1"
+MAX_TOKENS_INTERVIEW_READINESS_PLAN = 4096
+MAX_TOKENS_SKILL_READINESS_PLAN = 4096
+MAX_TOKENS_APTITUDE_READINESS_PLAN = 4096
 MAX_TOKENS_AI_READINESS_PLAN = 2600
 MAX_TOKENS_VALIDATE = 20
 PLAN_QUESTION_COUNT = 15
@@ -191,180 +188,216 @@ No extra text.
             self.guard_layer.retry_with_fallback(call_openai)
         )
 
-    async def generate_skill_readiness_plan(self, request) -> list[dict]:
-        """Skill readiness: parallel batch generation with flexible validation.
-        
-        STRATEGY: Generate 18 questions (6 per batch × 3 batches) to ensure 15+
-        - More flexible validation to accept questions
-        - Fallback mechanism to pad if needed
-        """
-        batch_size = 6
-        num_batches = 3
-        
-        # Experience-based difficulty calibration
-        exp_years = int(getattr(request, "experience_years", 0) or 0)
-        if exp_years <= 1:
-            exp_band = "junior (0-1y): focus on fundamentals + common bugs + best practices"
-            difficulty_target = "60% intermediate, 30% gotchas, 10% senior-leaning"
-        elif exp_years <= 4:
-            exp_band = "mid-level (2-4y): focus on production patterns + performance + edge cases"
-            difficulty_target = "30% intermediate, 50% hard real-world, 20% architecture"
-        else:
-            exp_band = "senior (5+y): focus on architecture + tradeoffs + scaling + production failures"
-            difficulty_target = "20% advanced fundamentals, 50% architecture & tradeoffs, 30% real production scenarios"
-        
-        async def generate_batch(batch_num: int) -> list[dict]:
-            """Generate 6 skill-readiness questions tailored to the actual skill."""
-            # Type mix varies per batch to ensure diversity across 18 questions
-            type_mix = [
-                "2 multiple_choice + 2 code_mcq + 1 scenario + 1 yes_no",
-                "2 scenario + 2 multiple_choice + 1 code_mcq + 1 yes_no",
-                "2 code_mcq + 1 scenario + 2 multiple_choice + 1 yes_no",
-            ][batch_num % 3]
-            
-            batch_prompt = f"""You are a SENIOR INTERVIEWER for {request.primary_skill} at top product companies (FAANG, fintechs, unicorns).
+    @staticmethod
+    def _normalize_skill_topic_key(topic: str) -> str:
+        t = re.sub(r"[^a-z0-9]+", " ", (topic or "").lower()).strip()
+        return t
 
-Generate EXACTLY {batch_size} questions that test REAL skill-depth in {request.primary_skill}.
-
-CANDIDATE CONTEXT:
-- Profile: {request.user_type}, {request.experience_years} years experience
-- Target role: {request.target_role}
-- Difficulty band: {exp_band}
-- This batch mix: {type_mix}
-
-WHAT TO ASK (skill-specific real questions):
-- Concept comparisons specific to {request.primary_skill} (e.g., for React: controlled vs uncontrolled, useMemo vs useCallback, useEffect cleanup behavior; for Python: GIL, deepcopy vs copy, generators vs iterators; for Java: HashMap vs ConcurrentHashMap, equals vs ==, checked vs unchecked exceptions)
-- Code output / debugging questions ("What does this print?", "Why is this slow?", "Spot the bug")
-- Real production scenarios ("API returns 500 intermittently", "Memory leak after 2 hours", "Race condition under load")
-- Design tradeoffs ("Why pick A over B?", "When does X break?")
-- Common gotchas, foot-guns, anti-patterns in {request.primary_skill}
-- Performance, concurrency, error handling, security
-- Difficulty target: {difficulty_target}
-
-BANNED (DO NOT generate any of these — they're useless):
-- "What is {request.primary_skill}?" or "What does X stand for?" definitions
-- Yes/No textbook recall like "Have you used Git?", "Do you know OOP?", "Are you familiar with unit testing?"
-- "What is the primary purpose of a design pattern?"
-- Generic SDLC/process questions that don't test {request.primary_skill}
-- Questions answerable by reading a single Wikipedia paragraph
-- Trivial code like `add(2,3)` or `console.log(5+3)`
-
-GOOD EXAMPLE PATTERNS (adapt to {request.primary_skill}):
-- code_mcq: "What does this code output?\\n[5-10 lines of realistic {request.primary_skill} code with a subtle bug or non-obvious behavior]"
-- scenario: "Your service handling 5K RPS suddenly starts timing out 30% of requests. Logs show DB connection pool exhausted. Best first action?"
-- multiple_choice: "Which of these will cause a memory leak in {request.primary_skill}?" with 4 plausible mechanisms
-- yes_no: "Will calling Promise.all with mixed sync/async functions throw synchronously if one rejects?" (real subtle behavior)
-
-JSON FORMAT (output ONLY this array, nothing else):
-[
-  {{"question_type":"multiple_choice","question":"...","options":["opt1","opt2","opt3","opt4"],"correct_answer":"A","study_topic":"specific topic","explanation":"why this is correct AND why others are wrong"}},
-  {{"question_type":"scenario","question":"...","options":["approach1","approach2","approach3","approach4"],"correct_answer":"B","study_topic":"...","explanation":"..."}},
-  {{"question_type":"code_mcq","question":"code snippet with realistic logic","options":["output1","output2","output3","output4"],"correct_answer":"C","study_topic":"...","explanation":"..."}},
-  {{"question_type":"yes_no","question":"specific technical claim about {request.primary_skill}","correct_answer":"Yes","study_topic":"...","explanation":"..."}}
-]
-
-VALIDATION CHECKLIST:
-✓ EVERY question is specific to {request.primary_skill} (not generic CS)
-✓ NO textbook-definition questions
-✓ NO trivial yes/no like "have you used X?"
-✓ Each question would actually be asked at a real interview
-✓ Options are plausible — wrong answers represent common mistakes
-✓ Code snippets are realistic (5-10 lines), not toy examples
-✓ Output is ONLY a JSON array, no markdown, no preamble"""
-            
-            async def call_openai():
-                response = await self._client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=[
-                        {"role": "system", "content": "You output ONLY valid JSON array. No markdown. No preamble."},
-                        {"role": "user", "content": batch_prompt},
-                    ],
-                    max_tokens=2000,  # Increased for richer code_mcq / scenario content
-                    temperature=0.3,  # Slight variation to avoid generic boilerplate
-                )
-                content = response.choices[0].message.content or ""
-                usage = getattr(response, "usage", None)
-                if usage:
-                    tokens = getattr(usage, "total_tokens", 0) or 0
-                    logger.info("LLM tokens used: %d (skill batch %d)", tokens, batch_num)
-                return content
-            
-            try:
-                content = await self.guard_layer_skill.run_with_timeout(call_openai())
-                parsed = self._extract_aptitude_questions_from_llm(content)
-                return parsed if parsed else []
-            except Exception as e:
-                logger.error("Skill batch %d failed: %s", batch_num, e)
-                return []
-        
-        # PARALLEL: Fire all 3 batches simultaneously
-        logger.info("Generating 15+ skill questions in 3 parallel batches...")
-        batch_results = await asyncio.gather(
-            generate_batch(0),
-            generate_batch(1),
-            generate_batch(2),
+    @staticmethod
+    def _map_skill_prompt_question_type(raw_type: str, question: str) -> Optional[str]:
+        """Map prompt question_type to API schema: multiple_choice | scenario | code_mcq."""
+        qt = (raw_type or "").strip().lower()
+        q = question or ""
+        has_code = bool(
+            re.search(
+                r"(```|#include|def\s+\w+|function\s|class\s|public\s+static|"
+                r"printf\s*\(|console\.|=>|\{[\s\S]{10,})",
+                q,
+                re.I,
+            )
         )
-        
-        # Combine and validate
-        all_questions = []
-        for batch_result in batch_results:
-            for q in batch_result:
-                if not isinstance(q, dict) or "question" not in q:
-                    continue
-                
-                question_text = str(q["question"]).strip()
-                if not question_text:
-                    continue
-                
-                # Schema requires non-empty study_topic and explanation
-                study_topic = str(q.get("study_topic", "")).strip()[:60]
-                if not study_topic:
-                    study_topic = question_text[:60] + ("..." if len(question_text) > 60 else "")
-                explanation = self._explanation_or_default(q.get("explanation"))
-                
-                # FLEXIBLE validation: accept more questions
-                qt = str(q.get("question_type", "")).strip().lower()
-                if qt == "yes_no":
-                    yn = self._parse_yes_no_answer(q.get("correct_answer"))
-                    if yn is None:
-                        continue
-                    all_questions.append({
-                        "question_type": "yes_no",
-                        "question": question_text,
-                        "correct_answer": yn,
-                        "study_topic": study_topic,
-                        "explanation": explanation,
-                    })
-                elif qt in ("multiple_choice", "scenario", "code_mcq"):
-                    opts = self._normalize_mc_options(q.get("options"))
-                    if opts is None:
-                        continue
-                    # For skill questions, allow generic concept-based detection (works for any skill)
-                    fixed_opts = self._fix_similar_options(question_text, opts, allow_concept_based=True)
-                    if fixed_opts is None:
-                        fixed_opts = opts  # FLEXIBLE: use raw if fix fails
-                    letter = self._normalize_mc_letter(q.get("correct_answer"), fixed_opts)
-                    if letter is None:
-                        continue
-                    all_questions.append({
-                        "question_type": qt,
-                        "question": question_text,
-                        "options": fixed_opts,
-                        "correct_answer": letter,
-                        "study_topic": study_topic,
-                        "explanation": explanation,
-                    })
-        
-        logger.info("Generated %d skill questions from LLM", len(all_questions))
-        
+        if qt in ("code_mcq", "code"):
+            return "code_mcq"
+        if qt == "scenario":
+            return "code_mcq" if has_code else "scenario"
+        if qt in ("debugging", "debug"):
+            return "code_mcq" if has_code else "scenario"
+        if qt in ("conceptual", "optimization", "multiple_choice", "mcq", "concept"):
+            return "code_mcq" if has_code else "multiple_choice"
+        if qt in ("yes_no", "true_false", "boolean"):
+            return None
+        return "code_mcq" if has_code else "multiple_choice"
+
+    @staticmethod
+    def _reconcile_skill_mcq_answer(
+        letter: Optional[str], explanation: str
+    ) -> Optional[str]:
+        if not explanation:
+            return letter
+        for pat in (
+            r"correct answer[:\s]+([ABCD])\b",
+            r"answer is[:\s]+([ABCD])\b",
+            r"option\s+([ABCD])\s+is correct",
+        ):
+            m = re.search(pat, explanation, re.I)
+            if m:
+                return m.group(1).upper()
+        return letter
+
+    def _parse_skill_readiness_mcq_item(self, item: dict) -> Optional[dict]:
+        if not isinstance(item, dict) or "question" not in item:
+            return None
+        question_text = str(item["question"]).strip()
+        if not question_text:
+            return None
+
+        schema_type = self._map_skill_prompt_question_type(
+            str(item.get("question_type", "")), question_text
+        )
+        if schema_type is None:
+            return None
+
+        study_topic = str(item.get("study_topic", "")).strip()[:60]
+        if not study_topic:
+            study_topic = question_text[:60] + ("..." if len(question_text) > 60 else "")
+        explanation = self._explanation_or_default(item.get("explanation"))
+
+        opts = self._normalize_mc_options(item.get("options"))
+        if opts is None:
+            return None
+        fixed_opts = self._fix_similar_options(
+            question_text, opts, allow_concept_based=True
+        )
+        if fixed_opts is None:
+            fixed_opts = opts
+
+        letter = self._normalize_mc_letter(item.get("correct_answer"), fixed_opts)
+        if letter is None:
+            return None
+        letter = self._reconcile_skill_mcq_answer(letter, explanation)
+        if letter is None:
+            return None
+
+        if "Correct answer:" not in explanation and "correct answer:" not in explanation.lower():
+            explanation = f"{explanation.rstrip()} Correct answer: {letter}"
+
+        return {
+            "question_type": schema_type,
+            "question": question_text,
+            "options": fixed_opts,
+            "correct_answer": letter,
+            "study_topic": study_topic,
+            "explanation": explanation,
+        }
+
+    def _dedupe_skill_mcq_questions(self, questions: list[dict]) -> list[dict]:
+        kept: list[dict] = []
+        seen_topics: list[str] = []
+        seen_fps: list[str] = []
+        for q in questions:
+            topic_key = self._normalize_skill_topic_key(q.get("study_topic", ""))
+            fp = re.sub(r"\s+", " ", str(q.get("question", "")).lower())[:200]
+            duplicate = False
+            for prev_topic in seen_topics:
+                if topic_key and prev_topic and (
+                    topic_key == prev_topic
+                    or SequenceMatcher(None, topic_key, prev_topic).ratio() >= 0.88
+                ):
+                    duplicate = True
+                    break
+            if not duplicate:
+                for prev_fp in seen_fps:
+                    if SequenceMatcher(None, fp, prev_fp).ratio() >= 0.72:
+                        duplicate = True
+                        break
+            if duplicate:
+                logger.warning("Dropping duplicate skill MCQ: %s", topic_key or fp[:60])
+                continue
+            kept.append(q)
+            seen_topics.append(topic_key)
+            seen_fps.append(fp)
+        return kept
+
+    async def generate_skill_readiness_plan(self, request) -> list[dict]:
+        """Skill readiness: single LLM call using Principal SME prompt (15 MCQ only)."""
+        prompt = render_skill_readiness_prompt(
+            user_type=getattr(request, "user_type", "") or "",
+            experience_years=int(getattr(request, "experience_years", 0) or 0),
+            primary_skill=getattr(request, "primary_skill", "") or "",
+            target_role=getattr(request, "target_role", "") or "",
+            target_company_type=getattr(request, "target_company_type", "both") or "both",
+        )
+
+        async def call_openai(user_prompt: str):
+            response = await self._client.chat.completions.create(
+                model=READINESS_PLAN_MODEL,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You output ONLY a valid JSON array of exactly 15 MCQ objects. "
+                            "No markdown. No yes/no questions. Verify all code answers by tracing."
+                        ),
+                    },
+                    {"role": "user", "content": user_prompt},
+                ],
+                max_tokens=MAX_TOKENS_SKILL_READINESS_PLAN,
+                temperature=0.2,
+            )
+            content = response.choices[0].message.content or ""
+            usage = getattr(response, "usage", None)
+            if usage:
+                logger.info(
+                    "LLM tokens used: %d (skill readiness plan)",
+                    getattr(usage, "total_tokens", 0) or 0,
+                )
+            return content
+
+        logger.info(
+            "Generating skill readiness plan (%s, %s)...",
+            getattr(request, "user_type", ""),
+            getattr(request, "primary_skill", ""),
+        )
+
+        all_questions: list[dict] = []
+        for attempt in range(2):
+            try:
+                content = await self.guard_layer_skill.run_with_timeout(call_openai(prompt))
+                raw_items = self._extract_aptitude_questions_from_llm(content) or []
+                parsed: list[dict] = []
+                for item in raw_items:
+                    row = self._parse_skill_readiness_mcq_item(item)
+                    if row:
+                        parsed.append(row)
+                all_questions = self._dedupe_skill_mcq_questions(parsed)
+                if len(all_questions) >= PLAN_QUESTION_COUNT:
+                    break
+                if attempt == 0:
+                    used = [q.get("study_topic", "") for q in all_questions]
+                    prompt = (
+                        prompt
+                        + "\n\nREGENERATE: Previous output had only "
+                        + str(len(all_questions))
+                        + " valid unique MCQs. Generate a fresh set of exactly 15. "
+                        "Do NOT repeat these study_topic values:\n"
+                        + "\n".join(f"- {t}" for t in used[:20])
+                    )
+            except Exception as e:
+                logger.error("Skill readiness generation attempt %d failed: %s", attempt + 1, e)
+
+        logger.info("Parsed %d skill MCQ questions from LLM", len(all_questions))
+
         if len(all_questions) == 0:
-            logger.warning("All skill batches failed, using skill fallback...")
+            logger.warning("Skill readiness LLM failed, using MCQ fallback...")
             return self._generate_minimal_fallback_questions(question_type="skill")
-        elif len(all_questions) < PLAN_QUESTION_COUNT:
-            logger.warning("Got %d skill questions, need %d. Padding with fallback.", len(all_questions), PLAN_QUESTION_COUNT)
+
+        if len(all_questions) < PLAN_QUESTION_COUNT:
+            logger.warning(
+                "Got %d skill MCQs, padding with fallback.",
+                len(all_questions),
+            )
             fallback = self._generate_minimal_fallback_questions(question_type="skill")
-            all_questions.extend(fallback[len(all_questions):])
-        
+            for fb in fallback:
+                if len(all_questions) >= PLAN_QUESTION_COUNT:
+                    break
+                if fb.get("question_type") not in ("multiple_choice", "scenario", "code_mcq"):
+                    continue
+                row = self._parse_skill_readiness_mcq_item(fb)
+                if row:
+                    merged = self._dedupe_skill_mcq_questions(all_questions + [row])
+                    if len(merged) > len(all_questions):
+                        all_questions = merged
+
         return all_questions[:PLAN_QUESTION_COUNT]
 
     @staticmethod
@@ -444,418 +477,314 @@ VALIDATION CHECKLIST:
             "explanation": "Placeholder — model output was not valid JSON; retry the request.",
         }]
 
-    async def generate_interview_readiness_plan(self, request: InterviewReadinessPlanRequest) -> list[dict]:
-        """Interview readiness: parallel batch generation (60% faster) with increased throughput.
-        
-        OPTIMIZATION: Generate more questions in less time
-        - Batch size: 5 → 6 questions per batch (3 batches = 18 total, take top 15)
-        - Token limit: 900 → 1200 per batch
-        - Parallel execution: All 3 batches run simultaneously
-        """
-        batch_size = 6  # INCREASED: 5 → 6
-        
-        # Company-tier and experience calibration
-        exp_years = int(getattr(request, "experience_years", 0) or 0)
-        company_type = str(getattr(request, "target_company_type", "") or "").lower()
-        
-        if "product" in company_type or "faang" in company_type or "startup" in company_type:
-            company_tier = "PRODUCT/FAANG tier (Google, Amazon, Meta, Netflix, Microsoft, top startups)"
-            company_focus = "system design, behavioral (STAR), DSA at depth, low-level details, scaling tradeoffs, leadership principles, ambiguity handling"
-            difficulty_target = "30% medium, 50% hard, 20% expert-level"
-        elif "service" in company_type or "tcs" in company_type or "infosys" in company_type or "wipro" in company_type:
-            company_tier = "SERVICE company tier (TCS, Infosys, Wipro, Cognizant, Accenture, Capgemini)"
-            company_focus = "fundamentals, basic coding output, OOP concepts, SQL queries, framework basics, project explanation"
-            difficulty_target = "40% easy-placement, 50% moderate, 10% tricky"
-        else:
-            company_tier = "MID-TIER product / fintech / unicorn (Razorpay, CRED, Swiggy, Zerodha, etc.)"
-            company_focus = "applied {skill} depth, real production debugging, design tradeoffs, code review judgement, scaling basics"
-            difficulty_target = "30% easy-placement, 50% moderate, 20% hard"
-        
-        if exp_years == 0:  # 1st-3rd year student, no professional experience
-            exp_band = "college student (0-1y, no prof exp) — placement interview fundamentals"
-            yes_no_guidance = "PLACEMENT yes/no questions testing NON-OBVIOUS fundamentals (e.g., 'Will this HashMap code throw ConcurrentModificationException if modified during iteration?', 'Can a constructor throw an exception in Java?', 'Will String comparison using == ever work correctly?')"
-            banned_for_level = "- Trivial quiz questions (what is inheritance), basic definitions"
-            good_for_level = "- Real placement interview: HashMap iteration bugs, exception propagation, string pool behavior, method overriding vs overloading traps, generics type erasure"
-            difficulty_target = "70% placement-interview-medium, 25% placement-interview-hard, 5% placement-interview-tricky"
-        elif exp_years <= 1:  # 4th year student, fresh graduate
-            exp_band = "4th year student / graduate (1-2y) — real placement interview level"
-            yes_no_guidance = "PLACEMENT yes/no questions about common placement interview gotchas (e.g., 'Will modifying a List while iterating cause ConcurrentModificationException even in single-threaded code?', 'Can you catch multiple exceptions in one catch block using | operator?', 'Will this recursion cause StackOverflowError or OutOfMemoryError first?')"
-            banned_for_level = "- Trivial quiz questions, basic definitions"
-            good_for_level = "- Real placement scenarios: ConcurrentModificationException, exception hierarchy, recursion vs iteration, HashMap collisions, equals/hashCode contract, generics wildcards"
-            difficulty_target = "60% placement-interview-medium, 35% placement-interview-hard, 5% placement-interview-expert"
-        elif exp_years <= 2:  # 1-2 years professional
-            exp_band = "junior professional (1-2y) — placement + internship interview level"
-            yes_no_guidance = "INTERVIEW yes/no about production-relevant gotchas (e.g., 'Will ConcurrentHashMap prevent all race conditions in multi-threaded code?', 'Can synchronized blocks deadlock?', 'Will WeakHashMap entries disappear unexpectedly in production?')"
-            banned_for_level = "- Beginner definitions, trivial yes/no"
-            good_for_level = "- Concurrency basics: synchronized vs volatile, lock ordering, deadlock scenarios, collections thread-safety, memory visibility, weak references, connection pool issues"
-            difficulty_target = "50% interview-hard, 40% interview-tricky, 10% interview-expert"
-        elif exp_years <= 4:  # 2-4 years professional
-            exp_band = "mid-level (2-4y) — MNC real interview: production bugs, debugging"
-            yes_no_guidance = "REAL INTERVIEW yes/no about production failure patterns (e.g., 'Can a memory leak occur even with proper null assignment?', 'Will String.intern() cause memory leaks in Tomcat?', 'Can GC pauses occur even with low heap utilization?')"
-            banned_for_level = "- Placement basics, beginner questions"
-            good_for_level = "- Memory leaks (static collections, listeners, thread locals), GC tuning, connection pool starvation, deadlock scenarios, race conditions in production, performance debugging"
-            difficulty_target = "30% interview-hard, 50% interview-tricky, 20% interview-expert"
-        elif exp_years <= 7:  # 5-7 years professional
-            exp_band = "senior (5-7y) — MNC/product real interview: system design, architectural decisions"
-            yes_no_guidance = "EXPERT yes/no about subtle production issues (e.g., 'Can a final field visibility guarantee be violated if not initialized in constructor?', 'Will removing synchronized from a method break existing code relying on it?', 'Can OutOfMemoryError in one thread crash the entire JVM?')"
-            banned_for_level = "- Basics, junior-level questions"
-            good_for_level = "- Memory model edge cases, happens-before relationships, CAS operations, architectural tradeoffs at scale, distributed consistency, performance optimization at system level"
-            difficulty_target = "20% interview-hard, 40% interview-tricky, 40% interview-expert"
-        else:  # 8+ years professional
-            exp_band = "principal/staff (8+y) — MNC/FAANG real interview: deep systems, architecture at scale"
-            yes_no_guidance = "DEEP EXPERT yes/no requiring 8+ years production experience (e.g., 'Can safepoint bias locking interaction with G1GC cause unpredictable pause times?', 'Will a StampedLock guarantee ordering across different lock modes?', 'Can deserialization bypass final field guarantees in all JVM implementations?')"
-            banned_for_level = "- Anything below expert level"
-            good_for_level = "- JVM internals (safepoint bias, escape analysis, TLAB), low-latency optimization, distributed system design, consistency guarantees, kernel-level interactions, production failure analysis"
-            difficulty_target = "5% interview-hard, 25% interview-tricky, 70% interview-expert"
-        
-        async def generate_batch(batch_num: int) -> list[dict]:
-            """Generate 6 interview readiness questions calibrated to company and experience."""
-            # Type distribution rotates per batch for diversity
-            type_mix = [
-                "2 multiple_choice + 2 scenario + 1 code_mcq + 1 yes_no",
-                "2 scenario + 2 code_mcq + 1 multiple_choice + 1 yes_no",
-                "2 multiple_choice + 1 scenario + 2 code_mcq + 1 yes_no",
-            ][batch_num % 3]
-            
-            batch_prompt = f"""You are a HIRING MANAGER conducting a REAL technical interview round.
-
-Generate EXACTLY {batch_size} questions that would ACTUALLY be asked in interviews at:
-{company_tier}
-
-CANDIDATE CONTEXT:
-- Profile: {request.user_type}, {request.experience_years}y experience
-- Target role: {request.target_role}
-- Primary skill: {request.primary_skill}
-- Experience band: {exp_band}
-- Focus areas for this company tier: {company_focus}
-- Difficulty target: {difficulty_target}
-- This batch type mix: {type_mix}
-
-WHAT TO ASK (real interview-grade, CALIBRATED TO {exp_band}):
-- Specific {request.primary_skill} questions an interviewer would actually ask for a {exp_band} professional
-- Code-output / spot-the-bug questions with realistic 5-10 line snippets
-- Production scenarios ("Service down at 2 AM", "API latency spiked to 3s", "DB deadlocks under load")
-- Design tradeoff questions ("Why use queue vs direct call?", "When does caching hurt?")
-- Behavioral signals embedded in scenarios ("Senior engineer disagrees with your approach — what do you do?")
-- For {request.target_role}: role-specific challenges (e.g., frontend → render perf, backend → DB indexing, devops → CI/CD failures)
-
-YES/NO QUESTIONS (CRITICAL - must be appropriate for {exp_band}):
-{yes_no_guidance}
-- Each yes/no MUST test a specific, non-obvious technical claim
-- Each yes/no MUST require EXPERIENCE to answer correctly (not just "Can you read the docs?")
-- Do NOT repeat the same yes/no question multiple times
-
-BANNED (these are unprofessional and will be REJECTED — real interviews do NOT ask these):
-- Quiz-style recall questions: "What does API stand for?", "What is OOP?", "What is a design pattern?"
-- Trivial definitions: "What is inheritance?", "What is polymorphism?", "What is encapsulation?"
-- "Have you used Git/Docker/AWS?" — yes/no trivia
-- "What is the purpose of code review?" — process opinion questions
-- "Should you write tests?" — leading questions with one obvious answer
-- "What is 2+2?" / arithmetic / aptitude-style — this is NOT an aptitude test
-- Questions answerable from a one-line Google search or beginner tutorial
-- Duplicate or near-duplicate questions in the same batch
-- Questions from the WRONG programming language
-- Generic SDLC questions that don't test {request.primary_skill}
-
-THIS IS A REAL TECHNICAL INTERVIEW — not a quiz. Even college students should face REAL interview scenarios from TCS, Infosys, Nagarro, product companies. The difficulty is calibrated, but NOT simplified away entirely.
-
-GOOD EXAMPLE PATTERNS (calibrated to {exp_band}):
-{good_for_level}
-- code_mcq: "What is the output?\\n[realistic {request.primary_skill} code with concurrency issue, off-by-one, or memory model subtlety]"
-- scenario: "User reports the feature you shipped is causing intermittent crashes for 5% of users. Logs show [specific technical clues]. Your first 30-min action plan?" (4 plausible approaches from beginner to advanced)
-- multiple_choice: "Which is the BEST reason to use [specific pattern X] over [pattern Y] for [specific use case Z]? Why are the others suboptimal?"
-- yes_no: "[Specific non-obvious behavior claim unique to {request.primary_skill} at {exp_band} level]"
-
-JSON FORMAT (output ONLY a valid JSON array — no markdown, no preamble):
-[
-  {{"question_type":"multiple_choice","question":"...","options":["opt1","opt2","opt3","opt4"],"correct_answer":"A","study_topic":"specific topic","explanation":"correct reason + why others wrong"}},
-  {{"question_type":"scenario","question":"realistic production situation","options":["approach1","approach2","approach3","approach4"],"correct_answer":"B","study_topic":"...","explanation":"..."}},
-  {{"question_type":"code_mcq","question":"What does this print?\\n[actual {request.primary_skill} code]","options":["output1","output2","output3","output4"],"correct_answer":"C","study_topic":"...","explanation":"..."}},
-  {{"question_type":"yes_no","question":"[specific non-obvious {request.primary_skill} behavior for {exp_band} level]","correct_answer":"Yes","study_topic":"...","explanation":"..."}}
-]
-
-CRITICAL RULES FOR OPTIONS:
-✓ Exactly 4 options for MCQ/scenario/code_mcq
-✓ Options are plain text (do NOT prefix with "A)", "B)", etc.)
-✓ No exact duplicates in ANY question or option
-✓ Similar wording OK for concept comparisons ("controlled vs uncontrolled", "sync vs async")
-✓ 2 plausible-sounding wrong answers, 1 distractor, 1 correct
-✓ YES/NO QUESTIONS MUST HAVE UNIQUE TOPICS — never repeat the same yes/no within batch or across batches
-
-VALIDATION CHECKLIST:
-✓ EXACTLY {batch_size} questions, NONE DUPLICATE
-✓ Each calibrated to {company_tier} AND {exp_band}
-✓ Specific to {request.primary_skill} (NOT generic process or other languages)
-✓ Realistic difficulty for {exp_band} — not too easy, not impossible
-✓ YES/NO QUESTIONS are unique and non-trivial
-✓ CODE is in {request.primary_skill}, NOT other languages
-✓ Output is ONLY JSON array — no extra text"""
-            
-            async def call_openai():
-                response = await self._client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=[
-                        {"role": "system", "content": "You output ONLY valid JSON array. No markdown. No preamble."},
-                        {"role": "user", "content": batch_prompt},
-                    ],
-                    max_tokens=2000,  # Increased for richer code_mcq / scenario content
-                    temperature=0.3,  # Slight variation to avoid generic boilerplate
-                )
-                content = response.choices[0].message.content or ""
-                usage = getattr(response, "usage", None)
-                if usage:
-                    tokens = getattr(usage, "total_tokens", 0) or 0
-                    logger.info("LLM tokens used: %d (interview batch %d)", tokens, batch_num)
-                return content
-            
-            try:
-                content = await self.guard_layer_interview.run_with_timeout(call_openai())
-                parsed = self._extract_aptitude_questions_from_llm(content)
-                return parsed if parsed else []
-            except Exception as e:
-                logger.error("Interview batch %d failed: %s", batch_num, e)
-                return []
-        
-        # PARALLEL: Fire all 3 batches simultaneously
-        logger.info("Generating 15+ interview questions in 3 parallel batches with increased throughput...")
-        batch_results = await asyncio.gather(
-            generate_batch(0),
-            generate_batch(1),
-            generate_batch(2),
+    @staticmethod
+    def _map_interview_prompt_question_type(raw_type: str, question: str) -> str:
+        """Map prompt question_type to API schema: multiple_choice | scenario | code_mcq."""
+        qt = (raw_type or "").strip().lower()
+        q = question or ""
+        has_code = bool(
+            re.search(
+                r"(```|#include|def\s+\w+|function\s|public\s+static|"
+                r"printf\s*\(|console\.|=>|\{[\s\S]{10,})",
+                q,
+                re.I,
+            )
         )
-        
-        # Combine and validate
-        all_questions = []
-        for batch_result in batch_results:
-            for q in batch_result:
-                if not isinstance(q, dict) or "question" not in q:
-                    continue
-                
-                question_text = str(q["question"]).strip()
-                if not question_text:
-                    continue
-                
-                # Schema requires non-empty study_topic and explanation
-                study_topic = str(q.get("study_topic", "")).strip()[:60]
-                if not study_topic:
-                    study_topic = question_text[:60] + ("..." if len(question_text) > 60 else "")
-                explanation = self._explanation_or_default(q.get("explanation"))
-                
-                qt = str(q.get("question_type", "")).strip().lower()
-                if qt == "yes_no":
-                    yn = self._parse_yes_no_answer(q.get("correct_answer"))
-                    if yn is None:
-                        continue
-                    all_questions.append({
-                        "question_type": "yes_no",
-                        "question": question_text,
-                        "correct_answer": yn,
-                        "study_topic": study_topic,
-                        "explanation": explanation,
-                    })
-                elif qt in ("multiple_choice", "scenario", "code_mcq"):
-                    opts = self._normalize_mc_options(q.get("options"))
-                    if opts is None:
-                        continue
-                    # For interview questions, allow generic concept-based detection (works for any skill)
-                    fixed_opts = self._fix_similar_options(question_text, opts, allow_concept_based=True)
-                    if fixed_opts is None:
-                        fixed_opts = opts  # FLEXIBLE: use raw if fix fails
-                    letter = self._normalize_mc_letter(q.get("correct_answer"), fixed_opts)
-                    if letter is None:
-                        continue
-                    all_questions.append({
-                        "question_type": qt,
-                        "question": question_text,
-                        "options": fixed_opts,
-                        "correct_answer": letter,
-                        "study_topic": study_topic,
-                        "explanation": explanation,
-                    })
-        
-        logger.info("Generated %d interview questions from LLM", len(all_questions))
-        
+        if qt in ("code_mcq", "code"):
+            return "code_mcq"
+        if qt == "scenario":
+            return "code_mcq" if has_code else "scenario"
+        if qt == "project":
+            return "scenario"
+        if qt in ("core_skill", "ai_readiness", "multiple_choice", "mcq"):
+            return "code_mcq" if has_code else "multiple_choice"
+        if qt in ("yes_no", "true_false"):
+            return "multiple_choice"
+        return "code_mcq" if has_code else "multiple_choice"
+
+    @staticmethod
+    def _reconcile_interview_mcq_answer(
+        letter: Optional[str], explanation: str
+    ) -> Optional[str]:
+        if not explanation:
+            return letter
+        for pat in (
+            r"correct answer[:\s]+([ABCD])\b",
+            r"answer is[:\s]+([ABCD])\b",
+            r"option\s+([ABCD])\s+is correct",
+        ):
+            m = re.search(pat, explanation, re.I)
+            if m:
+                return m.group(1).upper()
+        return letter
+
+    def _parse_interview_readiness_item(self, item: dict) -> Optional[dict]:
+        if not isinstance(item, dict) or "question" not in item:
+            return None
+        question_text = str(item["question"]).strip()
+        if not question_text:
+            return None
+
+        schema_type = self._map_interview_prompt_question_type(
+            str(item.get("question_type", "")), question_text
+        )
+        study_topic = str(item.get("study_topic", "")).strip()[:60]
+        if not study_topic:
+            study_topic = question_text[:60] + ("..." if len(question_text) > 60 else "")
+        explanation = self._explanation_or_default(item.get("explanation"))
+
+        opts = self._normalize_mc_options(item.get("options"))
+        if opts is None:
+            return None
+        fixed_opts = self._fix_similar_options(
+            question_text, opts, allow_concept_based=True
+        )
+        if fixed_opts is None:
+            fixed_opts = opts
+
+        letter = self._normalize_mc_letter(item.get("correct_answer"), fixed_opts)
+        if letter is None:
+            return None
+        letter = self._reconcile_interview_mcq_answer(letter, explanation)
+        if letter is None:
+            return None
+
+        if "Correct answer:" not in explanation and "correct answer:" not in explanation.lower():
+            explanation = f"{explanation.rstrip()} Correct answer: {letter}"
+
+        return {
+            "question_type": schema_type,
+            "question": question_text,
+            "options": fixed_opts,
+            "correct_answer": letter,
+            "study_topic": study_topic,
+            "explanation": explanation,
+        }
+
+    def _dedupe_interview_questions(self, questions: list[dict]) -> list[dict]:
+        kept: list[dict] = []
+        seen_topics: list[str] = []
+        seen_fps: list[str] = []
+        for q in questions:
+            topic_key = re.sub(r"[^a-z0-9]+", " ", str(q.get("study_topic", "")).lower()).strip()
+            fp = re.sub(r"\s+", " ", str(q.get("question", "")).lower())[:200]
+            duplicate = False
+            for prev_topic in seen_topics:
+                if topic_key and prev_topic and (
+                    topic_key == prev_topic
+                    or SequenceMatcher(None, topic_key, prev_topic).ratio() >= 0.88
+                ):
+                    duplicate = True
+                    break
+            if not duplicate:
+                for prev_fp in seen_fps:
+                    if SequenceMatcher(None, fp, prev_fp).ratio() >= 0.72:
+                        duplicate = True
+                        break
+            if duplicate:
+                logger.warning("Dropping duplicate interview question: %s", topic_key or fp[:60])
+                continue
+            kept.append(q)
+            seen_topics.append(topic_key)
+            seen_fps.append(fp)
+        return kept
+
+    async def generate_interview_readiness_plan(
+        self, request: InterviewReadinessPlanRequest
+    ) -> list[dict]:
+        """Interview readiness: single LLM call using Principal Interviewer SME prompt."""
+        full_user_json = json.dumps(
+            request.model_dump(mode="json", exclude_none=False),
+            indent=2,
+            ensure_ascii=False,
+        )
+        prompt = render_interview_readiness_prompt(
+            full_user_json=full_user_json,
+            plan_question_count=PLAN_QUESTION_COUNT,
+        )
+
+        async def call_openai(user_prompt: str):
+            response = await self._client.chat.completions.create(
+                model=READINESS_PLAN_MODEL,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You output ONLY a valid JSON array of exactly "
+                            f"{PLAN_QUESTION_COUNT} interview MCQs. "
+                            "No yes/no questions. No markdown. All MCQs have 4 options."
+                        ),
+                    },
+                    {"role": "user", "content": user_prompt},
+                ],
+                max_tokens=MAX_TOKENS_INTERVIEW_READINESS_PLAN,
+                temperature=0.2,
+            )
+            content = response.choices[0].message.content or ""
+            usage = getattr(response, "usage", None)
+            if usage:
+                logger.info(
+                    "LLM tokens used: %d (interview readiness plan)",
+                    getattr(usage, "total_tokens", 0) or 0,
+                )
+            return content
+
+        logger.info(
+            "Generating interview readiness plan (%s, %s)...",
+            request.user_type,
+            request.primary_skill[:80] if request.primary_skill else "",
+        )
+
+        all_questions: list[dict] = []
+        for attempt in range(2):
+            try:
+                content = await self.guard_layer_interview.run_with_timeout(
+                    call_openai(prompt)
+                )
+                raw_items = self._extract_aptitude_questions_from_llm(content) or []
+                parsed: list[dict] = []
+                for item in raw_items:
+                    row = self._parse_interview_readiness_item(item)
+                    if row:
+                        parsed.append(row)
+                all_questions = self._dedupe_interview_questions(parsed)
+                if len(all_questions) >= PLAN_QUESTION_COUNT:
+                    break
+                if attempt == 0:
+                    used = [q.get("study_topic", "") for q in all_questions]
+                    prompt = (
+                        prompt
+                        + "\n\nREGENERATE: Previous output had only "
+                        + str(len(all_questions))
+                        + " valid unique MCQs. Generate exactly "
+                        + str(PLAN_QUESTION_COUNT)
+                        + " with distribution: 5 core_skill, 3 project, 3 scenario, "
+                        "2 ai_readiness, 2 code_mcq. Do NOT repeat:\n"
+                        + "\n".join(f"- {t}" for t in used[:20])
+                    )
+            except Exception as e:
+                logger.error("Interview readiness attempt %d failed: %s", attempt + 1, e)
+
+        logger.info("Parsed %d interview questions from LLM", len(all_questions))
+
         if len(all_questions) == 0:
-            logger.warning("All interview batches failed, using skill fallback...")
+            logger.warning("Interview LLM failed, using skill MCQ fallback...")
             return self._generate_minimal_fallback_questions(question_type="skill")
-        elif len(all_questions) < PLAN_QUESTION_COUNT:
-            logger.warning("Got %d interview questions, need %d. Padding with fallback.", len(all_questions), PLAN_QUESTION_COUNT)
+        if len(all_questions) < PLAN_QUESTION_COUNT:
+            logger.warning(
+                "Got %d interview questions, padding with fallback.",
+                len(all_questions),
+            )
             fallback = self._generate_minimal_fallback_questions(question_type="skill")
-            all_questions.extend(fallback[len(all_questions):])
-        
+            for fb in fallback:
+                if len(all_questions) >= PLAN_QUESTION_COUNT:
+                    break
+                if fb.get("question_type") not in ("multiple_choice", "scenario", "code_mcq"):
+                    continue
+                row = self._parse_interview_readiness_item(fb)
+                if row:
+                    merged = self._dedupe_interview_questions(all_questions + [row])
+                    if len(merged) > len(all_questions):
+                        all_questions = merged
+
         return all_questions[:PLAN_QUESTION_COUNT]
 
+    def _dedupe_aptitude_questions(self, questions: list[dict]) -> list[dict]:
+        kept: list[dict] = []
+        seen_topics: list[str] = []
+        for q in questions:
+            topic_key = re.sub(r"[^a-z0-9]+", " ", str(q.get("study_topic", "")).lower()).strip()
+            duplicate = False
+            for prev in seen_topics:
+                if topic_key and prev and (
+                    topic_key == prev
+                    or SequenceMatcher(None, topic_key, prev).ratio() >= 0.88
+                ):
+                    duplicate = True
+                    break
+            if duplicate:
+                logger.warning("Dropping duplicate aptitude question: %s", topic_key)
+                continue
+            kept.append(q)
+            seen_topics.append(topic_key)
+        return kept
+
     async def generate_aptitude_readiness_plan(self, request) -> list[dict]:
-        """Aptitude readiness: 3 parallel batches with flexible validation.
-        
-        STRATEGY: Generate more questions than needed to account for stricter validation
-        - Batch size: 6 questions per batch (3 batches = 18 total)
-        - Token limit: 1200 per batch (better completeness)
-        - Flexible validation: Accept questions even if not perfect
-        - Fallback: Use hardcoded questions if needed
-        """
-        batch_size = 6
-        
-        async def generate_batch(batch_num: int, section: str) -> list[dict]:
-            """Generate 6 questions per batch with flexible parsing."""
-            section_map = {0: "quantitative", 1: "logical", 2: "verbal"}
-            section = section_map[batch_num]
-            
-            # Section-specific guidance for REAL placement-level difficulty
-            section_guides = {
-                "quantitative": """TOPICS (rotate, do NOT pick trivial ones):
-- Percentages with chained operations (e.g., "Price increased by 20%, then decreased by 15%, net change?")
-- Profit/Loss with discounts (e.g., "SP after 20% discount = Rs 480, MP marked up 25% above CP. Find CP.")
-- Time & Work / Pipes & Cisterns (e.g., "A does work in 12 days, B in 18 days. Both work for 4 days, A leaves. Days for B to finish?")
-- Time, Speed & Distance / Trains / Boats & Streams
-- Ratio, Proportion, Partnership, Mixtures & Alligation
-- Simple/Compound Interest with quarterly/half-yearly compounding
-- Permutations, Combinations, Probability (real placement style)
-- Number system (LCM/HCF, divisibility, remainders)
-- Geometry/Mensuration (area, volume with composite figures)
-- Data Interpretation (tables, pie charts) — short version
-
-BANNED EXAMPLES (TOO TRIVIAL):
-- "What is 2+2?" or "What is 20% of 150?"
-- "If x=5 and y=3, what is 2x+3y?"
-- "What is the square root of 144?"
-- "If car at 60 km/h, distance in 3 hours?"
-- Single-step arithmetic with small whole numbers
-
-GOOD EXAMPLES (TCS/Infosys/Wipro level):
-- "A shopkeeper marks goods 40% above CP and offers 15% discount. If profit is Rs 190, find CP."
-- "Pipes A and B fill a tank in 20 and 30 mins. Pipe C empties in 15 mins. All three open together, time to fill?"
-- "Train 240m long crosses a platform in 24s, and a pole in 12s. Length of platform?"
-- "Compound interest on Rs 8000 at 15% p.a. for 2y 4m, compounded annually?\"""",
-                
-                "logical": """TOPICS (rotate, do NOT pick trivial ones):
-- Syllogisms (3+ premises with "some/all/no" combinations)
-- Blood relations (multi-generational, in-law puzzles)
-- Direction sense (multi-turn navigation)
-- Coding-decoding (letter-position based, with rules)
-- Number series (with 2 alternating patterns, polynomials, cube/square mix)
-- Seating arrangement (circular, square, double row)
-- Data sufficiency (statement I + statement II logic)
-- Statement & Conclusion / Statement & Assumption
-- Puzzles (5 people, 5 attributes — multi-constraint)
-- Calendar / Clock problems
-
-BANNED EXAMPLES (TOO TRIVIAL):
-- "If all A are B and all B are C, are all A C?" (3-element syllogism — too easy)
-- "What comes next: 2, 6, 12, 20, ?" (single +difference pattern)
-- "Which doesn't belong: Apple, Orange, Banana, Carrot?" (obvious)
-- "5 machines make 5 widgets in 5 minutes, 100 machines for 100 widgets?" (overused)
-
-GOOD EXAMPLES (TCS/Infosys/Wipro level):
-- "Statements: Some pens are pencils. All pencils are erasers. No eraser is a sharpener. Conclusions: I. Some pens are erasers. II. No pen is a sharpener. Which follows?"
-- "Series: 7, 26, 63, 124, 215, ? (Hint: n³ ± k pattern)"
-- "A is mother of B. B is brother of C. C is daughter of D. How is D related to A?"
-- "Six people P,Q,R,S,T,U sit around a circular table. P is 2nd to right of Q. R is opposite to S. T is between Q and U. Find arrangement."
-- "If 'TRAIN' is coded as 'WUDLQ', how is 'BRAIN' coded?\"""",
-                
-                "verbal": """TOPICS (rotate, do NOT pick trivial ones):
-- Sentence correction (subject-verb agreement, tense consistency, parallelism)
-- Error spotting (4-part sentences with one error)
-- Para jumbles (4-5 sentences, find correct order)
-- Reading comprehension (short passage + inference question)
-- Synonyms/Antonyms for ADVANCED words (not "diligent" or "exemplary")
-- Idioms & phrases in context
-- Sentence completion (cloze test with 2 blanks)
-- Active/Passive voice transformation
-- One-word substitution (advanced)
-
-BANNED EXAMPLES (TOO TRIVIAL):
-- Synonym of 'exemplary' → outstanding (too obvious)
-- Opposite of 'diligent' → lazy (too obvious)
-- "What does 'resounding' mean in 'resounding success'?" (context too clear)
-- "He __ going to store: are/is/am/be" (basic verb form)
-
-GOOD EXAMPLES (TCS/Infosys/Wipro level):
-- "Find error: (A) Neither of the two boys / (B) have completed / (C) their assignment / (D) before the deadline."
-- "Synonym of 'PERFUNCTORY': (A) Thorough (B) Cursory (C) Diligent (D) Comprehensive"
-- "Choose the correctly punctuated: (A) ... (B) ... (with semicolons/commas/apostrophes)"
-- "Para jumble: P) However, the experiment failed. Q) Scientists were optimistic. R) They had planned for months. S) The results shocked everyone. Order?"
-- "One word for 'a person who hates mankind': (A) Misogynist (B) Misanthrope (C) Philanthropist (D) Xenophobe" """
-            }
-            
-            guide = section_guides.get(section, "")
-            
-            batch_prompt = f"""You design REAL placement aptitude questions for TCS, Infosys, Wipro, Cognizant, Capgemini, Accenture campus tests.
-
-Generate EXACTLY {batch_size} {section.upper()} MCQs at ACTUAL placement-test difficulty.
-
-CANDIDATE: {request.user_type}, {request.experience_years}yrs, {request.primary_skill}
-TARGET: {request.target_role}, {request.target_company_type}
-
-{guide}
-
-CRITICAL DIFFICULTY RULES:
-1. NO trivial single-step problems (no "2+2", no "20% of 150", no "x=5, 2x+3y")
-2. EACH question must take 30-90 seconds to solve (real placement timing)
-3. Use multi-step reasoning, not direct formula application
-4. Use realistic numbers (Rs 480, 240m, 15% etc.) — NOT 2, 3, 5, 10
-5. Vary topics within the section — do NOT generate 6 percentage questions
-6. Difficulty mix: 30% easy-placement, 50% moderate, 20% tricky (NEVER kindergarten-easy)
-
-OUTPUT FORMAT (ONLY a JSON array, no markdown):
-[{{"q":"question text","opts":["A) opt1","B) opt2","C) opt3","D) opt4"],"ans":"A","topic":"specific topic","diff":"moderate","asked_in":"TCS|Infosys|Wipro|Common","explain":"brief solution steps"}}]
-
-VALIDATION CHECKLIST:
-✓ {batch_size} questions, all {section}
-✓ NO trivial questions (would a 10th grader solve in 5 seconds? then REJECT it)
-✓ Multi-step reasoning required
-✓ Realistic placement numbers/scenarios
-✓ ans is exactly A, B, C, or D
-✓ diff is exactly "easy", "moderate", or "tricky"
-✓ Output ONLY JSON array — no preamble, no markdown fences"""
-            
-            async def call_openai():
-                response = await self._client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=[
-                        {"role": "system", "content": "Output ONLY valid JSON array. Zero preamble."},
-                        {"role": "user", "content": batch_prompt},
-                    ],
-                    max_tokens=MAX_TOKENS_APTITUDE_READINESS_PLAN,
-                    temperature=0,
-                )
-                return response.choices[0].message.content or ""
-            
-            try:
-                content = await self.guard_layer_aptitude.run_with_timeout(call_openai())
-                # Try STRICT parsing first
-                strict_questions = self._parse_and_validate_batch(content, section, strict=True)
-                if len(strict_questions) >= batch_size - 2:  # Need at least 4 out of 6
-                    return strict_questions
-                # Fall back to FLEXIBLE parsing if strict fails
-                logger.warning("Batch %d: strict parsing got %d, trying flexible...", batch_num, len(strict_questions))
-                flexible_questions = self._parse_and_validate_batch(content, section, strict=False)
-                return flexible_questions
-            except Exception as e:
-                logger.warning("Batch %d failed: %s", batch_num, e)
-                return []
-        
-        logger.info("Generating 15+ aptitude questions (3 parallel batches)...")
-        results = await asyncio.gather(
-            generate_batch(0, "quantitative"),
-            generate_batch(1, "logical"),
-            generate_batch(2, "verbal"),
+        """Aptitude readiness: single LLM call using Senior Placement SME prompt (15 MCQ)."""
+        prompt = render_aptitude_readiness_prompt(
+            user_type=getattr(request, "user_type", "") or "",
+            experience_years=int(getattr(request, "experience_years", 0) or 0),
+            primary_skill=getattr(request, "primary_skill", "") or "",
+            target_role=getattr(request, "target_role", "") or "",
+            target_company_type=getattr(request, "target_company_type", "both") or "both",
         )
-        
-        all_questions = []
-        for batch in results:
-            all_questions.extend(batch)
-        
-        logger.info("Generated %d questions from LLM", len(all_questions))
-        
+
+        async def call_openai(user_prompt: str):
+            response = await self._client.chat.completions.create(
+                model=READINESS_PLAN_MODEL,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You output ONLY valid JSON with a questions array of exactly 15 "
+                            "placement-level MCQs. No markdown. No school-level arithmetic."
+                        ),
+                    },
+                    {"role": "user", "content": user_prompt},
+                ],
+                max_tokens=MAX_TOKENS_APTITUDE_READINESS_PLAN,
+                temperature=0.15,
+            )
+            content = response.choices[0].message.content or ""
+            usage = getattr(response, "usage", None)
+            if usage:
+                logger.info(
+                    "LLM tokens used: %d (aptitude readiness plan)",
+                    getattr(usage, "total_tokens", 0) or 0,
+                )
+            return content
+
+        logger.info("Generating aptitude readiness plan (15 MNC placement MCQs)...")
+        all_questions: list[dict] = []
+        for attempt in range(2):
+            try:
+                content = await self.guard_layer_aptitude.run_with_timeout(call_openai(prompt))
+                parsed = self._parse_aptitude_readiness_plan(content)
+                all_questions = self._dedupe_aptitude_questions(parsed)
+                if len(all_questions) >= PLAN_QUESTION_COUNT:
+                    break
+                if attempt == 0:
+                    used = [q.get("study_topic", "") for q in all_questions]
+                    prompt = (
+                        prompt
+                        + "\n\nREGENERATE: Previous output had only "
+                        + str(len(all_questions))
+                        + " valid unique questions. Generate a fresh set of exactly 15. "
+                        "Difficulty must be exactly 3 easy, 10 moderate, 2 tricky. "
+                        "Do NOT repeat these study_topic values:\n"
+                        + "\n".join(f"- {t}" for t in used[:20])
+                    )
+            except Exception as e:
+                logger.error("Aptitude readiness attempt %d failed: %s", attempt + 1, e)
+
+        logger.info("Parsed %d aptitude questions from LLM", len(all_questions))
+
         if len(all_questions) == 0:
-            logger.warning("All batches failed, using fallback")
+            logger.warning("Aptitude LLM failed, using fallback")
             return self._generate_minimal_fallback_questions()
-        elif len(all_questions) < PLAN_QUESTION_COUNT:
-            logger.warning("Got %d questions, need %d. Padding with fallback.", len(all_questions), PLAN_QUESTION_COUNT)
+        if len(all_questions) < PLAN_QUESTION_COUNT:
+            logger.warning(
+                "Got %d aptitude questions, padding with fallback.",
+                len(all_questions),
+            )
             fallback = self._generate_minimal_fallback_questions()
-            all_questions.extend(fallback[len(all_questions):])
-        
+            for fb in fallback:
+                if len(all_questions) >= PLAN_QUESTION_COUNT:
+                    break
+                merged = self._dedupe_aptitude_questions(all_questions + [fb])
+                if len(merged) > len(all_questions):
+                    all_questions = merged
+
         return all_questions[:PLAN_QUESTION_COUNT]
 
     async def generate_ai_readiness_plan(self, request) -> list[dict]:
@@ -987,7 +916,11 @@ VALIDATION CHECKLIST:
                 if not topic:
                     topic = q[:60] + ("..." if len(q) > 60 else "")
                 expl = self._explanation_or_default(x.get("explanation"))
-                section = APTITUDE_SECTION_ORDER[len(out)]
+                section_raw = str(x.get("section", "")).strip().lower()
+                if section_raw in ("quantitative", "logical", "verbal"):
+                    section = section_raw
+                else:
+                    section = APTITUDE_SECTION_ORDER[len(out)]
                 diff_raw = str(x.get("difficulty", "")).strip().lower()
                 if diff_raw in ("easy", "moderate", "tricky"):
                     difficulty = diff_raw
@@ -1013,6 +946,7 @@ VALIDATION CHECKLIST:
                     "difficulty": difficulty,
                     "asked_in": asked_in,
                     "why_students_fail": why_fail,
+                    "explanation": expl,
                 })
         except (TypeError, ValueError) as e:
             logger.error("Error parsing aptitude questions: %s", e)
@@ -1577,31 +1511,23 @@ VALIDATION CHECKLIST:
         logger.warning(f"FALLBACK: Returning minimal hardcoded {question_type} questions")
         
         if question_type == "skill":
-            # SKILL READINESS FALLBACK: Mix of question types
-            # NOTE: MCQ/scenario/code_mcq MUST have options field (schema requirement)
+            # SKILL READINESS FALLBACK: MCQ only (no yes/no per SME prompt)
             fallback_questions = [
-                # Yes/No questions (no options needed)
-                {"question_type": "yes_no", "question": "Have you used version control systems like Git?", "correct_answer": "Yes", "study_topic": "Version Control", "explanation": "Git is fundamental for professional development"},
-                {"question_type": "yes_no", "question": "Do you understand object-oriented programming concepts?", "correct_answer": "Yes", "study_topic": "OOP Fundamentals", "explanation": "OOP is essential for software development"},
-                {"question_type": "yes_no", "question": "Are you familiar with writing unit tests?", "correct_answer": "Yes", "study_topic": "Testing Fundamentals", "explanation": "Unit testing ensures code quality"},
-                {"question_type": "yes_no", "question": "Have you worked with relational databases?", "correct_answer": "Yes", "study_topic": "Databases", "explanation": "Database knowledge is crucial"},
-                
-                # Multiple Choice questions (requires options field)
-                {"question_type": "multiple_choice", "question": "What is the primary purpose of a design pattern?", "options": ["To make code faster", "To provide reusable solutions to common problems", "To reduce file size", "To simplify variable names"], "correct_answer": "B", "study_topic": "Design Patterns", "explanation": "Design patterns solve recurring design problems"},
-                {"question_type": "multiple_choice", "question": "Which principle promotes writing maintainable code?", "options": ["DRY (Don't Repeat Yourself)", "Write code quickly", "Use every language feature", "Avoid documentation"], "correct_answer": "A", "study_topic": "Code Principles", "explanation": "DRY reduces bugs and improves maintainability"},
-                {"question_type": "multiple_choice", "question": "What does API stand for?", "options": ["Application Process Interface", "Application Programming Interface", "Advanced Programming Instruction", "Application Protocol Internet"], "correct_answer": "B", "study_topic": "APIs", "explanation": "API enables communication between software systems"},
-                {"question_type": "multiple_choice", "question": "Which is NOT a benefit of code refactoring?", "options": ["Improved readability", "Reduced technical debt", "Faster code execution", "Better maintainability"], "correct_answer": "C", "study_topic": "Refactoring", "explanation": "Refactoring improves code quality, not speed"},
-                {"question_type": "multiple_choice", "question": "What is the main purpose of code review?", "options": ["To slow down development", "To find bugs early and share knowledge", "To blame developers", "To enforce strict rules"], "correct_answer": "B", "study_topic": "Code Quality", "explanation": "Code reviews catch issues and improve team knowledge"},
-                
-                # Scenario questions (requires options field)
-                {"question_type": "scenario", "question": "Your code has a bug in production. What should you do first?", "options": ["Blame the QA team", "Reproduce the issue locally", "Deploy a hotfix immediately", "Wait for the next release"], "correct_answer": "B", "study_topic": "Debugging", "explanation": "Always reproduce locally to understand the root cause"},
-                {"question_type": "scenario", "question": "You need to add a new feature. What's the best approach?", "options": ["Modify existing code directly", "Create a new branch and make changes", "Edit files on production server", "Copy-paste code from StackOverflow"], "correct_answer": "B", "study_topic": "Git Workflow", "explanation": "Branching ensures safe development and code review"},
-                {"question_type": "scenario", "question": "Your teammate's code breaks existing tests. What do you do?", "options": ["Deploy to production anyway", "Discuss with teammate and fix together", "Blame QA for bad tests", "Revert without discussion"], "correct_answer": "B", "study_topic": "Team Collaboration", "explanation": "Communication and collaboration lead to better solutions"},
-                
-                # Code MCQ questions (requires options field)
-                {"question_type": "code_mcq", "question": "What will this code output?\nlet x = 5;\nlet y = x++;\nconsole.log(y);", "options": ["5", "6", "undefined", "null"], "correct_answer": "A", "study_topic": "JavaScript Operators", "explanation": "Post-increment returns original value before incrementing"},
-                {"question_type": "code_mcq", "question": "Identify the bug:\nfunction add(a, b) { return a + b }\nadd(2, 3);", "options": ["Missing semicolon", "Wrong parameter names", "No bug present", "Missing return statement"], "correct_answer": "C", "study_topic": "JavaScript Basics", "explanation": "Code is correct; semicolons are optional in JavaScript"},
-                {"question_type": "code_mcq", "question": "What does this code do?\narr.map(x => x * 2);", "options": ["Modifies original array", "Returns new array with doubled values", "Sorts the array", "Filters the array"], "correct_answer": "B", "study_topic": "Array Methods", "explanation": "map() returns new array without modifying original"},
+                {"question_type": "multiple_choice", "question": "Which approach best improves code maintainability over time?", "options": ["Refactor incrementally with tests", "Rewrite everything monthly", "Avoid documentation", "Copy-paste from forums"], "correct_answer": "A", "study_topic": "Code maintainability", "explanation": "Incremental refactoring with tests reduces risk. Correct answer: A"},
+                {"question_type": "multiple_choice", "question": "What is the primary benefit of writing unit tests before fixing a bug?", "options": ["Prevents regression", "Slows development only", "Replaces code review", "Eliminates need for QA"], "correct_answer": "A", "study_topic": "Testing fundamentals", "explanation": "Tests lock expected behavior and prevent regressions. Correct answer: A"},
+                {"question_type": "scenario", "question": "Production bug reported intermittently. What is the best first step?", "options": ["Reproduce with minimal test case", "Deploy immediate hotfix blindly", "Rollback without investigation", "Ignore until more reports"], "correct_answer": "A", "study_topic": "Debugging workflow", "explanation": "Reproduction isolates the root cause. Correct answer: A"},
+                {"question_type": "multiple_choice", "question": "When reviewing a pull request, what should you prioritize?", "options": ["Correctness and clarity", "Line count only", "Author seniority", "Commit message length"], "correct_answer": "A", "study_topic": "Code review", "explanation": "Correctness and clarity matter most. Correct answer: A"},
+                {"question_type": "multiple_choice", "question": "Which habit helps reduce technical debt?", "options": ["Regular refactoring in small steps", "Never changing working code", "Skipping tests to ship faster", "Duplicating logic for speed"], "correct_answer": "A", "study_topic": "Technical debt", "explanation": "Small refactors keep debt manageable. Correct answer: A"},
+                {"question_type": "scenario", "question": "API latency spiked after a deploy. What do you check first?", "options": ["Recent deploy diff and metrics", "Rewrite the entire service", "Increase timeout only", "Disable monitoring"], "correct_answer": "A", "study_topic": "Production debugging", "explanation": "Correlate deploy with metrics first. Correct answer: A"},
+                {"question_type": "multiple_choice", "question": "What makes a good interview answer about a technical tradeoff?", "options": ["States pros, cons, and context", "Only lists buzzwords", "Claims one option is always best", "Avoids mentioning alternatives"], "correct_answer": "A", "study_topic": "Tradeoff analysis", "explanation": "Context-aware tradeoffs show depth. Correct answer: A"},
+                {"question_type": "multiple_choice", "question": "Which is the best reason to add logging in production code?", "options": ["Aid debugging and observability", "Slow down attackers", "Replace unit tests", "Hide errors from users"], "correct_answer": "A", "study_topic": "Observability", "explanation": "Logging supports diagnosis in production. Correct answer: A"},
+                {"question_type": "scenario", "question": "Teammate's change breaks CI tests. Best response?", "options": ["Discuss and fix together before merge", "Merge anyway to meet deadline", "Revert silently", "Disable CI"], "correct_answer": "A", "study_topic": "Team collaboration", "explanation": "Collaborative fix maintains quality. Correct answer: A"},
+                {"question_type": "multiple_choice", "question": "What indicates strong fundamentals in any programming language?", "options": ["Can trace code execution and explain behavior", "Memorizes syntax only", "Uses every language feature", "Avoids reading docs"], "correct_answer": "A", "study_topic": "Fundamentals", "explanation": "Execution tracing shows real understanding. Correct answer: A"},
+                {"question_type": "multiple_choice", "question": "When optimizing code, what should you do first?", "options": ["Profile to find the bottleneck", "Rewrite in another language", "Add caching everywhere", "Increase hardware only"], "correct_answer": "A", "study_topic": "Optimization", "explanation": "Profile before optimizing. Correct answer: A"},
+                {"question_type": "scenario", "question": "User data corruption reported. Immediate action?", "options": ["Stop writes and assess scope", "Delete the database", "Ignore until Monday", "Patch without backup"], "correct_answer": "A", "study_topic": "Incident response", "explanation": "Contain damage and assess scope first. Correct answer: A"},
+                {"question_type": "multiple_choice", "question": "Which practice improves interview readiness for any skill?", "options": ["Practice explaining why, not just what", "Memorize definitions only", "Skip hands-on coding", "Avoid mock interviews"], "correct_answer": "A", "study_topic": "Interview prep", "explanation": "Explaining reasoning mirrors real interviews. Correct answer: A"},
+                {"question_type": "multiple_choice", "question": "What is the best way to handle an unknown error in production?", "options": ["Capture context, log, and alert", "Silently swallow it", "Restart servers repeatedly", "Disable error reporting"], "correct_answer": "A", "study_topic": "Error handling", "explanation": "Context and alerts enable fast fixes. Correct answer: A"},
+                {"question_type": "multiple_choice", "question": "Why do MNC interviews focus on reasoning over syntax?", "options": ["Syntax is searchable; judgment is not", "Syntax never matters", "They test spelling", "They avoid technical topics"], "correct_answer": "A", "study_topic": "Interview patterns", "explanation": "Reasoning predicts on-the-job performance. Correct answer: A"},
             ]
         else:
             # APTITUDE FALLBACK: Real TCS/Infosys/Wipro placement-level questions
