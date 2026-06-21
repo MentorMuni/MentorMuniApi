@@ -37,10 +37,57 @@ class SectionRewrites(BaseModel):
     project_or_experience: Optional[List[str]] = None
 
 
+class SectionScores(BaseModel):
+    """Per-section heuristic scores (0–100) for resume content."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    headline: int = Field(..., ge=0, le=100)
+    summary: int = Field(..., ge=0, le=100)
+    experience: int = Field(..., ge=0, le=100)
+    skills: int = Field(..., ge=0, le=100)
+    education: int = Field(..., ge=0, le=100)
+    contact: int = Field(..., ge=0, le=100)
+
+
+class ChecklistItem(BaseModel):
+    """Naukri-style actionable checklist row."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    item: str
+    status: str = Field(description="pass | warn | fail")
+    detail: Optional[str] = None
+    current: Optional[int] = None
+    target: Optional[int] = None
+
+
+class NaukriReadiness(BaseModel):
+    """Composite visibility signals aligned with Naukri recruiter search behavior."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    resume_document: int = Field(..., ge=0, le=100)
+    profile_alignment: int = Field(..., ge=0, le=100)
+    label: str = Field(description="Strong | Moderate | Low")
+    visibility_band: str
+
+
+class FormatWarning(BaseModel):
+    """ATS / parsing anti-pattern detected in extracted text."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    code: str
+    message: str
+    severity: str = Field(description="warn | fail")
+
+
 class ResumeAtsResponse(BaseModel):
     """Response shape aligned with frontend normalizeAtsResponse (primary keys)."""
 
     score: int = Field(..., ge=0, le=100, description="Overall ATS-style score")
+    score_label: str = Field(default="Moderate", description="Strong | Moderate | Low")
     ats: int = Field(..., ge=0, le=100, description="ATS compatibility / parseability")
     keywords: int = Field(..., ge=0, le=100, description="Keyword alignment with target role")
     formatting: int = Field(..., ge=0, le=100)
@@ -60,11 +107,16 @@ class ResumeAtsResponse(BaseModel):
         default_factory=list,
         description="Naukri + LinkedIn specific visibility and profile tips",
     )
+    section_scores: SectionScores
+    naukri_checklist: List[ChecklistItem] = Field(default_factory=list)
+    naukri_readiness: NaukriReadiness
+    format_warnings: List[FormatWarning] = Field(default_factory=list)
+    skills_count: int = Field(default=0, ge=0)
 
     # Optional LLM enrichment (resume ATS prompt v2)
     candidate_type: Optional[str] = Field(
         default=None,
-        description="college_student | experienced | fresher (from LLM when enabled)",
+        description="college_student | experienced | fresher (from form, heuristic, or LLM)",
     )
     inferred_role: Optional[str] = Field(
         default=None,
@@ -81,3 +133,7 @@ class ResumeAtsResponse(BaseModel):
     )
     ats_score_estimate: Optional[AtsScoreEstimate] = None
     priority_action_plan: List[str] = Field(default_factory=list)
+    job_description_provided: Optional[bool] = Field(
+        default=None,
+        description="True when client sent job_description for keyword matching",
+    )

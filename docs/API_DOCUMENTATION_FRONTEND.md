@@ -299,12 +299,15 @@ Use this for the **resume upload / ATS feedback** flow. The API returns **scores
 | **Content-Type** | `multipart/form-data` (do **not** send JSON body) |
 | **Rate limit** | 30 requests / minute / IP (see 429 handling below) |
 
-**Form fields (required):**
+**Form fields:**
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `file` | File | Resume: **.pdf**, **.doc**, or **.docx** (use `file.name` as filename) |
-| `target_role` | string | Selected role label, e.g. `"Software Engineer"`, `"Frontend Developer"` |
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `file` | File | Yes | Resume: **.pdf**, **.doc**, or **.docx** |
+| `target_role` | string | Yes | e.g. `"Java Backend Developer"`, `"Frontend Developer"` |
+| `candidate_type` | string | No | `college_student` \| `experienced` \| `fresher` |
+| `experience_years` | number | No | 0–50 |
+| `job_description` | string | No | Paste JD text for stronger keyword matching |
 
 **Example (browser):**
 
@@ -312,6 +315,9 @@ Use this for the **resume upload / ATS feedback** flow. The API returns **scores
 const formData = new FormData();
 formData.append("file", file, file.name);
 formData.append("target_role", roleLabel);
+formData.append("candidate_type", "experienced");
+formData.append("experience_years", "3");
+if (jdText) formData.append("job_description", jdText);
 
 const res = await fetch(`${API_BASE}/api/resume/ats`, {
   method: "POST",
@@ -327,18 +333,33 @@ JSON object **shape**:
 | Field | Type | What to show |
 |-------|------|----------------|
 | `score` | number (0–100) | Main overall score / gauge |
-| `keywords` | number (0–100) | How well resume text matches **target_role** tokens |
-| `formatting` | number (0–100) | Structure, sections, bullets, length signals |
+| `score_label` | string | **Strong** (80+) \| **Moderate** (60–79) \| **Low** (&lt;60) |
+| `keywords` | number (0–100) | Role + JD keyword coverage |
+| `formatting` | number (0–100) | Structure, sections, bullets, length |
 | `impact` | number (0–100) | Metrics, action verbs, quantified outcomes |
 | `ats` | number (0–100) | Parseability / ATS-friendly text signals |
-| `summary` | string | Short narrative (often mentions scores + Naukri/LinkedIn when LLM is on) |
-| `matched_keywords` | string[] | Terms from **target_role** found in the resume |
-| `missing_keywords` | string[] | Terms from **target_role** **not** found (suggest adding where truthful) |
-| `strengths` | string[] | **What’s already working** for recruiter search / screening |
-| `fixes` | string[] | **Prioritized resume edits** (document content) |
-| `portal_tips` | string[] | **Naukri + LinkedIn** checklist (headline, key skills, About, profile consistency, file format) |
+| `skills_count` | number | Skills detected (target 10–15 for Naukri) |
+| `section_scores` | object | Per-section scores: headline, summary, experience, skills, education, contact |
+| `naukri_readiness` | object | `resume_document`, `profile_alignment`, `label`, `visibility_band` |
+| `naukri_checklist` | array | Actionable items with `status`: pass \| warn \| fail |
+| `format_warnings` | array | Parsing issues (`severity`: warn \| fail) |
+| `summary` | string | Short narrative |
+| `matched_keywords` | string[] | Terms found in resume |
+| `missing_keywords` | string[] | Terms to add where truthful |
+| `strengths` | string[] | What helps recruiter search |
+| `fixes` | string[] | Prioritized resume edits |
+| `portal_tips` | string[] | Naukri + LinkedIn checklist |
+| `top_resume_killers` | string[] | LLM — top 3 issues (optional) |
+| `priority_action_plan` | string[] | LLM — top actions (optional) |
+| `keyword_gaps` | string[] | LLM — keyword → placement (optional) |
+| `rewrite_examples` | string[] | LLM — improved bullets (optional) |
+| `section_rewrites` | object | LLM — headline, summary, skills, project_or_experience (optional) |
+| `score_breakdown` | object | LLM — /10 sub-scores (optional) |
+| `ats_score_estimate` | object | LLM — shortlist probability estimate (optional) |
+| `candidate_type` | string | Fresher / experienced signal (optional) |
+| `inferred_role` | string | LLM-inferred role (optional) |
 
-**UI suggestion:** four sub-scores + overall `score`; separate sections for **Summary**, **Strengths**, **Fixes (resume)**, **Portal tips (Naukri & LinkedIn)**; chips for matched/missing keywords.
+**UI suggestion:** Tabbed layout — **Scores** (gauges + checklist) \| **Fix resume** (killers, fixes, action plan) \| **Naukri & LinkedIn** (portal_tips) \| **Copy rewrites** (`section_rewrites` with copy buttons). See `docs/RESUME_ATS_FRONTEND_TASK.md` for full spec.
 
 **Example (truncated):**
 

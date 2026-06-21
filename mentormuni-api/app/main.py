@@ -315,15 +315,34 @@ async def resume_ats(
     request: Request,
     file: UploadFile = File(...),
     target_role: str = Form(...),
+    candidate_type: Optional[str] = Form(None),
+    experience_years: Optional[int] = Form(None),
+    job_description: Optional[str] = Form(None),
 ):
     """
     Upload a resume (PDF, DOC, or DOCX) and receive ATS-style scores and keyword feedback.
-    Multipart form fields: `file`, `target_role`.
+    Multipart form fields: `file`, `target_role`; optional `candidate_type`, `experience_years`, `job_description`.
     Scores and keyword lists are heuristic; summary/fixes/strengths are enriched via OpenAI when enabled.
     """
     tr = (target_role or "").strip()
     if not tr:
         raise HTTPException(status_code=422, detail="target_role is required.")
+
+    ct = (candidate_type or "").strip() or None
+    if ct and ct.lower().replace(" ", "_") not in (
+        "college_student",
+        "experienced",
+        "fresher",
+        "student",
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="candidate_type must be college_student, experienced, or fresher.",
+        )
+    if experience_years is not None and (experience_years < 0 or experience_years > 50):
+        raise HTTPException(status_code=422, detail="experience_years must be between 0 and 50.")
+
+    jd = (job_description or "").strip() or None
 
     raw = await file.read()
     if len(raw) > resume_ats_service.MAX_FILE_BYTES:
@@ -335,8 +354,14 @@ async def resume_ats(
     name = (file.filename or "resume").strip() or "resume"
     try:
         text = resume_ats_service.extract_text(name, raw)
-        payload = resume_ats_service.analyze_resume(text, tr)
-        payload = await resume_ats_service.enrich_analysis_with_llm(payload, text, tr)
+        payload = resume_ats_service.analyze_resume(
+            text,
+            tr,
+            candidate_type=ct,
+            experience_years=experience_years,
+            job_description=jd,
+        )
+        payload = await resume_ats_service.enrich_analysis_with_llm(payload, text, tr, job_description=jd)
         return ResumeAtsResponse(**payload)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e

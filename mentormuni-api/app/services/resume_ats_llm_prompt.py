@@ -1,7 +1,7 @@
 """LLM prompt for POST /api/resume/ats enrichment (heuristic scores are fixed server-side).
 
 Placeholders:
-__CANDIDATE_TYPE__, __EXPERIENCE_YEARS__, __TARGET_ROLE__, __SNAPSHOT__, __EXCERPT__
+__CANDIDATE_TYPE__, __EXPERIENCE_YEARS__, __TARGET_ROLE__, __JOB_DESCRIPTION__, __SNAPSHOT__, __EXCERPT__
 """
 
 # noqa: E501
@@ -26,6 +26,11 @@ CANDIDATE TYPE: __CANDIDATE_TYPE__
 IF experienced:
 - EXPERIENCE YEARS: __EXPERIENCE_YEARS__
 - CURRENT / TARGET ROLE: __TARGET_ROLE__
+
+JOB DESCRIPTION (optional — use for keyword gap analysis when provided):
+---
+__JOB_DESCRIPTION__
+---
 
 RESUME TEXT:
 ---
@@ -257,11 +262,13 @@ def render_resume_ats_enrich_prompt(
     target_role: str,
     snapshot: str,
     excerpt: str,
+    job_description: str = "not provided",
 ) -> str:
     return (
         RESUME_ATS_ENRICH_PROMPT.replace("__CANDIDATE_TYPE__", candidate_type)
         .replace("__EXPERIENCE_YEARS__", experience_years)
         .replace("__TARGET_ROLE__", target_role)
+        .replace("__JOB_DESCRIPTION__", job_description)
         .replace("__SNAPSHOT__", snapshot.strip())
         .replace("__EXCERPT__", excerpt)
     )

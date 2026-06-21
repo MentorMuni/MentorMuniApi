@@ -26,7 +26,7 @@ ALLOWED_EXTENSIONS = {".pdf", ".doc", ".docx"}
 MAX_FILE_BYTES = 5 * 1024 * 1024
 MIN_TEXT_CHARS = 80
 
-# Role / resume tokens to ignore when building keyword lists
+# Filler tokens only — keep role-meaningful words like developer, engineer, java, react.
 _STOPWORDS = {
     "a",
     "an",
@@ -59,29 +59,171 @@ _STOPWORDS = {
     "year",
     "yrs",
     "exp",
-    "experience",
-    "developer",
-    "engineer",
-    "engineering",
-    "senior",
-    "junior",
-    "lead",
-    "staff",
-    "principal",
-    "intern",
-    "associate",
 }
 
-# Light synonym expansion for common tech (substring match still uses word boundaries)
+# Light synonym expansion for common tech (word-boundary match)
 _KEYWORD_ALIASES: dict[str, Set[str]] = {
     "react": {"javascript", "typescript", "jsx", "redux"},
     "node": {"nodejs", "express", "npm"},
+    "nodejs": {"node", "express", "npm"},
     "python": {"django", "flask", "fastapi"},
-    "java": {"spring", "kotlin"},
+    "java": {"spring", "kotlin", "jvm"},
     "aws": {"cloud", "ec2", "s3", "lambda"},
-    "azure": {"devops", "kubernetes", "k8s", "docker"},
+    "azure": {"cloud", "devops"},
+    "gcp": {"cloud", "google"},
     "sql": {"mysql", "postgres", "postgresql", "database"},
     "ml": {"machine", "learning", "tensorflow", "pytorch"},
+    "devops": {"ci/cd", "docker", "kubernetes", "jenkins"},
+    "frontend": {"react", "javascript", "html", "css"},
+    "backend": {"api", "rest", "microservices", "database"},
+}
+
+# High-impact keywords per role family (India campus + mid-level hiring)
+_ROLE_KEYWORD_BANK: dict[str, List[str]] = {
+    "software engineer": [
+        "java",
+        "python",
+        "git",
+        "api",
+        "sql",
+        "agile",
+        "testing",
+        "debugging",
+        "oop",
+        "data structures",
+    ],
+    "frontend": [
+        "react",
+        "javascript",
+        "typescript",
+        "html",
+        "css",
+        "responsive",
+        "rest",
+        "git",
+        "redux",
+        "webpack",
+    ],
+    "backend": [
+        "java",
+        "spring",
+        "api",
+        "sql",
+        "microservices",
+        "rest",
+        "database",
+        "linux",
+        "docker",
+        "kafka",
+    ],
+    "full stack": [
+        "react",
+        "node",
+        "javascript",
+        "sql",
+        "api",
+        "rest",
+        "git",
+        "mongodb",
+        "express",
+        "aws",
+    ],
+    "java": [
+        "java",
+        "spring",
+        "hibernate",
+        "sql",
+        "rest",
+        "maven",
+        "junit",
+        "microservices",
+        "kafka",
+        "multithreading",
+    ],
+    "python": [
+        "python",
+        "django",
+        "flask",
+        "fastapi",
+        "sql",
+        "api",
+        "pandas",
+        "git",
+        "testing",
+        "rest",
+    ],
+    "data analyst": [
+        "sql",
+        "excel",
+        "python",
+        "tableau",
+        "power bi",
+        "statistics",
+        "visualization",
+        "dashboard",
+        "analytics",
+        "reporting",
+    ],
+    "data scientist": [
+        "python",
+        "machine learning",
+        "sql",
+        "pandas",
+        "tensorflow",
+        "pytorch",
+        "statistics",
+        "nlp",
+        "scikit-learn",
+        "deep learning",
+    ],
+    "devops": [
+        "docker",
+        "kubernetes",
+        "aws",
+        "ci/cd",
+        "linux",
+        "terraform",
+        "jenkins",
+        "ansible",
+        "monitoring",
+        "git",
+    ],
+    "android": [
+        "kotlin",
+        "java",
+        "android",
+        "rest",
+        "sqlite",
+        "mvvm",
+        "firebase",
+        "git",
+        "api",
+        "gradle",
+    ],
+    "qa": [
+        "selenium",
+        "testing",
+        "automation",
+        "api",
+        "junit",
+        "testng",
+        "agile",
+        "bug",
+        "regression",
+        "jenkins",
+    ],
+    "business analyst": [
+        "requirements",
+        "sql",
+        "excel",
+        "jira",
+        "stakeholder",
+        "documentation",
+        "agile",
+        "uml",
+        "process",
+        "analytics",
+    ],
 }
 
 
@@ -208,10 +350,60 @@ def _word_boundary_match(haystack: str, term: str) -> bool:
         return term.lower() in haystack.lower()
 
 
-def _keyword_analysis(resume_lower: str, target_role: str) -> Tuple[int, List[str], List[str]]:
-    primary = _tokenize_role(target_role)
-    if not primary:
-        primary = ["software", "engineering"]
+def _role_bank_keywords(target_role: str) -> List[str]:
+    """Pick the best keyword bank entry for the target role label."""
+    tr = (target_role or "").lower()
+    best: List[str] = []
+    best_len = 0
+    for key, kws in _ROLE_KEYWORD_BANK.items():
+        if key in tr and len(key) > best_len:
+            best = kws
+            best_len = len(key)
+    return list(best)
+
+
+def _jd_keywords(job_description: str, max_terms: int = 12) -> List[str]:
+    """Extract searchable terms from an optional job description."""
+    if not (job_description or "").strip():
+        return []
+    raw = re.findall(r"[a-z0-9+#./-]+", job_description.lower())
+    terms: List[str] = []
+    for t in raw:
+        if len(t) < 2 or t in _STOPWORDS:
+            continue
+        if t.isdigit():
+            continue
+        terms.append(t)
+    # Prefer longer / less common tokens first for JD-specific skills
+    unique = list(dict.fromkeys(terms))
+    return unique[:max_terms]
+
+
+def _build_keyword_targets(target_role: str, job_description: Optional[str] = None) -> List[str]:
+    """Merge role tokens, role-bank keywords, and optional JD terms."""
+    role_tokens = _tokenize_role(target_role)
+    bank = _role_bank_keywords(target_role)
+    jd = _jd_keywords(job_description or "")
+
+    combined: List[str] = []
+    for term in role_tokens + bank + jd:
+        t = term.strip().lower()
+        if not t or t in _STOPWORDS:
+            continue
+        if t not in combined:
+            combined.append(t)
+
+    if not combined:
+        combined = ["software", "developer", "engineering"]
+    return combined[:18]
+
+
+def _keyword_analysis(
+    resume_lower: str,
+    target_role: str,
+    job_description: Optional[str] = None,
+) -> Tuple[int, List[str], List[str]]:
+    primary = _build_keyword_targets(target_role, job_description)
 
     matched: List[str] = []
     missing: List[str] = []
@@ -355,8 +547,297 @@ def _ats_parse_score(text: str) -> int:
     return max(0, min(100, score))
 
 
-def _overall(keyword: int, formatting: int, impact: int, ats: int) -> int:
+def _score_label(score: int) -> str:
+    if score >= 80:
+        return "Strong"
+    if score >= 60:
+        return "Moderate"
+    return "Low"
+
+
+def _visibility_band(score: int) -> str:
+    if score >= 80:
+        return "80+ — strong visibility; align Naukri headline and key skills with this resume."
+    if score >= 60:
+        return "60–79 — moderate; many recruiters filter below 70 on Naukri — prioritize checklist fixes."
+    return "Below 60 — low recruiter search visibility; fix killers and keywords first."
+
+
+def _count_skills(text: str) -> int:
+    lower = text.lower()
+    m = re.search(
+        r"(?:^|\n)\s*(?:skills?|technical skills?|key skills?|technologies|tech stack)\s*[:\-]?\s*\n?([\s\S]{0,2500})",
+        lower,
+        re.I,
+    )
+    if not m:
+        return 0
+    block = m.group(1)
+    # Stop at next major section heading
+    block = re.split(
+        r"\n\s*(?:experience|education|projects?|certifications?|achievements?|summary)\b",
+        block,
+        maxsplit=1,
+        flags=re.I,
+    )[0]
+    items: Set[str] = set()
+    for ln in block.splitlines():
+        ln = ln.strip().lstrip("-•*·").strip()
+        if not ln or len(ln) < 2:
+            continue
+        if "," in ln:
+            for part in ln.split(","):
+                p = part.strip()
+                if 2 <= len(p) <= 40:
+                    items.add(p.lower())
+        elif 2 <= len(ln) <= 40:
+            items.add(ln.lower())
+    return len(items)
+
+
+def _has_summary_section(text: str) -> bool:
+    lower = text.lower()
+    return bool(
+        re.search(r"\b(summary|professional summary|career summary|objective|profile)\b", lower)
+        or re.search(r"\babout me\b", lower)
+    )
+
+
+def _headline_matches_role(text: str, target_role: str) -> bool:
+    head = "\n".join(text.splitlines()[:4]).lower()
+    tr = (target_role or "").lower()
+    tokens = [t for t in _tokenize_role(tr) if len(t) >= 3]
+    if not tokens:
+        return False
+    hits = sum(1 for t in tokens if _word_boundary_match(head, t))
+    return hits >= max(1, len(tokens) // 2)
+
+
+def _section_scores(text: str, target_role: str) -> dict[str, int]:
+    lower = text.lower()
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+
+    contact = 0
+    if re.search(r"[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}", text, re.I):
+        contact += 45
+    if re.search(r"(\+?\d[\d\s\-\(\)]{7,}\d)", text):
+        contact += 35
+    if re.search(r"\b(linkedin|github)\b", lower):
+        contact += 20
+
+    headline = 25
+    if lines and len(lines[0]) <= 90:
+        headline += 20
+    if _headline_matches_role(text, target_role):
+        headline += 35
+    elif re.search(r"\b(engineer|developer|analyst|intern|manager|designer)\b", lower[:500]):
+        headline += 15
+
+    summary = 20
+    if _has_summary_section(text):
+        summary += 45
+    summary_lines = [
+        ln
+        for ln in lines[:25]
+        if 40 <= len(ln) <= 220 and not re.search(r"@|linkedin|github|phone|\d{10}", ln, re.I)
+    ]
+    if summary_lines:
+        summary += min(35, len(summary_lines) * 12)
+
+    skills_n = _count_skills(text)
+    if skills_n >= 12:
+        skills = 95
+    elif skills_n >= 10:
+        skills = 85
+    elif skills_n >= 6:
+        skills = 65
+    elif skills_n >= 3:
+        skills = 45
+    else:
+        skills = 25
+
+    experience = 20
+    if re.search(r"\b(experience|work history|employment)\b", lower):
+        experience += 30
+    bullets = sum(
+        1
+        for ln in lines
+        if re.match(r"^[\-\u2022\u2023\*]\s+", ln) or re.match(r"^\d+[\.)]\s+", ln)
+    )
+    experience += min(35, bullets * 4)
+    if re.search(r"\b(19|20)\d{2}\b", lower) and re.search(r"\b(present|current)\b", lower):
+        experience += 15
+
+    education = 20
+    if re.search(r"\beducation\b", lower):
+        education += 45
+    if re.search(r"\b(b\.?tech|b\.?e\.?|m\.?tech|bachelor|master|degree|university|college|cgpa|gpa)\b", lower):
+        education += 35
+
+    return {
+        "headline": max(0, min(100, headline)),
+        "summary": max(0, min(100, summary)),
+        "experience": max(0, min(100, experience)),
+        "skills": max(0, min(100, skills)),
+        "education": max(0, min(100, education)),
+        "contact": max(0, min(100, contact)),
+    }
+
+
+def _format_warnings(text: str) -> List[dict[str, str]]:
+    warnings: List[dict[str, str]] = []
+    letters = sum(1 for c in text if c.isalpha())
+    ratio = letters / max(len(text), 1)
+    if len(text) > 50 and ratio < 0.35:
+        warnings.append(
+            {
+                "code": "image_heavy",
+                "message": "Very little extractable text — image-only or scanned PDFs hurt Naukri parsing.",
+                "severity": "fail",
+            }
+        )
+    if len(text) > 14_000:
+        warnings.append(
+            {
+                "code": "too_long",
+                "message": "Resume is very long; Naukri recommends 2–3 pages with a concise summary.",
+                "severity": "warn",
+            }
+        )
+    if len(text) < 400:
+        warnings.append(
+            {
+                "code": "too_short",
+                "message": "Resume content is thin — add projects, skills, and experience bullets.",
+                "severity": "warn",
+            }
+        )
+    section_hits = sum(1 for p in _SECTION_PATTERNS if re.search(p, text.lower()))
+    if section_hits < 3:
+        warnings.append(
+            {
+                "code": "missing_sections",
+                "message": "Add clear sections: Experience, Education, Skills (and Projects for freshers).",
+                "severity": "fail",
+            }
+        )
+    skills_n = _count_skills(text)
+    if skills_n < 6:
+        warnings.append(
+            {
+                "code": "few_skills",
+                "message": f"Only ~{skills_n} skills detected; Naukri ranks better with 10–15 key skills.",
+                "severity": "warn",
+            }
+        )
+    return warnings
+
+
+def _naukri_checklist(text: str, target_role: str, impact: int) -> List[dict[str, Any]]:
+    skills_n = _count_skills(text)
+    has_summary = _has_summary_section(text)
+    headline_ok = _headline_matches_role(text, target_role)
+    has_contact = bool(re.search(r"[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}", text, re.I))
+    has_exp = bool(re.search(r"\b(experience|projects?)\b", text.lower()))
+    has_edu = bool(re.search(r"\beducation\b", text.lower()))
+    has_metrics = impact >= 65
+
+    def _status(passed: bool, partial: bool = False) -> str:
+        if passed:
+            return "pass"
+        if partial:
+            return "warn"
+        return "fail"
+
+    return [
+        {
+            "item": "10–15 key skills listed",
+            "status": _status(skills_n >= 10, skills_n >= 6),
+            "detail": "Mirror these on Naukri Key Skills for recruiter search.",
+            "current": skills_n,
+            "target": 15,
+        },
+        {
+            "item": "Professional summary or objective",
+            "status": _status(has_summary),
+            "detail": "3–5 lines with role title and top skills.",
+        },
+        {
+            "item": "Headline matches target role",
+            "status": _status(headline_ok),
+            "detail": f"Align with “{target_role}” in the first lines and Naukri headline.",
+        },
+        {
+            "item": "Contact information present",
+            "status": _status(has_contact),
+            "detail": "Email and phone should be easy to find.",
+        },
+        {
+            "item": "Experience or projects with bullets",
+            "status": _status(has_exp),
+            "detail": "Freshers: prioritize 2 strong projects with tech stack.",
+        },
+        {
+            "item": "Education section complete",
+            "status": _status(has_edu),
+            "detail": "Degree, institution, and graduation year.",
+        },
+        {
+            "item": "Quantified achievements",
+            "status": _status(has_metrics, impact >= 50),
+            "detail": "Add %, scale, users, or team size where truthful.",
+        },
+        {
+            "item": "ATS-friendly text format",
+            "status": _status(not any(w["severity"] == "fail" for w in _format_warnings(text))),
+            "detail": "Single-column PDF/DOCX; avoid image-only layouts.",
+        },
+    ]
+
+
+def _naukri_readiness(overall: int, section_scores: dict[str, int]) -> dict[str, Any]:
+    weights = {
+        "skills": 0.30,
+        "headline": 0.20,
+        "summary": 0.15,
+        "experience": 0.20,
+        "contact": 0.10,
+        "education": 0.05,
+    }
+    profile_alignment = int(
+        round(sum(section_scores.get(k, 0) * w for k, w in weights.items()))
+    )
+    label = _score_label(profile_alignment)
+    return {
+        "resume_document": overall,
+        "profile_alignment": profile_alignment,
+        "label": label,
+        "visibility_band": _visibility_band(profile_alignment),
+    }
+
+
+def _overall_weighted(
+    keyword: int,
+    formatting: int,
+    impact: int,
+    ats: int,
+    candidate_type: Optional[str] = None,
+) -> int:
+    ct = (candidate_type or "").lower().replace(" ", "_")
+    if ct in ("college_student", "fresher", "student"):
+        return int(round(0.30 * keyword + 0.25 * formatting + 0.20 * impact + 0.25 * ats))
     return int(round(0.35 * keyword + 0.20 * formatting + 0.25 * impact + 0.20 * ats))
+
+
+def _infer_candidate_type(experience_years: Optional[int], text: str) -> Optional[str]:
+    if experience_years is not None:
+        return "college_student" if experience_years <= 1 else "experienced"
+    lower = text.lower()
+    if re.search(r"\b(intern(ship)?|fresher|student|b\.?tech|college|university)\b", lower):
+        return "college_student"
+    if re.search(r"\b\d+\+?\s*(years?|yrs?)\s+(of\s+)?experience\b", lower):
+        return "experienced"
+    return None
 
 
 def _build_summary(
@@ -450,21 +931,36 @@ def _default_portal_tips(missing: List[str], target_role: str) -> List[str]:
     return tips[:10]
 
 
-def analyze_resume(text: str, target_role: str) -> dict:
+def analyze_resume(
+    text: str,
+    target_role: str,
+    *,
+    candidate_type: Optional[str] = None,
+    experience_years: Optional[int] = None,
+    job_description: Optional[str] = None,
+) -> dict:
     ok_resume, reason = _is_likely_resume(text)
     if not ok_resume:
         raise ValueError(reason)
 
     tr = (target_role or "").strip() or "Software Developer"
     resume_lower = text.lower()
-    kw_score, matched, missing = _keyword_analysis(resume_lower, tr)
+
+    resolved_type = (candidate_type or "").strip() or _infer_candidate_type(experience_years, text)
+    kw_score, matched, missing = _keyword_analysis(resume_lower, tr, job_description)
     fmt = _formatting_score(text)
     imp = _impact_score(text)
     ats = _ats_parse_score(text)
-    overall = _overall(kw_score, fmt, imp, ats)
+    overall = _overall_weighted(kw_score, fmt, imp, ats, resolved_type)
+    sections = _section_scores(text, tr)
+    fmt_warnings = _format_warnings(text)
+    checklist = _naukri_checklist(text, tr, imp)
+    naukri = _naukri_readiness(overall, sections)
+    skills_n = _count_skills(text)
 
-    return {
+    payload: dict[str, Any] = {
         "score": overall,
+        "score_label": _score_label(overall),
         "ats": ats,
         "keywords": kw_score,
         "formatting": fmt,
@@ -475,7 +971,19 @@ def analyze_resume(text: str, target_role: str) -> dict:
         "fixes": _build_fixes(missing, fmt, imp, ats),
         "strengths": _build_strengths(matched, fmt, imp, text),
         "portal_tips": _default_portal_tips(missing, tr),
+        "section_scores": sections,
+        "naukri_checklist": checklist,
+        "naukri_readiness": naukri,
+        "format_warnings": fmt_warnings,
+        "skills_count": skills_n,
     }
+    if resolved_type:
+        payload["candidate_type"] = resolved_type
+    if experience_years is not None:
+        payload["experience_years"] = experience_years
+    if (job_description or "").strip():
+        payload["job_description_provided"] = True
+    return payload
 
 
 def _parse_llm_coaching_json(content: str) -> Optional[dict[str, Any]]:
@@ -598,7 +1106,12 @@ def _sanitize_resume_ats_llm_output(obj: dict[str, Any]) -> Optional[dict[str, A
     return None
 
 
-async def enrich_analysis_with_llm(payload: dict, resume_text: str, target_role: str) -> dict:
+async def enrich_analysis_with_llm(
+    payload: dict,
+    resume_text: str,
+    target_role: str,
+    job_description: Optional[str] = None,
+) -> dict:
     """
     Enrich resume ATS response via OpenAI (transformation / coaching JSON).
     Numeric scores and matched/missing keywords stay from heuristics.
@@ -620,17 +1133,20 @@ async def enrich_analysis_with_llm(payload: dict, resume_text: str, target_role:
     missing = payload.get("missing_keywords") or []
     snapshot = (
         f"Target role (form): {tr}\n"
-        f"Overall score (heuristic): {payload.get('score')}/100\n"
+        f"Overall score (heuristic): {payload.get('score')}/100 ({payload.get('score_label')})\n"
         f"Breakdown — keywords: {payload.get('keywords')}, formatting: {payload.get('formatting')}, "
         f"impact: {payload.get('impact')}, ATS parse: {payload.get('ats')}\n"
+        f"Skills detected: {payload.get('skills_count')}\n"
         f"Matched role keywords: {', '.join(matched) or '(none)'}\n"
         f"Missing role keywords: {', '.join(missing) or '(none)'}\n"
+        f"Naukri profile alignment (heuristic): {payload.get('naukri_readiness', {}).get('profile_alignment')}\n"
     )
 
     experience_years = str(payload.get("experience_years") or "not provided — infer from resume")
     candidate_type_hint = str(
         payload.get("candidate_type") or "not provided — infer college_student vs experienced from resume"
     )
+    jd_excerpt = (job_description or "").strip()[:4000] or "not provided"
 
     prompt = render_resume_ats_enrich_prompt(
         candidate_type=candidate_type_hint,
@@ -638,6 +1154,7 @@ async def enrich_analysis_with_llm(payload: dict, resume_text: str, target_role:
         target_role=tr,
         snapshot=snapshot,
         excerpt=excerpt,
+        job_description=jd_excerpt,
     )
 
     async def _call() -> str:
