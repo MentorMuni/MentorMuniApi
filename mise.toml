@@ -1,0 +1,6 @@
+[tools]
+python = "3.11.9"
+
+[settings]
+# 3.11.9 prebuilds lack GitHub artifact attestations; Railway Metal/mise fails without this.
+python.github_attestations = false
