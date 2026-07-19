@@ -49,7 +49,8 @@ class VoiceInterviewService:
         model = body.model or settings.realtime_model
         voice = body.voice
 
-        # Enable English input transcription for cleaner live transcript + /analyze.
+        # Interviewer pacing: wait through thinking pauses; reduce noise false-triggers.
+        # server_vad + longer silence = candidate can pause without bot filler.
         # Frontend must include session.type="realtime" on any session.update (GA Realtime).
         payload: dict[str, Any] = {
             "expires_after": {
@@ -62,19 +63,25 @@ class VoiceInterviewService:
                 "instructions": instructions,
                 "audio": {
                     "input": {
+                        "noise_reduction": {
+                            "type": "far_field",
+                        },
                         "transcription": {
                             "model": "gpt-4o-mini-transcribe",
                             "language": "en",
                         },
                         "turn_detection": {
                             "type": "server_vad",
-                            "threshold": 0.5,
-                            "prefix_padding_ms": 300,
-                            "silence_duration_ms": 600,
+                            "threshold": 0.72,
+                            "prefix_padding_ms": 250,
+                            "silence_duration_ms": 1400,
+                            "create_response": True,
+                            "interrupt_response": True,
                         },
                     },
                     "output": {
                         "voice": voice,
+                        "speed": 0.95,
                     },
                 },
             },
