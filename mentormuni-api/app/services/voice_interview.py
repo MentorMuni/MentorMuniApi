@@ -23,7 +23,10 @@ from app.schemas.ai import (
     VoiceInterviewSessionResponse,
     VoiceInterviewTranscriptTurn,
 )
-from app.services.voice_interview_analysis_prompt import render_voice_interview_analysis_prompt
+from app.services.voice_interview_analysis_prompt import (
+    SESSION_CLOSED_PHRASE,
+    render_voice_interview_analysis_prompt,
+)
 from app.services.voice_interview_prompt import render_voice_interview_prompt
 
 logger = logging.getLogger(__name__)
@@ -36,6 +39,19 @@ MAX_TOKENS_ANALYSIS = 1200
 _MALE_VOICES = frozenset({"echo", "ash", "verse", "cedar"})
 # ash = clearer male; softer than echo for many listeners.
 _DEFAULT_MALE_VOICE = "ash"
+
+# Lightweight out-of-scope filter for analysis (do not expand into a slur encyclopedia).
+# Patterns catch common abuse / sexual content categories without listing them in API responses.
+_OUT_OF_SCOPE_RE = re.compile(
+    r"(?i)\b("
+    r"fuck(?:ing|ed|er)?|f\*?ck|shit|bitch(?:es)?|asshole|bastard|"
+    r"dick|pussy|cock|slut|whore|"
+    r"porn(?:o)?|sex\b|nude|naked|blowjob|handjob|orgasm|xxx|"
+    r"rape|kill\s+you|terrorist|"
+    r"madarchod|bhenchod|behenchod|chutiya|chutia|gaand|gandu|lund|lavde|randi|"
+    r"mc\b|bc\b"
+    r")\b"
+)
 
 
 class VoiceInterviewService:
@@ -156,7 +172,7 @@ class VoiceInterviewService:
     async def analyze_interview(
         self, body: VoiceInterviewAnalyzeRequest
     ) -> VoiceInterviewAnalyzeResponse:
-        transcript_text = _format_transcript(body.transcript)
+        transcript_text = _format_transcript_for_analysis(body.transcript)
         prompt = render_voice_interview_analysis_prompt(
             body.interview_focus,
             transcript_text,
@@ -171,7 +187,8 @@ class VoiceInterviewService:
                     "role": "system",
                     "content": (
                         "You evaluate practice interviews and return ONLY valid JSON "
-                        "matching the requested schema."
+                        "matching the requested schema. Never quote or include abusive, "
+                        "sexual, or out-of-scope language in the JSON fields."
                     ),
                 },
                 {"role": "user", "content": prompt},
@@ -193,6 +210,47 @@ class VoiceInterviewService:
                 (parsed["technical_score"] + parsed["communication_score"]) / 2
             ),
         )
+
+
+def _is_session_closed_line(text: str) -> bool:
+    t = (text or "").strip().lower()
+    if not t:
+        return False
+    if SESSION_CLOSED_PHRASE.lower() in t:
+        return True
+    return (
+        "immediately close this call" in t
+        and "inappropriate" in t
+        and "new interview session" in t
+    )
+
+
+def _looks_out_of_scope(text: str) -> bool:
+    return bool(_OUT_OF_SCOPE_RE.search(text or ""))
+
+
+def _format_transcript_for_analysis(turns: List[VoiceInterviewTranscriptTurn]) -> str:
+    """Keep professional interview turns only; drop abuse and content after forced close."""
+    lines: List[str] = []
+    for turn in turns:
+        text = (turn.text or "").strip()
+        if not text:
+            continue
+        if turn.role == "assistant" and _is_session_closed_line(text):
+            lines.append(
+                "Interviewer: [Session closed for inappropriate language — analysis stops here.]"
+            )
+            break
+        if turn.role == "user" and _looks_out_of_scope(text):
+            # Do not send raw abuse/sexual content into the analysis model.
+            lines.append("Candidate: [Inappropriate / out-of-scope language redacted]")
+            continue
+        if turn.role == "assistant" and _looks_out_of_scope(text):
+            # Interviewer should not have produced this; skip.
+            continue
+        speaker = "Candidate" if turn.role == "user" else "Interviewer"
+        lines.append(f"{speaker}: {text}")
+    return "\n".join(lines) if lines else "(No usable on-topic transcript captured.)"
 
 
 def _format_transcript(turns: List[VoiceInterviewTranscriptTurn]) -> str:
@@ -226,6 +284,18 @@ def _as_string_list(value: Any, *, min_items: int = 1, max_items: int = 6) -> Li
     return out
 
 
+def _sanitize_analysis_strings(items: List[str]) -> List[str]:
+    cleaned: List[str] = []
+    for item in items:
+        s = str(item).strip()
+        if not s or _looks_out_of_scope(s):
+            continue
+        cleaned.append(s[:200])
+    if not cleaned:
+        cleaned.append("Insufficient on-topic interview evidence")
+    return cleaned
+
+
 def _parse_analysis_json(content: str) -> dict:
     raw = content.strip()
     if raw.startswith("```"):
@@ -243,9 +313,15 @@ def _parse_analysis_json(content: str) -> dict:
     return {
         "technical_score": _clamp_score(data.get("technical_score")),
         "communication_score": _clamp_score(data.get("communication_score")),
-        "strengths": _as_string_list(data.get("strengths"), min_items=2, max_items=5),
-        "weaknesses": _as_string_list(data.get("weaknesses"), min_items=2, max_items=5),
-        "study_plan": _as_string_list(data.get("study_plan"), min_items=3, max_items=6),
+        "strengths": _sanitize_analysis_strings(
+            _as_string_list(data.get("strengths"), min_items=2, max_items=5)
+        ),
+        "weaknesses": _sanitize_analysis_strings(
+            _as_string_list(data.get("weaknesses"), min_items=2, max_items=5)
+        ),
+        "study_plan": _sanitize_analysis_strings(
+            _as_string_list(data.get("study_plan"), min_items=3, max_items=6)
+        ),
     }
 
 
