@@ -31,6 +31,9 @@ logger = logging.getLogger(__name__)
 OPENAI_CLIENT_SECRETS_URL = "https://api.openai.com/v1/realtime/client_secrets"
 OPENAI_REALTIME_CALLS_URL = "https://api.openai.com/v1/realtime/calls"
 MAX_TOKENS_ANALYSIS = 1200
+# OpenAI has no Indian-accent male voice ID. echo/ash/verse are the clearer male personas.
+_MALE_VOICES = frozenset({"echo", "ash", "verse"})
+_DEFAULT_MALE_VOICE = "echo"
 
 
 class VoiceInterviewService:
@@ -47,7 +50,11 @@ class VoiceInterviewService:
             extra_context=body.extra_context,
         )
         model = body.model or settings.realtime_model
-        voice = body.voice
+        # Force a male voice even if the client sends marin/cedar/etc.
+        requested = (body.voice or _DEFAULT_MALE_VOICE).strip().lower()
+        voice = requested if requested in _MALE_VOICES else _DEFAULT_MALE_VOICE
+        if requested != voice:
+            logger.info("Voice interview remapped voice=%s -> %s (male)", requested, voice)
 
         # Interviewer pacing: wait through thinking pauses; reduce noise false-triggers.
         # server_vad + longer silence = candidate can pause without bot filler.

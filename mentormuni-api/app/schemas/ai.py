@@ -715,10 +715,10 @@ class VoiceInterviewSessionRequest(BaseModel):
         description="Optional free text: resume summary, project names, weak areas to probe.",
     )
     voice: VoiceInterviewVoice = Field(
-        default="cedar",
+        default="echo",
         description=(
-            "OpenAI Realtime voice. Default cedar (natural male; accent steered to Indian English via prompt). "
-            "Other male options: ash, echo, verse. OpenAI has no dedicated India voice ID."
+            "Male Realtime voice. Allowed male voices: echo (default), ash, verse. "
+            "Female/neutral voices (marin, cedar, coral, shimmer, etc.) are remapped to echo."
         ),
     )
     model: Optional[str] = Field(
