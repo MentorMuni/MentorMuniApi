@@ -15,6 +15,12 @@ class Settings(BaseSettings):
     # OPTIMIZATION: Skip skill validation LLM call (saves 2-3s per request)
     # If enabled, invalid skills will be caught by generation LLM instead
     skip_skill_validation: bool = Field(default=True)
+    # OpenAI Realtime voice interview (GA). Override via REALTIME_MODEL if needed.
+    realtime_model: str = Field(default="gpt-realtime")
+    # Ephemeral client_secret TTL for browser WebRTC (10–7200s). Default 10 minutes.
+    realtime_client_secret_ttl_seconds: int = Field(default=600, ge=10, le=7200)
+    # Post-interview structured scoring (chat/completions JSON). Override via env if needed.
+    voice_interview_analysis_model: str = Field(default="gpt-4.1")
 
     class Config:
         env_prefix = ""

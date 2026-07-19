@@ -666,3 +666,180 @@ class EvaluateRequest(BaseModel):
         if len(self.study_topics) != n:
             raise ValueError("study_topics must have the same length as questions")
         return self
+
+
+VoiceInterviewVoice = Literal[
+    "alloy",
+    "ash",
+    "ballad",
+    "coral",
+    "echo",
+    "sage",
+    "shimmer",
+    "verse",
+    "marin",
+    "cedar",
+]
+
+
+class VoiceInterviewSessionRequest(BaseModel):
+    """
+    POST /interview-ready/voice-interview/session
+
+    Single-prompt realtime voice interview. Send interview_focus from the client so the
+    same API/prompt works for Java, C++, projects-only, HR, etc. without separate endpoints.
+    """
+
+    interview_focus: str = Field(
+        ...,
+        min_length=1,
+        max_length=200,
+        description=(
+            "What this live interview should cover. Examples: 'Java', 'C++', "
+            "'projects only', 'React + SQL', 'HR behavioral'. Injected into the shared prompt."
+        ),
+    )
+    target_role: Optional[str] = Field(
+        default=None,
+        max_length=100,
+        description="Optional. e.g. Java Developer, Graduate Engineer Trainee",
+    )
+    target_companies: Optional[str] = Field(
+        default=None,
+        max_length=300,
+        description="Optional comma-separated list. Defaults to TCS, Infosys, Wipro, Persistent, Nagarro.",
+    )
+    extra_context: Optional[str] = Field(
+        default=None,
+        max_length=2000,
+        description="Optional free text: resume summary, project names, weak areas to probe.",
+    )
+    voice: VoiceInterviewVoice = Field(
+        default="marin",
+        description="OpenAI Realtime output voice. Prefer marin or cedar.",
+    )
+    model: Optional[str] = Field(
+        default=None,
+        max_length=80,
+        description="Optional Realtime model override. Defaults to server config (gpt-realtime).",
+    )
+
+    @field_validator("interview_focus")
+    @classmethod
+    def strip_interview_focus(cls, v: str) -> str:
+        s = (v or "").strip()
+        if not s:
+            raise ValueError("interview_focus is required")
+        return s
+
+    @field_validator("target_role", "target_companies", "extra_context", "model")
+    @classmethod
+    def empty_optional_to_none(cls, v):
+        if v is None:
+            return None
+        s = str(v).strip()
+        return None if not s else s
+
+
+class VoiceInterviewSessionResponse(BaseModel):
+    """Ephemeral OpenAI Realtime credentials for the React WebRTC client."""
+
+    client_secret: str = Field(..., description="Ephemeral key (ek_...) for browser WebRTC auth")
+    expires_at: int = Field(..., description="Unix timestamp when the ephemeral key expires")
+    model: str
+    voice: str
+    interview_focus: str
+    instructions_preview: str = Field(
+        ...,
+        description="First ~280 chars of the rendered interviewer instructions (for UI debug).",
+    )
+    realtime_calls_url: str = Field(
+        default="https://api.openai.com/v1/realtime/calls",
+        description="POST SDP offer here with Authorization: Bearer <client_secret>",
+    )
+    integration_hint: str = Field(
+        default=(
+            "Fetch this session, then connect browser WebRTC to realtime_calls_url "
+            "using client_secret as Bearer token (OpenAI Realtime GA)."
+        )
+    )
+
+
+class VoiceInterviewTranscriptTurn(BaseModel):
+    """One spoken turn collected by the frontend from Realtime data-channel events."""
+
+    role: Literal["user", "assistant"] = Field(
+        ...,
+        description="user = candidate, assistant = AI interviewer",
+    )
+    text: str = Field(..., min_length=1, max_length=8000)
+
+
+class VoiceInterviewAnalyzeRequest(BaseModel):
+    """
+    POST /interview-ready/voice-interview/analyze
+
+    After the live Realtime interview ends, send the captured transcript for
+    structured scoring (technical + communication + study plan).
+    """
+
+    interview_focus: str = Field(
+        ...,
+        min_length=1,
+        max_length=200,
+        description="Same focus used when starting the session (e.g. Java, projects only).",
+    )
+    transcript: List[VoiceInterviewTranscriptTurn] = Field(
+        ...,
+        min_length=1,
+        max_length=200,
+        description="Ordered conversation turns from the voice session.",
+    )
+    target_role: Optional[str] = Field(default=None, max_length=100)
+    target_companies: Optional[str] = Field(default=None, max_length=300)
+
+    @field_validator("interview_focus")
+    @classmethod
+    def strip_interview_focus(cls, v: str) -> str:
+        s = (v or "").strip()
+        if not s:
+            raise ValueError("interview_focus is required")
+        return s
+
+    @field_validator("target_role", "target_companies")
+    @classmethod
+    def empty_optional_to_none(cls, v):
+        if v is None:
+            return None
+        s = str(v).strip()
+        return None if not s else s
+
+    @field_validator("transcript")
+    @classmethod
+    def validate_transcript_turns(cls, v: List[VoiceInterviewTranscriptTurn]):
+        cleaned: List[VoiceInterviewTranscriptTurn] = []
+        for i, turn in enumerate(v):
+            text = (turn.text or "").strip()
+            if not text:
+                raise ValueError(f"transcript[{i}].text cannot be empty")
+            cleaned.append(VoiceInterviewTranscriptTurn(role=turn.role, text=text))
+        if not cleaned:
+            raise ValueError("transcript must contain at least one turn")
+        return cleaned
+
+
+class VoiceInterviewAnalyzeResponse(BaseModel):
+    """Structured post-interview analysis for the React results screen."""
+
+    technical_score: int = Field(..., ge=0, le=100)
+    communication_score: int = Field(..., ge=0, le=100)
+    strengths: List[str]
+    weaknesses: List[str]
+    study_plan: List[str]
+    interview_focus: Optional[str] = None
+    overall_score: Optional[int] = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description="Rounded average of technical + communication scores.",
+    )

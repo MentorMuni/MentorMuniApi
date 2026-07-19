@@ -36,6 +36,10 @@ from app.schemas.ai import (
     InterviewReadinessPlanResponse,
     EvaluateRequest,
     EvaluateResponse,
+    VoiceInterviewSessionRequest,
+    VoiceInterviewSessionResponse,
+    VoiceInterviewAnalyzeRequest,
+    VoiceInterviewAnalyzeResponse,
 )
 from app.schemas.inquiry import InquiryCreate
 from app.schemas.interview_lead import InterviewReadyLeadCreate
@@ -44,6 +48,7 @@ from app.services import contact_storage, interview_lead_build, stats as stats_s
 from app.services.guard_layer import GuardLayer
 from app.services.llm import LLMService
 from app.services.evaluator import EvaluatorService
+from app.services.voice_interview import VoiceInterviewService
 from app.services import resume_ats as resume_ats_service
 from app.core.config import settings
 
@@ -66,6 +71,7 @@ guard_layer = GuardLayer(timeout=settings.llm_timeout_seconds)
 logger = logging.getLogger(__name__)
 llm_service = LLMService()
 evaluator_service = EvaluatorService()
+voice_interview_service = VoiceInterviewService()
 
 @app.get("/")
 async def root():
@@ -300,6 +306,67 @@ async def ai_readiness_plan(request: Request, body: AIReadinessPlanRequest):
     except Exception:
         logger.exception("ai_readiness_plan failed")
         raise HTTPException(status_code=500, detail="Failed to generate AI readiness plan. Please try again.")
+
+
+@app.post(
+    "/interview-ready/voice-interview/session",
+    response_model=VoiceInterviewSessionResponse,
+    responses={
+        429: {"description": "Rate limit exceeded"},
+        502: {"description": "OpenAI Realtime session creation failed"},
+    },
+    summary="Mint OpenAI Realtime ephemeral key for live MNC-style voice interview",
+)
+@limiter.limit("10/minute")
+async def voice_interview_session(request: Request, body: VoiceInterviewSessionRequest):
+    """
+    Creates an OpenAI Realtime ephemeral client secret for browser WebRTC voice interviews.
+
+    Send `interview_focus` in the body (e.g. Java, C++, projects only) — one shared prompt
+    is rendered and attached to the Realtime session. React connects with the returned
+    `client_secret` to https://api.openai.com/v1/realtime/calls (do not expose OPENAI_API_KEY).
+    """
+    try:
+        return await voice_interview_service.create_session(body)
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    except Exception:
+        logger.exception("voice_interview_session failed")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to create voice interview session. Please try again.",
+        )
+
+
+@app.post(
+    "/interview-ready/voice-interview/analyze",
+    response_model=VoiceInterviewAnalyzeResponse,
+    responses={
+        429: {"description": "Rate limit exceeded"},
+        502: {"description": "Analysis model failed"},
+    },
+    summary="Score a completed voice interview transcript (technical + communication + study plan)",
+)
+@limiter.limit("20/minute")
+async def voice_interview_analyze(request: Request, body: VoiceInterviewAnalyzeRequest):
+    """
+    After the live Realtime interview ends, POST the captured transcript turns.
+    Uses a GPT analysis model (not Realtime) to return structured scores for the results UI.
+    """
+    try:
+        return await guard_layer.run_with_timeout(
+            voice_interview_service.analyze_interview(body)
+        )
+    except TimeoutError as e:
+        raise HTTPException(status_code=504, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    except Exception:
+        logger.exception("voice_interview_analyze failed")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to analyze voice interview. Please try again.",
+        )
 
 
 @app.post(
