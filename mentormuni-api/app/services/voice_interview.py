@@ -31,9 +31,11 @@ logger = logging.getLogger(__name__)
 OPENAI_CLIENT_SECRETS_URL = "https://api.openai.com/v1/realtime/client_secrets"
 OPENAI_REALTIME_CALLS_URL = "https://api.openai.com/v1/realtime/calls"
 MAX_TOKENS_ANALYSIS = 1200
-# OpenAI has no Indian-accent male voice ID. echo/ash/verse are the clearer male personas.
-_MALE_VOICES = frozenset({"echo", "ash", "verse"})
-_DEFAULT_MALE_VOICE = "echo"
+# OpenAI has no Indian-accent male voice ID.
+# Male-leaning Realtime voices only. Never mint marin/coral/shimmer (female).
+_MALE_VOICES = frozenset({"echo", "ash", "verse", "cedar"})
+# ash = clearer male; softer than echo for many listeners.
+_DEFAULT_MALE_VOICE = "ash"
 
 
 class VoiceInterviewService:
@@ -50,7 +52,8 @@ class VoiceInterviewService:
             extra_context=body.extra_context,
         )
         model = body.model or settings.realtime_model
-        # Force a male voice even if the client sends marin/cedar/etc.
+        # Always mint a male interviewer voice. Ignore client female/neutral overrides
+        # (marin/coral/shimmer/etc). Clients must NOT change voice via session.update.
         requested = (body.voice or _DEFAULT_MALE_VOICE).strip().lower()
         voice = requested if requested in _MALE_VOICES else _DEFAULT_MALE_VOICE
         if requested != voice:
@@ -143,9 +146,10 @@ class VoiceInterviewService:
             integration_hint=(
                 "Connect WebRTC to realtime_calls_url with Bearer client_secret. "
                 "Do NOT proxy audio through MentorMuni. "
-                "If you send session.update on the data channel, the payload MUST include "
-                "session.type = 'realtime' (OpenAI GA). Missing it causes: "
-                "Missing required parameter: 'session.type'."
+                "CRITICAL: Do NOT send audio.output.voice in session.update — "
+                "that can override the male interviewer (ash) with marin/female. "
+                "Use only the voice returned in this response. "
+                "If you send session.update, include session.type='realtime' and omit voice."
             ),
         )
 

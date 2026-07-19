@@ -715,10 +715,11 @@ class VoiceInterviewSessionRequest(BaseModel):
         description="Optional free text: resume summary, project names, weak areas to probe.",
     )
     voice: VoiceInterviewVoice = Field(
-        default="echo",
+        default="ash",
         description=(
-            "Male Realtime voice. Allowed male voices: echo (default), ash, verse. "
-            "Female/neutral voices (marin, cedar, coral, shimmer, etc.) are remapped to echo."
+            "Male Realtime voice only. Default ash. Allowed: ash, echo, verse, cedar. "
+            "Female voices (marin, coral, shimmer) are remapped to ash. "
+            "Frontend must not change voice via session.update."
         ),
     )
     model: Optional[str] = Field(
