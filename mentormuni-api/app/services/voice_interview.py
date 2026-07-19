@@ -49,8 +49,8 @@ class VoiceInterviewService:
         model = body.model or settings.realtime_model
         voice = body.voice
 
-        # Enable input transcription so the React client can collect a transcript
-        # from Realtime data-channel events for the /analyze endpoint.
+        # Enable English input transcription for cleaner live transcript + /analyze.
+        # Frontend must include session.type="realtime" on any session.update (GA Realtime).
         payload: dict[str, Any] = {
             "expires_after": {
                 "anchor": "created_at",
@@ -64,6 +64,13 @@ class VoiceInterviewService:
                     "input": {
                         "transcription": {
                             "model": "gpt-4o-mini-transcribe",
+                            "language": "en",
+                        },
+                        "turn_detection": {
+                            "type": "server_vad",
+                            "threshold": 0.5,
+                            "prefix_padding_ms": 300,
+                            "silence_duration_ms": 600,
                         },
                     },
                     "output": {
@@ -118,6 +125,14 @@ class VoiceInterviewService:
             interview_focus=body.interview_focus,
             instructions_preview=preview,
             realtime_calls_url=OPENAI_REALTIME_CALLS_URL,
+            session_type="realtime",
+            integration_hint=(
+                "Connect WebRTC to realtime_calls_url with Bearer client_secret. "
+                "Do NOT proxy audio through MentorMuni. "
+                "If you send session.update on the data channel, the payload MUST include "
+                "session.type = 'realtime' (OpenAI GA). Missing it causes: "
+                "Missing required parameter: 'session.type'."
+            ),
         )
 
     async def analyze_interview(

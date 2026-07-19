@@ -757,10 +757,15 @@ class VoiceInterviewSessionResponse(BaseModel):
         default="https://api.openai.com/v1/realtime/calls",
         description="POST SDP offer here with Authorization: Bearer <client_secret>",
     )
+    session_type: str = Field(
+        default="realtime",
+        description="OpenAI GA Realtime session type. Required on every browser session.update.",
+    )
     integration_hint: str = Field(
         default=(
             "Fetch this session, then connect browser WebRTC to realtime_calls_url "
-            "using client_secret as Bearer token (OpenAI Realtime GA)."
+            "using client_secret as Bearer token (OpenAI Realtime GA). "
+            "Any session.update MUST include session.type='realtime'."
         )
     )
 
