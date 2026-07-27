@@ -1,15 +1,6 @@
 from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Annotated, List, Literal, Optional, Union
 
-USER_TYPES = Literal[
-    "college_student_year_1",
-    "college_student_year_2",
-    "college_student_year_3",
-    "college_student_year_4",
-    "recent_graduate",
-    "it_professional",
-]
-
 VALID_EVAL_ANSWERS = {"Yes", "No", "A", "B", "C", "D"}
 
 
@@ -25,71 +16,6 @@ class EvaluateResponse(BaseModel):
     strengths: List[str]
     gaps: List[str]
     learning_recommendations: List[LearningRecommendation]
-
-
-class PlanRequest(BaseModel):
-    user_type: str = Field(
-        ...,
-        description=(
-            "college_student_year_1 … college_student_year_4, or it_professional "
-            "(legacy: student, 3rd/4th year student, working professional — normalized to canonical values)"
-        ),
-    )
-    experience_years: Optional[int] = Field(
-        default=0,
-        ge=0,
-        le=50,
-        description="Optional. Default 0 for students, 1 for working professionals if omitted.",
-    )
-    primary_skill: str = Field(
-        ...,
-        min_length=1,
-        max_length=100,
-        description="Technical skill e.g. React, .NET, Python (any tech stack allowed)",
-    )
-
-    @field_validator("primary_skill")
-    @classmethod
-    def validate_primary_skill_is_safe(cls, v: str) -> str:
-        from app.validators.primary_skill import validate_primary_skill as _validate
-        return _validate(v)
-    target_role: Optional[str] = Field(
-        default=None,
-        max_length=100,
-        description="Optional. Defaults to '{primary_skill} Developer' if omitted or empty.",
-    )
-
-    @field_validator("target_role")
-    @classmethod
-    def target_role_empty_to_none(cls, v):
-        if v is None or (isinstance(v, str) and not v.strip()):
-            return None
-        return v.strip()
-    email: Optional[str] = Field(default=None, max_length=255, description="Optional. Omit or send null/empty if not collected.")
-    phone: Optional[str] = Field(default=None, max_length=20, description="Optional. Omit or send null/empty if not collected.")
-
-    @field_validator("email", "phone")
-    @classmethod
-    def empty_to_none(cls, v):
-        """Treat empty string, blank, or null as None."""
-        if v is None:
-            return None
-        s = str(v).strip()
-        return None if not s else s
-
-    @field_validator("user_type")
-    @classmethod
-    def validate_user_type(cls, v: str) -> str:
-        from app.validators.user_type import normalize_user_type
-
-        return normalize_user_type(v)
-
-    @model_validator(mode="after")
-    def set_target_role_default(self):
-        """Default target_role to '{primary_skill} Developer' when omitted."""
-        if not self.target_role or not str(self.target_role).strip():
-            object.__setattr__(self, "target_role", f"{self.primary_skill} Developer")
-        return self
 
 
 class InterviewReadinessPlanRequest(BaseModel):
@@ -231,65 +157,6 @@ class InterviewReadinessPlanRequest(BaseModel):
         return self
 
 
-class LegacyPlanQuestionItem(BaseModel):
-    """Original /interview-ready/plan item: only Yes/No questions (no question_type)."""
-
-    question: str = Field(..., min_length=1)
-    correct_answer: Literal["Yes", "No"]
-    study_topic: str = Field(
-        ...,
-        min_length=1,
-        description="Short topic name for study/recommendations",
-    )
-
-
-class YesNoQuestionItem(BaseModel):
-    """Yes/No screening question."""
-
-    question_type: Literal["yes_no"] = "yes_no"
-    question: str = Field(..., min_length=1)
-    correct_answer: Literal["Yes", "No"]
-    study_topic: str = Field(
-        ...,
-        min_length=1,
-        description="Short topic name for study/recommendations",
-    )
-
-
-class MultipleChoiceQuestionItem(BaseModel):
-    """Single-select multiple choice (exactly four options, labeled A–D in order)."""
-
-    question_type: Literal["multiple_choice"] = "multiple_choice"
-    question: str = Field(..., min_length=1)
-    options: List[str] = Field(
-        ...,
-        min_length=4,
-        max_length=4,
-        description="Four choices in order A, B, C, D",
-    )
-    correct_answer: Literal["A", "B", "C", "D"]
-    study_topic: str = Field(..., min_length=1)
-
-    @field_validator("options")
-    @classmethod
-    def each_option_non_empty(cls, v: List[str]) -> List[str]:
-        out = []
-        for i, o in enumerate(v):
-            t = str(o).strip() if o is not None else ""
-            if not t:
-                raise ValueError(f"options[{i}] cannot be empty")
-            if len(t) > 400:
-                raise ValueError(f"options[{i}] is too long (max 400 characters)")
-            out.append(t)
-        return out
-
-
-QuestionItem = Annotated[
-    Union[YesNoQuestionItem, MultipleChoiceQuestionItem],
-    Field(discriminator="question_type"),
-]
-
-
 class SkillReadinessPlanRequest(BaseModel):
     """Request body for POST /interview-ready/skill-readiness/plan (rigorous skill-depth quiz)."""
 
@@ -428,84 +295,6 @@ class AptitudeReadinessPlanRequest(BaseModel):
         return self
 
 
-class AIReadinessPlanRequest(BaseModel):
-    """Request body for POST /interview-ready/ai-readiness/plan (AI awareness readiness, all MCQ)."""
-
-    user_type: str = Field(
-        ...,
-        description=(
-            'One of: college_student_year_1, college_student_year_2, college_student_year_3, '
-            "college_student_year_4, it_professional"
-        ),
-    )
-    experience_years: Optional[int] = Field(default=0, ge=0, le=50)
-    primary_skill: str = Field(
-        default="Software Engineering Fundamentals",
-        min_length=1,
-        max_length=200,
-        description="Primary technical area (used to personalize AI scenarios).",
-    )
-    target_role: Optional[str] = Field(default="Software Engineer", max_length=120)
-    ai_tools_used: Optional[str] = Field(
-        default=None,
-        max_length=300,
-        description="Optional tools the user already uses (e.g., ChatGPT, Copilot, Cursor).",
-    )
-    workflow_context: Optional[str] = Field(
-        default=None,
-        max_length=1000,
-        description="Optional context: projects/tasks where AI is used.",
-    )
-    email: Optional[str] = Field(default=None, max_length=255)
-    phone: Optional[str] = Field(default=None, max_length=20)
-
-    @field_validator("primary_skill")
-    @classmethod
-    def validate_primary_skill_is_safe(cls, v: str) -> str:
-        from app.validators.primary_skill import validate_primary_skill as _validate
-
-        return _validate(v)
-
-    @field_validator("target_role", "ai_tools_used", "workflow_context")
-    @classmethod
-    def strip_optional_strings(cls, v):
-        if v is None:
-            return None
-        s = str(v).strip()
-        return None if not s else s
-
-    @field_validator("email", "phone")
-    @classmethod
-    def empty_to_none_contact(cls, v):
-        if v is None:
-            return None
-        s = str(v).strip()
-        return None if not s else s
-
-    @field_validator("user_type")
-    @classmethod
-    def validate_user_type(cls, v: str) -> str:
-        from app.validators.user_type import normalize_user_type
-
-        return normalize_user_type(v)
-
-    @model_validator(mode="after")
-    def set_target_role_default(self):
-        if not self.target_role or not str(self.target_role).strip():
-            object.__setattr__(self, "target_role", "Software Engineer")
-        if not self.primary_skill or not str(self.primary_skill).strip():
-            object.__setattr__(self, "primary_skill", "Software Engineering Fundamentals")
-        return self
-
-
-class SkillReadinessYesNoItem(BaseModel):
-    question_type: Literal["yes_no"] = "yes_no"
-    question: str = Field(..., min_length=1)
-    correct_answer: Literal["Yes", "No"]
-    study_topic: str = Field(..., min_length=1)
-    explanation: str = Field(..., min_length=1)
-
-
 class SkillReadinessMcBase(BaseModel):
     """Shared shape for multiple_choice, scenario, and code_mcq."""
 
@@ -562,7 +351,6 @@ class AptitudeReadinessMultipleChoiceItem(SkillReadinessMcBase):
 
 SkillReadinessQuestionItem = Annotated[
     Union[
-        SkillReadinessYesNoItem,
         SkillReadinessMultipleChoiceItem,
         SkillReadinessScenarioItem,
         SkillReadinessCodeMcqItem,
@@ -571,20 +359,14 @@ SkillReadinessQuestionItem = Annotated[
 ]
 
 
-class PlanResponse(BaseModel):
-    """Legacy plan: 15 Yes/No questions only."""
-
-    evaluation_plan: List[LegacyPlanQuestionItem]
-
-
 class SkillReadinessPlanResponse(BaseModel):
-    """Rigorous skill-depth plan: yes_no, multiple_choice, scenario, code_mcq with explanations."""
+    """Skill-depth plan: multiple_choice, scenario, code_mcq with explanations."""
 
     evaluation_plan: List[SkillReadinessQuestionItem]
 
 
 class InterviewReadinessPlanResponse(BaseModel):
-    """Holistic interview readiness: yes_no, multiple_choice, scenario, code_mcq with explanations."""
+    """Holistic interview readiness: multiple_choice, scenario, code_mcq with explanations."""
 
     evaluation_plan: List[SkillReadinessQuestionItem]
 
@@ -593,12 +375,6 @@ class AptitudeReadinessPlanResponse(BaseModel):
     """Aptitude readiness: 15 placement-style MCQs with strict section distribution."""
 
     evaluation_plan: List[AptitudeReadinessMultipleChoiceItem]
-
-
-class AIReadinessPlanResponse(BaseModel):
-    """AI readiness: 15 scenario-heavy beginner/intermediate MCQs."""
-
-    evaluation_plan: List[SkillReadinessMultipleChoiceItem]
 
 
 class EvaluateRequest(BaseModel):

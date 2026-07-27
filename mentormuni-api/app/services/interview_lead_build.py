@@ -35,36 +35,6 @@ def iso_timestamp_utc() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def lead_from_legacy_plan(
-    *,
-    email: Optional[str],
-    phone: Optional[str],
-    user_type_canonical: str,
-    primary_skill: str,
-    target_role: Optional[str],
-    experience_years: int = 0,
-    assessment_focus: Optional[str] = "placement",
-) -> Optional[dict[str, Any]]:
-    if not (email and str(email).strip()) and not (phone and str(phone).strip()):
-        return None
-    return {
-        "email": (email or "").strip() or None,
-        "phone": (phone or "").strip() or None,
-        "user_type": display_user_type(user_type_canonical),
-        "user_category": storage_user_category(user_type_canonical),
-        "primary_skill": primary_skill,
-        "college_name": None,
-        "company_name": None,
-        "current_organization": None,
-        "experience_years": experience_years,
-        "assessment_focus": assessment_focus,
-        "target_role": target_role,
-        "skill_readiness_user_type": None,
-        "source": "interview_ready_generate_questions",
-        "captured_at": iso_timestamp_utc(),
-    }
-
-
 def lead_from_skill_readiness(
     *,
     email: Optional[str],

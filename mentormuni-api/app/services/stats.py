@@ -1,6 +1,6 @@
 """
-Simple stats and lead capture for Interview Ready.
-In-memory counter; leads logged. Upgrade to Redis/DB for production scale.
+Lead capture for Interview Ready.
+Leads logged to JSONL. Upgrade to Redis/DB for production scale.
 """
 import json
 import logging
@@ -10,9 +10,6 @@ from typing import Any, Optional
 
 logger = logging.getLogger("stats_service")
 
-# In-memory counters (resets on deploy; use Redis/DB for persistence)
-_total_checks: int = 0
-_total_views: int = 0
 _leads_path: Optional[Path] = None
 
 
@@ -26,24 +23,6 @@ def _leads_file() -> Path:
             base = Path("/tmp")
         _leads_path = base / "interview_ready_leads.jsonl"
     return _leads_path
-
-
-def increment_checks() -> int:
-    """Increment and return total readiness checks completed."""
-    global _total_checks
-    _total_checks += 1
-    return _total_checks
-
-
-def increment_views() -> int:
-    """Increment and return total page views (link hits)."""
-    global _total_views
-    _total_views += 1
-    return _total_views
-
-
-def get_stats() -> dict:
-    return {"total_checks": _total_checks, "total_views": _total_views}
 
 
 def get_leads(limit: Optional[int] = None) -> list:

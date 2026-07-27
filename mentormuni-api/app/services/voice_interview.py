@@ -253,14 +253,6 @@ def _format_transcript_for_analysis(turns: List[VoiceInterviewTranscriptTurn]) -
     return "\n".join(lines) if lines else "(No usable on-topic transcript captured.)"
 
 
-def _format_transcript(turns: List[VoiceInterviewTranscriptTurn]) -> str:
-    lines: List[str] = []
-    for turn in turns:
-        speaker = "Candidate" if turn.role == "user" else "Interviewer"
-        lines.append(f"{speaker}: {turn.text}")
-    return "\n".join(lines)
-
-
 def _clamp_score(value: Any) -> int:
     try:
         n = int(round(float(value)))

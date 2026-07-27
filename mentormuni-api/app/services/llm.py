@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import re
@@ -12,19 +11,15 @@ from app.services.guard_layer import GuardLayer
 from app.services.skill_readiness_prompt import render_skill_readiness_prompt
 from app.services.interview_readiness_prompt import render_interview_readiness_prompt
 from app.services.aptitude_readiness_prompt import render_aptitude_readiness_prompt
-from app.services.ai_readiness_prompt import render_ai_readiness_prompt
 from app.schemas.ai import InterviewReadinessPlanRequest
 
 logger = logging.getLogger("llm_service")
 
-MAX_TOKENS_LEGACY_PLAN = 1500
-MAX_TOKENS_MIXED_PLAN = 3200
 # Skill / interview / aptitude readiness: GPT-4.1 for question quality & answer accuracy
 READINESS_PLAN_MODEL = "gpt-4.1"
 MAX_TOKENS_INTERVIEW_READINESS_PLAN = 4096
 MAX_TOKENS_SKILL_READINESS_PLAN = 4096
 MAX_TOKENS_APTITUDE_READINESS_PLAN = 4096
-MAX_TOKENS_AI_READINESS_PLAN = 2600
 MAX_TOKENS_VALIDATE = 20
 PLAN_QUESTION_COUNT = 15
 APTITUDE_SECTION_ORDER: list[str] = (
@@ -36,9 +31,8 @@ class LLMService:
     def __init__(self):
         self._client = AsyncOpenAI(api_key=app_settings.openai_api_key)
         # Different retry strategies for different endpoints
-        # Aptitude & AI: High first-try quality (98%+), 1 retry is enough
+        # Aptitude: High first-try quality (98%+), 1 retry is enough
         self.guard_layer_aptitude = GuardLayer(timeout=app_settings.llm_timeout_seconds, max_retries=1)
-        self.guard_layer_ai = GuardLayer(timeout=app_settings.llm_timeout_seconds, max_retries=1)
         # Skill & Interview: Need accuracy, keep 2 retries
         self.guard_layer_skill = GuardLayer(timeout=app_settings.llm_timeout_seconds, max_retries=2)
         self.guard_layer_interview = GuardLayer(timeout=app_settings.llm_timeout_seconds, max_retries=2)
@@ -75,118 +69,6 @@ If YES, respond with just: YES"""
         except Exception as e:
             logger.warning("Skill validation failed: %s", e)
             return True, ""  # On error, allow (don't block due to API failure)
-
-    async def generate_evaluation_plan(self, request) -> list[dict]:
-        """Legacy /interview-ready/plan: 15 Yes/No only (LegacyPlanQuestionItem)."""
-        prompt = f"""You are a senior technical interviewer at a top product company.
-
-Your task:
-Generate EXACTLY {PLAN_QUESTION_COUNT} HIGH-QUALITY YES/NO interview questions that realistically assess interview readiness.
-
-These questions MUST:
-- Feel like real interviewer screening questions
-- Require thinking, not guessing
-- Include tricky edge cases and misconceptions
-- Prevent "blind Yes" answers
-- Mix difficulty: medium → hard → tricky
-- Have ONLY ONE correct answer: Yes or No
-
-User Profile:
-- User Type: {request.user_type}
-- Experience: {request.experience_years} years
-- Primary Skill: {request.primary_skill}
-- Target Role: {request.target_role}
-
------------------------------------------
-QUESTION STRUCTURE (MANDATORY)
------------------------------------------
-
-Return questions in THIS ORDER:
-
-### Section 1: Capability Gate (5 questions)
-Purpose: Check if candidate truly understands core responsibilities.
-
-Style:
-- "Can you explain / design / reason about…"
-- These are NOT trivial
-- Expert SHOULD say "Yes", but ONLY if genuinely prepared
-
-Correct answer: usually "Yes"
-
------------------------------------------
-
-### Section 2: Concept Validation (5 questions)
-Purpose: Validate depth, not surface knowledge.
-
-Style:
-- Precise technical statements
-- Require understanding of internals
-- No obvious textbook wording
-
-Mix of Yes and No REQUIRED.
-
------------------------------------------
-
-### Section 3: Interview Traps & Edge Cases (5 questions)
-Purpose: Separate interview-ready from resume-ready.
-
-Style:
-- Common misconceptions
-- Edge conditions
-- Real interview traps
-- Even experienced devs get these wrong
-
-Most answers here should be "No".
-
------------------------------------------
-STRICT RULES (DO NOT VIOLATE)
------------------------------------------
-
-1. NO basic or trivia questions
-2. NO opinion-based questions
-3. NO obvious answers
-4. NO repeating concepts
-5. NO more than 60% "Yes" answers total
-6. Questions MUST require reasoning, not memory
-7. Questions MUST feel like real interview questions
-
------------------------------------------
-OUTPUT FORMAT (STRICT)
------------------------------------------
-
-Return ONLY a JSON array of exactly {PLAN_QUESTION_COUNT} objects.
-
-Each object:
-{{
-  "question": "string",
-  "correct_answer": "Yes" | "No",
-  "study_topic": "string"
-}}
-
-study_topic: SHORT topic name for study recommendations (2-5 words). NOT the question text.
-
-No explanation.
-No markdown.
-No extra text.
------------------------------------------"""
-
-        async def call_openai():
-            response = await self._client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=MAX_TOKENS_LEGACY_PLAN,
-                temperature=0,
-            )
-            content = response.choices[0].message.content or ""
-            usage = getattr(response, "usage", None)
-            if usage:
-                tokens = getattr(usage, "total_tokens", 0) or 0
-                logger.info("LLM tokens used: %d (legacy plan)", tokens)
-            return self._parse_legacy_plan(content)
-
-        return await self.guard_layer.run_with_timeout(
-            self.guard_layer.retry_with_fallback(call_openai)
-        )
 
     @staticmethod
     def _normalize_skill_topic_key(topic: str) -> str:
@@ -406,76 +288,6 @@ No extra text.
         return e if e else (
             "Compare your answer to the official behavior of this skill; the key is specificity to this stack."
         )
-
-    def _parse_skill_readiness_plan(self, content: str) -> list[dict]:
-        """Parse skill readiness JSON: yes_no | multiple_choice | scenario | code_mcq with explanation."""
-        content = content.strip()
-        json_match = re.search(r"\[[\s\S]*\]", content)
-        if json_match:
-            try:
-                items = json.loads(json_match.group())
-                if not isinstance(items, list):
-                    raise ValueError("not a list")
-                out: List[dict] = []
-                # Consume all array items until we have 15 valid (model may send extras if some rows are bad).
-                for x in items:
-                    if len(out) >= PLAN_QUESTION_COUNT:
-                        break
-                    if not isinstance(x, dict) or "question" not in x:
-                        continue
-                    q = str(x["question"]).strip()
-                    if not q:
-                        continue
-                    topic = str(x.get("study_topic", "")).strip()
-                    if not topic:
-                        topic = q[:60] + ("..." if len(q) > 60 else "")
-                    expl = self._explanation_or_default(x.get("explanation"))
-
-                    qt = str(x.get("question_type", "")).strip().lower()
-                    if qt == "yes_no":
-                        yn = self._parse_yes_no_answer(x.get("correct_answer"))
-                        if yn is None:
-                            continue
-                        out.append({
-                            "question_type": "yes_no",
-                            "question": q,
-                            "correct_answer": yn,
-                            "study_topic": topic,
-                        })
-                    elif qt in ("multiple_choice", "scenario", "code_mcq"):
-                        opts = self._normalize_mc_options(x.get("options"))
-                        # BUG FIX: Add validation to ensure options are distinct and relevant
-                        # For skill readiness, allow concept-based questions with similar options
-                        if opts is None or not self._validate_mc_options(opts, q, allow_concept_based=True):
-                            logger.debug("Skipping MCQ with invalid/duplicate options: %s", q[:60])
-                            continue
-                        letter = self._normalize_mc_letter(x.get("correct_answer"), opts)
-                        if letter is None:
-                            continue
-                        out.append({
-                            "question_type": qt,
-                            "question": q,
-                            "options": opts,
-                            "correct_answer": letter,
-                            "study_topic": topic,
-                        })
-                if len(out) < PLAN_QUESTION_COUNT:
-                    logger.warning(
-                        "Parsed only %d/%d plan questions (dropped invalid rows or truncated JSON).",
-                        len(out),
-                        PLAN_QUESTION_COUNT,
-                    )
-                if out:
-                    return out
-            except (json.JSONDecodeError, ValueError):
-                pass
-        return [{
-            "question_type": "yes_no",
-            "question": "Skill fundamentals",
-            "correct_answer": "Yes",
-            "study_topic": "Skill fundamentals",
-            "explanation": "Placeholder — model output was not valid JSON; retry the request.",
-        }]
 
     @staticmethod
     def _map_interview_prompt_question_type(raw_type: str, question: str) -> str:
@@ -787,53 +599,6 @@ No extra text.
 
         return all_questions[:PLAN_QUESTION_COUNT]
 
-    async def generate_ai_readiness_plan(self, request) -> list[dict]:
-        """AI readiness: scenario-heavy beginner/intermediate all-MCQ quiz.
-        
-        Optimized with:
-        - 2600 tokens limit (down from 4000) for 6-7s faster response
-        - max_retries=1 (down from 2) since quality is high
-        """
-        prompt = render_ai_readiness_prompt(
-            user_type=request.user_type,
-            experience_years=request.experience_years,
-            primary_skill=request.primary_skill,
-            target_role=request.target_role or "Software Engineer",
-            ai_tools_used=getattr(request, "ai_tools_used", None),
-            workflow_context=getattr(request, "workflow_context", None),
-            plan_question_count=PLAN_QUESTION_COUNT,
-        )
-
-        async def call_openai():
-            response = await self._client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=MAX_TOKENS_AI_READINESS_PLAN,
-                temperature=0,
-            )
-            choice = response.choices[0]
-            content = choice.message.content or ""
-            if getattr(choice, "finish_reason", None) == "length":
-                logger.warning(
-                    "AI readiness: LLM hit max_tokens (finish_reason=length); output may be truncated."
-                )
-            usage = getattr(response, "usage", None)
-            if usage:
-                tokens = getattr(usage, "total_tokens", 0) or 0
-                logger.info("LLM tokens used: %d (ai readiness plan)", tokens)
-            parsed = self._parse_ai_readiness_plan(content)
-            if len(parsed) != PLAN_QUESTION_COUNT:
-                logger.warning(
-                    "AI readiness plan returned %d/%d valid rows.",
-                    len(parsed),
-                    PLAN_QUESTION_COUNT,
-                )
-            return parsed
-
-        return await self.guard_layer_ai.run_with_timeout(
-            self.guard_layer_ai.retry_with_fallback(call_openai)
-        )
-
     @staticmethod
     def _coerce_questions_list(obj) -> Optional[list]:
         if isinstance(obj, list):
@@ -959,63 +724,6 @@ No extra text.
                 PLAN_QUESTION_COUNT,
             )
         return out
-
-    def _parse_ai_readiness_plan(self, content: str) -> list[dict]:
-        """Parse AI readiness JSON into up to 15 multiple_choice questions."""
-        items = self._extract_aptitude_questions_from_llm(content)
-        if not items:
-            logger.warning("AI readiness plan: no JSON questions list found in model output.")
-            return []
-
-        out: List[dict] = []
-        try:
-            for x in items:
-                if len(out) >= PLAN_QUESTION_COUNT:
-                    break
-                if not isinstance(x, dict) or "question" not in x:
-                    continue
-                q = str(x["question"]).strip()
-                if not q:
-                    continue
-                opts = self._normalize_mc_options(x.get("options"))
-                if opts is None:
-                    logger.debug("Skipping AI MCQ with invalid option format: %s", q[:60])
-                    continue
-                
-                # TRY FIX: Attempt to auto-fix similar options before rejecting
-                fixed_opts = self._fix_similar_options(q, opts, allow_concept_based=False)
-                if fixed_opts is None:
-                    logger.debug("Skipping AI MCQ with unfixable similar options: %s", q[:60])
-                    continue
-                
-                letter = self._normalize_mc_letter(x.get("correct_answer"), fixed_opts)
-                if letter is None:
-                    logger.debug("Skipping AI MCQ with invalid correct_answer: %s", q[:60])
-                    continue
-                topic = str(x.get("study_topic", "")).strip()
-                if not topic:
-                    topic = q[:60] + ("..." if len(q) > 60 else "")
-                expl = self._explanation_or_default(x.get("explanation"))
-                out.append({
-                    "question_type": "multiple_choice",
-                    "question": q,
-                    "options": fixed_opts,
-                    "correct_answer": letter,
-                    "study_topic": topic,
-                })
-        except (TypeError, ValueError) as e:
-            logger.error("Error parsing AI readiness questions: %s", e)
-            return []
-
-        return out
-
-    def _parse_yes_no_answer(self, raw) -> str | None:
-        s = str(raw).strip().lower()
-        if s in ("yes", "y"):
-            return "Yes"
-        if s in ("no", "n"):
-            return "No"
-        return None
 
     def _normalize_mc_options(self, raw_opts) -> Optional[List[str]]:
         if not isinstance(raw_opts, list):
@@ -1252,254 +960,6 @@ No extra text.
         
         return None
 
-    def _parse_and_validate_batch(self, content: str, section: str, strict: bool = True) -> list[dict]:
-        """Parse JSON batch with configurable validation.
-        
-        Args:
-            content: JSON string from LLM
-            section: Question section (quantitative, logical, verbal)
-            strict: If True, use rigorous validation. If False, accept more questions.
-        
-        Returns:
-            List of valid questions (up to 6 per batch)
-        """
-        try:
-            content = content.strip()
-            data = json.loads(content)
-            
-            if not isinstance(data, list):
-                return []
-            
-            valid_questions = []
-            for item in data:
-                if strict:
-                    q = self._extract_question_strict(item, section)
-                else:
-                    q = self._extract_question_flexible(item, section)
-                if q:
-                    valid_questions.append(q)
-                if len(valid_questions) >= 6:
-                    break
-            
-            return valid_questions
-        except json.JSONDecodeError:
-            return []
-        except Exception:
-            return []
-    
-    def _extract_question_strict(self, item: dict, section: str) -> Optional[dict]:
-        """Extract ONE question with STRICT field validation."""
-        try:
-            if not isinstance(item, dict):
-                return None
-            
-            # Question text - REQUIRED
-            q_text = item.get("q") or item.get("question") or ""
-            if not q_text or len(str(q_text).strip()) < 10:
-                return None
-            q_text = str(q_text).strip()[:500]
-            
-            # Options - MUST be exactly 4
-            opts_raw = item.get("opts") or item.get("options") or []
-            if not isinstance(opts_raw, list) or len(opts_raw) != 4:
-                return None
-            
-            opts = [str(o).strip() for o in opts_raw]
-            opts = self._normalize_mc_options(opts)
-            if opts is None:
-                return None
-            
-            fixed_opts = self._fix_similar_options(q_text, opts, allow_concept_based=False)
-            if fixed_opts is None:
-                return None
-            
-            if not self._validate_mc_options(fixed_opts, q_text, allow_concept_based=False):
-                return None
-            
-            # Correct answer - STRICT validation
-            ans_raw = str(item.get("ans") or item.get("correct_answer") or "").upper().strip()
-            if ans_raw not in ("A", "B", "C", "D"):
-                # Try to extract A-D from string
-                match = re.search(r"[A-D]", ans_raw)
-                if not match:
-                    return None
-                ans_raw = match.group(0)
-            
-            # Difficulty - STRICT (must normalize to exact value)
-            diff_raw = str(item.get("diff") or item.get("difficulty") or "moderate").strip().lower()
-            if diff_raw in ("easy", "e"):
-                difficulty = "easy"
-            elif diff_raw in ("moderate", "mod", "m"):
-                difficulty = "moderate"
-            elif diff_raw in ("tricky", "trick", "t", "hard"):
-                difficulty = "tricky"
-            else:
-                difficulty = "moderate"
-            
-            # Other fields with safe defaults
-            topic = str(item.get("topic") or item.get("study_topic") or "").strip()[:60]
-            if not topic:
-                topic = q_text[:30]
-            
-            asked_in = str(item.get("asked_in") or "").strip()[:200]
-            if not asked_in:
-                asked_in = "Placement test"
-            
-            explain = str(item.get("explain") or item.get("explanation") or "").strip()[:500]
-            if not explain:
-                explain = "Refer to study material"
-            
-            why_fail = str(item.get("why_fail") or item.get("why_students_fail") or "").strip()[:500]
-            if not why_fail:
-                why_fail = "Common mistake"
-            
-            # FINAL QUESTION - All fields validated
-            return {
-                "question_type": "multiple_choice",
-                "section": section,
-                "question": q_text,
-                "options": fixed_opts,
-                "correct_answer": ans_raw,
-                "study_topic": topic,
-                "difficulty": difficulty,
-                "asked_in": asked_in,
-                "why_students_fail": why_fail,
-                "explanation": explain,
-            }
-        except Exception:
-            return None
-    
-    def _extract_question_flexible(self, item: dict, section: str) -> Optional[dict]:
-        """Extract question with FLEXIBLE validation - accept more questions for throughput.
-        
-        This function is more lenient with option validation to ensure we get 15 questions.
-        It still validates core fields but skips aggressive similarity checking.
-        """
-        try:
-            if not isinstance(item, dict):
-                return None
-            
-            # Question text - REQUIRED
-            q_text = item.get("q") or item.get("question") or ""
-            if not q_text or len(str(q_text).strip()) < 10:
-                return None
-            q_text = str(q_text).strip()[:500]
-            
-            # Options - MUST be exactly 4
-            opts_raw = item.get("opts") or item.get("options") or []
-            if not isinstance(opts_raw, list) or len(opts_raw) != 4:
-                return None
-            
-            opts = [str(o).strip() for o in opts_raw]
-            opts = self._normalize_mc_options(opts)
-            if opts is None:
-                return None
-            
-            # FLEXIBLE: Skip the fix and validation - just use raw options
-            # Only check for exact duplicates (most basic check)
-            normalized = [o.lower().strip() for o in opts]
-            if len(set(normalized)) < 4:
-                # Has exact duplicates, try to fix
-                fixed_opts = self._fix_similar_options(q_text, opts, allow_concept_based=False)
-                if fixed_opts is None:
-                    return None
-            else:
-                fixed_opts = opts
-            
-            # Correct answer - flexible parsing
-            ans_raw = str(item.get("ans") or item.get("correct_answer") or "").upper().strip()
-            if ans_raw not in ("A", "B", "C", "D"):
-                match = re.search(r"[A-D]", ans_raw)
-                if not match:
-                    return None
-                ans_raw = match.group(0)
-            
-            # Difficulty - normalize
-            diff_raw = str(item.get("diff") or item.get("difficulty") or "moderate").strip().lower()
-            if diff_raw in ("easy", "e"):
-                difficulty = "easy"
-            elif diff_raw in ("moderate", "mod", "m"):
-                difficulty = "moderate"
-            elif diff_raw in ("tricky", "trick", "t", "hard"):
-                difficulty = "tricky"
-            else:
-                difficulty = "moderate"
-            
-            # Other fields with safe defaults
-            topic = str(item.get("topic") or item.get("study_topic") or "").strip()[:60]
-            if not topic:
-                topic = q_text[:30]
-            
-            asked_in = str(item.get("asked_in") or "").strip()[:200]
-            if not asked_in:
-                asked_in = "Placement test"
-            
-            explain = str(item.get("explain") or item.get("explanation") or "").strip()[:500]
-            if not explain:
-                explain = "Refer to study material"
-            
-            why_fail = str(item.get("why_fail") or item.get("why_students_fail") or "").strip()[:500]
-            if not why_fail:
-                why_fail = "Common mistake"
-            
-            return {
-                "question_type": "multiple_choice",
-                "section": section,
-                "question": q_text,
-                "options": fixed_opts,
-                "correct_answer": ans_raw,
-                "study_topic": topic,
-                "difficulty": difficulty,
-                "asked_in": asked_in,
-                "why_students_fail": why_fail,
-                "explanation": explain,
-            }
-        except Exception:
-            return None
-    
-    def _parse_batch_lenient(self, content: str, section: str) -> list[dict]:
-        """Parse batch response leniently - accept any valid JSON structure."""
-        try:
-            content = content.strip()
-            # Try direct array parse
-            data = json.loads(content)
-            if isinstance(data, list):
-                # Normalize difficulty values to full names
-                for item in data[:5]:
-                    if isinstance(item, dict):
-                        diff = item.get("diff") or item.get("difficulty", "moderate")
-                        # Normalize abbreviated values
-                        if diff in ("e", "easy"):
-                            item["difficulty"] = "easy"
-                        elif diff in ("m", "mod", "moderate"):
-                            item["difficulty"] = "moderate"
-                        elif diff in ("t", "tricky", "hard"):
-                            item["difficulty"] = "tricky"
-                        else:
-                            item["difficulty"] = "moderate"  # Default to moderate
-                return data[:5]
-            elif isinstance(data, dict):
-                # Try common keys for questions array
-                for key in ("questions", "data", "items", "results"):
-                    if key in data and isinstance(data[key], list):
-                        # Normalize difficulty values
-                        for item in data[key][:5]:
-                            if isinstance(item, dict):
-                                diff = item.get("diff") or item.get("difficulty", "moderate")
-                                if diff in ("e", "easy"):
-                                    item["difficulty"] = "easy"
-                                elif diff in ("m", "mod", "moderate"):
-                                    item["difficulty"] = "moderate"
-                                elif diff in ("t", "tricky", "hard"):
-                                    item["difficulty"] = "tricky"
-                                else:
-                                    item["difficulty"] = "moderate"
-                        return data[key][:5]
-            return []
-        except Exception as e:
-            logger.error("Lenient parse failed: %s", e)
-            return []
-    
     def _generate_minimal_fallback_questions(self, question_type: str = "aptitude") -> list[dict]:
         """ABSOLUTE FALLBACK: Return minimal but valid questions when all else fails.
         
@@ -1555,42 +1015,3 @@ No extra text.
             ]
         
         return fallback_questions
-        content = content.strip()
-        json_match = re.search(r"\[[\s\S]*\]", content)
-        if json_match:
-            try:
-                items = json.loads(json_match.group())
-                if not isinstance(items, list):
-                    raise ValueError("not a list")
-                out: List[dict] = []
-                for x in items[:PLAN_QUESTION_COUNT]:
-                    if isinstance(x, dict) and "question" in x and "correct_answer" in x:
-                        q = str(x["question"]).strip()
-                        raw = str(x["correct_answer"]).strip().lower()
-                        if raw == "yes":
-                            a = "Yes"
-                        elif raw == "no":
-                            a = "No"
-                        else:
-                            continue
-                        topic = str(x.get("study_topic", "")).strip()
-                        if not topic:
-                            topic = q[:60] + ("..." if len(q) > 60 else "")
-                        if q:
-                            out.append({"question": q, "correct_answer": a, "study_topic": topic})
-                    elif isinstance(x, str) and x.strip():
-                        q = x.strip()
-                        out.append({
-                            "question": q,
-                            "correct_answer": "Yes",
-                            "study_topic": q[:60] + ("..." if len(q) > 60 else ""),
-                        })
-                if out:
-                    return out
-            except (json.JSONDecodeError, ValueError):
-                pass
-        return [{
-            "question": "Interview fundamentals",
-            "correct_answer": "Yes",
-            "study_topic": "Interview fundamentals",
-        }]

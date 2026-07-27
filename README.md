@@ -1,44 +1,35 @@
 # MentorMuni API
 
-MentorMuni is an AI-driven mentorship platform. This API is built using FastAPI and is designed to be scalable and extensible.
+MentorMuni is an AI-driven mentorship platform. This API is built with FastAPI.
 
 ## Features
-- AI text generation using OpenAI's GPT-5.2
-- Health check endpoint
-- Environment-based configuration
-- Centralized logging
+- Interview / skill / aptitude / AI readiness plan generation (OpenAI)
+- Voice interview session + analysis
+- Resume ATS scoring
+- Health check and environment-based configuration
 
-## Setup Instructions
+## Setup
 
-1. Clone the repository:
-   ```bash
-   git clone <repository-url>
-   ```
-
-2. Navigate to the project directory:
+1. Clone the repository and enter the project directory:
    ```bash
    cd MentorMuniAPI
    ```
 
-3. Create a virtual environment:
+2. Create a virtual environment and install dependencies:
    ```bash
    python -m venv .venv
    source .venv/bin/activate
-   ```
-
-4. Install dependencies:
-   ```bash
    pip install -r requirements.txt
    ```
 
-5. Create a `.env` file based on `.env.example` and add your OpenAI API key.
+3. Create a `.env` file from `.env.example` and set `OPENAI_API_KEY`.
 
-6. Run the application:
+4. Run the application (from repo root):
    ```bash
-   uvicorn app.main:app --host 0.0.0.0 --port 8000
+   cd mentormuni-api && PYTHONPATH=. uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
    ```
 
-7. Access the API documentation at:
+5. Open the interactive docs:
    ```
    http://127.0.0.1:8000/docs
    ```

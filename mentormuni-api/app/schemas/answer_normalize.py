@@ -1,9 +1,5 @@
 """Normalize user-submitted answers for interview evaluate endpoint."""
 
-from typing import Final
-
-_CANONICAL: Final[frozenset[str]] = frozenset({"Yes", "No", "A", "B", "C", "D"})
-
 
 def normalize_interview_answer(raw) -> str:
     """
@@ -28,7 +24,3 @@ def normalize_interview_answer(raw) -> str:
     raise ValueError(
         f"answer must be Yes, No, or A–D (multiple choice), got: {raw!r}"
     )
-
-
-def is_valid_canonical_answer(s: str) -> bool:
-    return s in _CANONICAL
