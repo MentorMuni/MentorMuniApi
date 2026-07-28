@@ -384,6 +384,69 @@ async def save_org_features(
 # =============================================================================
 
 
+async def list_tpos(
+    db: AsyncSession,
+    *,
+    organization_id: int | None = None,
+) -> tuple[list[User], int]:
+    """List all ORG_ADMIN (TPO) accounts for Platform Settings page."""
+    stmt = (
+        select(User)
+        .join(Role, User.role_id == Role.id)
+        .where(Role.role_code == RoleCode.ORG_ADMIN.value)
+        .options(selectinload(User.organization), selectinload(User.role))
+    )
+    count_stmt = (
+        select(func.count())
+        .select_from(User)
+        .join(Role, User.role_id == Role.id)
+        .where(Role.role_code == RoleCode.ORG_ADMIN.value)
+    )
+    if organization_id is not None:
+        stmt = stmt.where(User.organization_id == organization_id)
+        count_stmt = count_stmt.where(User.organization_id == organization_id)
+
+    items = list((await db.execute(stmt.order_by(User.id.desc()))).scalars().unique().all())
+    total = int((await db.execute(count_stmt)).scalar_one())
+    return items, total
+
+
+async def reinvite_tpo(
+    db: AsyncSession,
+    *,
+    organization_id: int,
+    activation_hours: int = 72,
+) -> tuple[User, str, datetime]:
+    """
+    Regenerate activation token for an existing TPO (INVITED or ACTIVE).
+    Use this when Settings shows a TPO already exists and you need a new invite link.
+    """
+    await get_organization(db, organization_id)
+    result = await db.execute(
+        select(User)
+        .join(Role, User.role_id == Role.id)
+        .where(
+            User.organization_id == organization_id,
+            Role.role_code == RoleCode.ORG_ADMIN.value,
+            User.status.in_([UserStatus.ACTIVE.value, UserStatus.INVITED.value]),
+        )
+        .options(selectinload(User.organization))
+    )
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise PlatformError("No ORG_ADMIN (TPO) found for this organization.", status_code=404)
+
+    raw_token = secrets.token_urlsafe(32)
+    expires = datetime.now(timezone.utc) + timedelta(hours=activation_hours)
+    user.password_hash = None
+    user.status = UserStatus.INVITED.value
+    user.activation_token_hash = _hash_token(raw_token)
+    user.activation_expires_at = expires
+    await db.flush()
+    await db.refresh(user)
+    return user, raw_token, expires
+
+
 async def create_tpo(
     db: AsyncSession,
     *,
@@ -416,7 +479,8 @@ async def create_tpo(
     )
     if existing_tpo.scalar_one_or_none():
         raise PlatformError(
-            "This organization already has an ORG_ADMIN (TPO).",
+            "This organization already has an ORG_ADMIN (TPO). "
+            "Use GET /platform/tpo to view it, or POST /platform/organizations/{id}/tpo/reinvite.",
             status_code=409,
         )
 

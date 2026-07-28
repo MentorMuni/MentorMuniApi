@@ -199,6 +199,26 @@ class CreateTpoResponse(BaseModel):
     message: str
 
 
+class TpoListItem(BaseModel):
+    id: int
+    organization_id: int
+    organization_code: Optional[str] = None
+    organization_name: Optional[str] = None
+    first_name: str
+    last_name: str
+    email: str
+    username: str
+    mobile: Optional[str] = None
+    status: str
+    created_at: datetime
+    activation_pending: bool
+
+
+class TpoListResponse(BaseModel):
+    items: list[TpoListItem]
+    total: int
+
+
 class ActivateTpoRequest(BaseModel):
     token: str = Field(min_length=10)
     new_password: str = Field(min_length=8, max_length=128)

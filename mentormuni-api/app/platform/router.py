@@ -40,6 +40,8 @@ from app.platform.schemas import (
     PlatformUserCreate,
     PlatformUserResponse,
     PlatformUserUpdate,
+    TpoListItem,
+    TpoListResponse,
 )
 
 router = APIRouter(
@@ -306,8 +308,46 @@ async def save_org_features(
 
 
 # =============================================================================
-# Create TPO
+# TPO (ORG_ADMIN) — Create / List / Reinvite
 # =============================================================================
+
+
+def _tpo_list_item(user) -> TpoListItem:
+    return TpoListItem(
+        id=user.id,
+        organization_id=user.organization_id,
+        organization_code=user.organization.code if user.organization else None,
+        organization_name=user.organization.name if user.organization else None,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        email=user.email,
+        username=user.username,
+        mobile=user.mobile,
+        status=user.status,
+        created_at=user.created_at,
+        activation_pending=user.status == "INVITED",
+    )
+
+
+@router.get("/tpo", response_model=TpoListResponse)
+async def list_tpos(
+    organization_id: int | None = Query(default=None),
+    _user: PlatformUser = Depends(get_current_platform_user),
+    db: AsyncSession = Depends(get_db),
+) -> TpoListResponse:
+    """Settings page: list all ORG_ADMIN (TPO) accounts."""
+    items, total = await svc.list_tpos(db, organization_id=organization_id)
+    return TpoListResponse(items=[_tpo_list_item(u) for u in items], total=total)
+
+
+@router.get("/organizations/{organization_id}/tpo", response_model=TpoListResponse)
+async def list_org_tpo(
+    organization_id: int,
+    _user: PlatformUser = Depends(get_current_platform_user),
+    db: AsyncSession = Depends(get_db),
+) -> TpoListResponse:
+    items, total = await svc.list_tpos(db, organization_id=organization_id)
+    return TpoListResponse(items=[_tpo_list_item(u) for u in items], total=total)
 
 
 @router.post(
@@ -349,6 +389,43 @@ async def create_tpo(
             "TPO invited. Send activation_token via email. "
             "TPO calls POST /platform/auth/activate-tpo to set password. "
             "Email delivery will be wired in a later phase."
+        ),
+    )
+
+
+@router.post(
+    "/organizations/{organization_id}/tpo/reinvite",
+    response_model=CreateTpoResponse,
+)
+async def reinvite_tpo(
+    organization_id: int,
+    activation_hours: int = Query(default=72, ge=1, le=168),
+    _user: PlatformUser = Depends(get_current_platform_user),
+    db: AsyncSession = Depends(get_db),
+) -> CreateTpoResponse:
+    """Regenerate activation token when TPO already exists."""
+    try:
+        user, raw_token, expires = await svc.reinvite_tpo(
+            db,
+            organization_id=organization_id,
+            activation_hours=activation_hours,
+        )
+    except svc.PlatformError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    return CreateTpoResponse(
+        id=user.id,
+        organization_id=user.organization_id,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        email=user.email,
+        username=user.username,
+        status=user.status,
+        activation_token=raw_token,
+        activation_expires_at=expires,
+        message=(
+            "TPO re-invited. Previous password cleared. "
+            "Send the new activation_token to the TPO."
         ),
     )
 
