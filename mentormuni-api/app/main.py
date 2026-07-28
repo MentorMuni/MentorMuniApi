@@ -15,6 +15,7 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 
+from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
@@ -47,8 +48,24 @@ from app.services.evaluator import EvaluatorService
 from app.services.voice_interview import VoiceInterviewService
 from app.services import resume_ats as resume_ats_service
 from app.core.config import settings
+from app.common.database import close_db, init_db
+from app.auth.router import router as auth_router
+from app.organizations.router import router as organizations_router
+from app.subscriptions.router import router as subscription_plans_router
+from app.departments.router import router as departments_router
+from app.users.router import router as users_router
+from app.platform.router import router as platform_router
 
-app = FastAPI(title="MentorMuni API", version="1.0.0")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Warm DB engine on startup (no-op if DATABASE_URL missing); dispose on shutdown."""
+    await init_db()
+    yield
+    await close_db()
+
+
+app = FastAPI(title="MentorMuni API", version="1.0.0", lifespan=lifespan)
 
 # Rate limiter: 10k users = ~20 req/min/IP for plan (LLM), 60/min for evaluate
 limiter = Limiter(key_func=get_remote_address)
@@ -62,6 +79,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Phase 1 onboarding APIs (all require X-API-Key; user routes also need Bearer JWT)
+app.include_router(auth_router)
+app.include_router(organizations_router)
+app.include_router(subscription_plans_router)
+app.include_router(departments_router)
+app.include_router(users_router)
+# MentorMuni Platform Admin portal (tenant provisioning only)
+app.include_router(platform_router)
 
 guard_layer = GuardLayer(timeout=settings.llm_timeout_seconds)
 logger = logging.getLogger(__name__)

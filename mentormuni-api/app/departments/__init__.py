@@ -1,0 +1,1 @@
+"""Departments domain (college-only)."""

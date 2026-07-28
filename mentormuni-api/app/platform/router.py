@@ -1,0 +1,400 @@
+"""
+Platform Admin portal routes.
+
+All under /platform/*
+Require: X-API-Key + platform Bearer JWT (except login + TPO activate).
+"""
+
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.common.security.jwt import create_access_token
+from app.core.config import settings
+from app.models.enums import PlatformRole
+from app.models.platform_user import PlatformUser
+from app.platform import service as svc
+from app.platform.deps import get_current_platform_user, get_db, require_api_key, require_platform_roles
+from app.platform.schemas import (
+    ActivateTpoRequest,
+    CreateTpoRequest,
+    CreateTpoResponse,
+    FeatureCatalogResponse,
+    MessageResponse,
+    OrgFeaturesResponse,
+    OrgFeaturesSaveRequest,
+    PlatformChangePasswordRequest,
+    PlatformDashboardResponse,
+    PlatformLoginRequest,
+    PlatformMeResponse,
+    PlatformOrganizationCreate,
+    PlatformOrganizationListResponse,
+    PlatformOrganizationResponse,
+    PlatformOrganizationUpdate,
+    PlatformSubscriptionCreate,
+    PlatformSubscriptionListResponse,
+    PlatformSubscriptionResponse,
+    PlatformSubscriptionUpdate,
+    PlatformTokenResponse,
+    PlatformUserCreate,
+    PlatformUserResponse,
+    PlatformUserUpdate,
+)
+
+router = APIRouter(
+    prefix="/platform",
+    tags=["Platform Admin"],
+    dependencies=[Depends(require_api_key)],
+)
+
+
+# =============================================================================
+# Auth
+# =============================================================================
+
+
+@router.post("/auth/login", response_model=PlatformTokenResponse)
+async def platform_login(
+    body: PlatformLoginRequest,
+    db: AsyncSession = Depends(get_db),
+) -> PlatformTokenResponse:
+    try:
+        user = await svc.authenticate_platform_user(
+            db, email=str(body.email), password=body.password
+        )
+    except svc.PlatformError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    token = create_access_token(
+        user_id=user.id,
+        scope="platform",
+        extra={"role": user.role},
+    )
+    return PlatformTokenResponse(
+        access_token=token,
+        expires_in_minutes=settings.jwt_expire_minutes,
+    )
+
+
+@router.get("/auth/me", response_model=PlatformMeResponse)
+async def platform_me(
+    user: PlatformUser = Depends(get_current_platform_user),
+) -> PlatformMeResponse:
+    return PlatformMeResponse.model_validate(user)
+
+
+@router.post("/auth/change-password", response_model=MessageResponse)
+async def platform_change_password(
+    body: PlatformChangePasswordRequest,
+    user: PlatformUser = Depends(get_current_platform_user),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    try:
+        await svc.change_platform_password(
+            db,
+            user=user,
+            current_password=body.current_password,
+            new_password=body.new_password,
+        )
+    except svc.PlatformError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return MessageResponse(message="Password updated.")
+
+
+@router.post("/auth/activate-tpo", response_model=MessageResponse)
+async def activate_tpo(
+    body: ActivateTpoRequest,
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """TPO sets password via one-time token (no platform JWT needed)."""
+    try:
+        await svc.activate_tpo(db, token=body.token, new_password=body.new_password)
+    except svc.PlatformError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return MessageResponse(message="Password set. You can log in to the Organization Portal.")
+
+
+# =============================================================================
+# Dashboard
+# =============================================================================
+
+
+@router.get("/dashboard", response_model=PlatformDashboardResponse)
+async def dashboard(
+    _user: PlatformUser = Depends(get_current_platform_user),
+    db: AsyncSession = Depends(get_db),
+) -> PlatformDashboardResponse:
+    data = await svc.dashboard_metrics(db)
+    return PlatformDashboardResponse(**data)
+
+
+# =============================================================================
+# Organizations
+# =============================================================================
+
+
+@router.post("/organizations", response_model=PlatformOrganizationResponse, status_code=201)
+async def create_organization(
+    body: PlatformOrganizationCreate,
+    _user: PlatformUser = Depends(get_current_platform_user),
+    db: AsyncSession = Depends(get_db),
+) -> PlatformOrganizationResponse:
+    try:
+        org = await svc.create_organization(db, **body.model_dump())
+    except svc.PlatformError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return PlatformOrganizationResponse.model_validate(org)
+
+
+@router.get("/organizations", response_model=PlatformOrganizationListResponse)
+async def list_organizations(
+    status: str | None = Query(default=None),
+    organization_type: str | None = Query(default=None),
+    search: str | None = Query(default=None),
+    _user: PlatformUser = Depends(get_current_platform_user),
+    db: AsyncSession = Depends(get_db),
+) -> PlatformOrganizationListResponse:
+    items, total = await svc.list_organizations(
+        db,
+        status=status,
+        organization_type=organization_type,
+        search=search,
+    )
+    return PlatformOrganizationListResponse(
+        items=[PlatformOrganizationResponse.model_validate(o) for o in items],
+        total=total,
+    )
+
+
+@router.get("/organizations/{organization_id}", response_model=PlatformOrganizationResponse)
+async def get_organization(
+    organization_id: int,
+    _user: PlatformUser = Depends(get_current_platform_user),
+    db: AsyncSession = Depends(get_db),
+) -> PlatformOrganizationResponse:
+    try:
+        org = await svc.get_organization(db, organization_id)
+    except svc.PlatformError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return PlatformOrganizationResponse.model_validate(org)
+
+
+@router.put("/organizations/{organization_id}", response_model=PlatformOrganizationResponse)
+async def update_organization(
+    organization_id: int,
+    body: PlatformOrganizationUpdate,
+    _user: PlatformUser = Depends(get_current_platform_user),
+    db: AsyncSession = Depends(get_db),
+) -> PlatformOrganizationResponse:
+    try:
+        org = await svc.update_organization(
+            db, organization_id, **body.model_dump(exclude_unset=True)
+        )
+    except svc.PlatformError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return PlatformOrganizationResponse.model_validate(org)
+
+
+# =============================================================================
+# Subscriptions
+# =============================================================================
+
+
+@router.post("/subscriptions", response_model=PlatformSubscriptionResponse, status_code=201)
+async def create_subscription(
+    body: PlatformSubscriptionCreate,
+    _user: PlatformUser = Depends(get_current_platform_user),
+    db: AsyncSession = Depends(get_db),
+) -> PlatformSubscriptionResponse:
+    try:
+        sub = await svc.assign_subscription(
+            db,
+            organization_id=body.organization_id,
+            plan_id=body.plan_id,
+            student_limit=body.student_limit,
+            start_date=body.start_date,
+            end_date=body.end_date,
+            status=body.status,
+        )
+    except svc.PlatformError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return PlatformSubscriptionResponse(**svc._sub_to_dict(sub))
+
+
+@router.get("/subscriptions", response_model=PlatformSubscriptionListResponse)
+async def list_subscriptions(
+    organization_id: int | None = Query(default=None),
+    status: str | None = Query(default=None),
+    _user: PlatformUser = Depends(get_current_platform_user),
+    db: AsyncSession = Depends(get_db),
+) -> PlatformSubscriptionListResponse:
+    items, total = await svc.list_subscriptions(
+        db, organization_id=organization_id, status=status
+    )
+    return PlatformSubscriptionListResponse(
+        items=[PlatformSubscriptionResponse(**svc._sub_to_dict(s)) for s in items],
+        total=total,
+    )
+
+
+@router.put("/subscriptions/{subscription_id}", response_model=PlatformSubscriptionResponse)
+async def update_subscription(
+    subscription_id: int,
+    body: PlatformSubscriptionUpdate,
+    _user: PlatformUser = Depends(get_current_platform_user),
+    db: AsyncSession = Depends(get_db),
+) -> PlatformSubscriptionResponse:
+    try:
+        sub = await svc.update_subscription(
+            db, subscription_id, **body.model_dump(exclude_unset=True)
+        )
+    except svc.PlatformError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return PlatformSubscriptionResponse(**svc._sub_to_dict(sub))
+
+
+# =============================================================================
+# Feature Management
+# =============================================================================
+
+
+@router.get("/feature-catalog", response_model=list[FeatureCatalogResponse])
+async def feature_catalog(
+    _user: PlatformUser = Depends(get_current_platform_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[FeatureCatalogResponse]:
+    items = await svc.list_feature_catalog(db)
+    return [FeatureCatalogResponse.model_validate(f) for f in items]
+
+
+@router.get(
+    "/organizations/{organization_id}/features",
+    response_model=OrgFeaturesResponse,
+)
+async def get_org_features(
+    organization_id: int,
+    _user: PlatformUser = Depends(get_current_platform_user),
+    db: AsyncSession = Depends(get_db),
+) -> OrgFeaturesResponse:
+    try:
+        features = await svc.get_org_features(db, organization_id)
+    except svc.PlatformError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return OrgFeaturesResponse(organization_id=organization_id, features=features)
+
+
+@router.put(
+    "/organizations/{organization_id}/features",
+    response_model=OrgFeaturesResponse,
+)
+async def save_org_features(
+    organization_id: int,
+    body: OrgFeaturesSaveRequest,
+    _user: PlatformUser = Depends(get_current_platform_user),
+    db: AsyncSession = Depends(get_db),
+) -> OrgFeaturesResponse:
+    try:
+        features = await svc.save_org_features(
+            db,
+            organization_id,
+            [f.model_dump() for f in body.features],
+        )
+    except svc.PlatformError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return OrgFeaturesResponse(organization_id=organization_id, features=features)
+
+
+# =============================================================================
+# Create TPO
+# =============================================================================
+
+
+@router.post(
+    "/organizations/{organization_id}/tpo",
+    response_model=CreateTpoResponse,
+    status_code=201,
+)
+async def create_tpo(
+    organization_id: int,
+    body: CreateTpoRequest,
+    _user: PlatformUser = Depends(get_current_platform_user),
+    db: AsyncSession = Depends(get_db),
+) -> CreateTpoResponse:
+    try:
+        user, raw_token, expires = await svc.create_tpo(
+            db,
+            organization_id=organization_id,
+            first_name=body.first_name,
+            last_name=body.last_name,
+            email=str(body.email),
+            username=body.username,
+            mobile=body.mobile,
+            activation_hours=body.activation_hours,
+        )
+    except svc.PlatformError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    return CreateTpoResponse(
+        id=user.id,
+        organization_id=user.organization_id,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        email=user.email,
+        username=user.username,
+        status=user.status,
+        activation_token=raw_token,
+        activation_expires_at=expires,
+        message=(
+            "TPO invited. Send activation_token via email. "
+            "TPO calls POST /platform/auth/activate-tpo to set password. "
+            "Email delivery will be wired in a later phase."
+        ),
+    )
+
+
+# =============================================================================
+# Platform Users (MentorMuni employees)
+# =============================================================================
+
+
+@router.post("/users", response_model=PlatformUserResponse, status_code=201)
+async def create_platform_user(
+    body: PlatformUserCreate,
+    _user: PlatformUser = Depends(
+        require_platform_roles(PlatformRole.PLATFORM_ADMIN.value)
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> PlatformUserResponse:
+    try:
+        user = await svc.create_platform_user(db, **body.model_dump())
+    except svc.PlatformError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return PlatformUserResponse.model_validate(user)
+
+
+@router.get("/users", response_model=list[PlatformUserResponse])
+async def list_platform_users(
+    _user: PlatformUser = Depends(get_current_platform_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[PlatformUserResponse]:
+    items = await svc.list_platform_users(db)
+    return [PlatformUserResponse.model_validate(u) for u in items]
+
+
+@router.put("/users/{user_id}", response_model=PlatformUserResponse)
+async def update_platform_user(
+    user_id: int,
+    body: PlatformUserUpdate,
+    _user: PlatformUser = Depends(
+        require_platform_roles(PlatformRole.PLATFORM_ADMIN.value)
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> PlatformUserResponse:
+    try:
+        user = await svc.update_platform_user(
+            db, user_id, **body.model_dump(exclude_unset=True)
+        )
+    except svc.PlatformError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return PlatformUserResponse.model_validate(user)
