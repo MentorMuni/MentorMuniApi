@@ -8,6 +8,10 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.common.organization_access import (
+    OrganizationAccessError,
+    reject_suspend_if_public,
+)
 from app.models.enums import (
     OrganizationStatus,
     OrganizationType,
@@ -126,6 +130,16 @@ async def update_organization(
     **fields: object,
 ) -> Organization:
     org = await get_organization(db, organization_id)
+    incoming_status = fields.get("status")
+    if isinstance(incoming_status, str) or incoming_status is None:
+        try:
+            reject_suspend_if_public(
+                organization=org,
+                incoming_status=incoming_status if isinstance(incoming_status, str) else None,
+            )
+        except OrganizationAccessError as exc:
+            raise OrgError(exc.message, status_code=exc.status_code) from exc
+
     for key, value in fields.items():
         if value is None:
             continue

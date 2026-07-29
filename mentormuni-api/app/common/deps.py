@@ -16,6 +16,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.common.database.session import get_db
+from app.common.organization_access import (
+    OrganizationAccessError,
+    ensure_organization_active_for_login,
+)
 from app.common.security.api_key import require_api_key
 from app.common.security.jwt import decode_access_token
 from app.models.enums import UserStatus
@@ -72,6 +76,13 @@ async def get_current_active_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Account is {user.status}. Only ACTIVE users can access this.",
         )
+    # JWT issued before suspend → still locked out on the next authenticated call.
+    try:
+        role_code = user.role.role_code if user.role else None
+        if user.organization is not None:
+            ensure_organization_active_for_login(user.organization, role_code=role_code)
+    except OrganizationAccessError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     return user
 
 

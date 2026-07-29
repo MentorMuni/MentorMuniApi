@@ -11,6 +11,12 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.common.organization_access import (
+    OrganizationAccessError,
+    ensure_organization_accepts_activation,
+    reject_create_public_as_suspended,
+    reject_suspend_if_public,
+)
 from app.common.security.passwords import hash_password, verify_password
 from app.models.enums import (
     OrganizationStatus,
@@ -88,11 +94,21 @@ async def create_organization(db: AsyncSession, **fields: object) -> Organizatio
     if existing.scalar_one_or_none():
         raise PlatformError(f"Organization code '{code}' already exists.", status_code=409)
 
+    org_type = str(fields["organization_type"])
+    org_status = str(fields.get("status") or OrganizationStatus.ACTIVE.value)
+    try:
+        reject_create_public_as_suspended(
+            organization_type=org_type,
+            status=org_status,
+        )
+    except OrganizationAccessError as exc:
+        raise PlatformError(exc.message, status_code=exc.status_code) from exc
+
     org = Organization(
         name=str(fields["name"]).strip(),
         code=code,
-        organization_type=str(fields["organization_type"]),
-        status=str(fields.get("status") or OrganizationStatus.ACTIVE.value),
+        organization_type=org_type,
+        status=org_status,
         contact_person=fields.get("contact_person"),  # type: ignore[arg-type]
         contact_email=str(fields["contact_email"]).lower() if fields.get("contact_email") else None,
         contact_phone=fields.get("contact_phone"),  # type: ignore[arg-type]
@@ -158,6 +174,16 @@ async def get_organization(db: AsyncSession, organization_id: int) -> Organizati
 
 async def update_organization(db: AsyncSession, organization_id: int, **fields: object) -> Organization:
     org = await get_organization(db, organization_id)
+    incoming_status = fields.get("status")
+    if isinstance(incoming_status, str) or incoming_status is None:
+        try:
+            reject_suspend_if_public(
+                organization=org,
+                incoming_status=incoming_status if isinstance(incoming_status, str) else None,
+            )
+        except OrganizationAccessError as exc:
+            raise PlatformError(exc.message, status_code=exc.status_code) from exc
+
     for key, value in fields.items():
         if value is None and key not in {
             "contact_person",
@@ -421,7 +447,12 @@ async def reinvite_tpo(
     Regenerate activation token for an existing TPO (INVITED or ACTIVE).
     Use this when Settings shows a TPO already exists and you need a new invite link.
     """
-    await get_organization(db, organization_id)
+    org = await get_organization(db, organization_id)
+    try:
+        ensure_organization_accepts_activation(org)
+    except OrganizationAccessError as exc:
+        raise PlatformError(exc.message, status_code=exc.status_code) from exc
+
     result = await db.execute(
         select(User)
         .join(Role, User.role_id == Role.id)
@@ -459,6 +490,10 @@ async def create_tpo(
     activation_hours: int = 72,
 ) -> tuple[User, str, datetime]:
     org = await get_organization(db, organization_id)
+    try:
+        ensure_organization_accepts_activation(org)
+    except OrganizationAccessError as exc:
+        raise PlatformError(exc.message, status_code=exc.status_code) from exc
 
     role_result = await db.execute(
         select(Role).where(Role.role_code == RoleCode.ORG_ADMIN.value)
@@ -537,6 +572,12 @@ async def activate_tpo(
         raise PlatformError("Account is not awaiting activation.", status_code=400)
     if user.activation_expires_at and user.activation_expires_at < datetime.now(timezone.utc):
         raise PlatformError("Activation token expired. Ask platform to re-invite.", status_code=400)
+
+    if user.organization is not None:
+        try:
+            ensure_organization_accepts_activation(user.organization)
+        except OrganizationAccessError as exc:
+            raise PlatformError(exc.message, status_code=exc.status_code) from exc
 
     user.password_hash = hash_password(new_password)
     user.status = UserStatus.ACTIVE.value

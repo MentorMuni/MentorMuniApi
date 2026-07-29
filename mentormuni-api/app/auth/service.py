@@ -6,6 +6,10 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.common.organization_access import (
+    OrganizationAccessError,
+    ensure_organization_active_for_login,
+)
 from app.common.security.passwords import hash_password, verify_password
 from app.core.config import settings
 from app.models.enums import UserStatus
@@ -78,6 +82,15 @@ async def authenticate_user(
         raise AuthError("Account is blocked.", status_code=403)
     if user.status != UserStatus.ACTIVE.value:
         raise AuthError(f"Account is {user.status}.", status_code=403)
+
+    # College SUSPENDED → TPO / HOD / students cannot obtain a token.
+    # PUBLIC / other ACTIVE colleges are unaffected.
+    try:
+        role_code = user.role.role_code if user.role else None
+        ensure_organization_active_for_login(user.organization, role_code=role_code)
+    except OrganizationAccessError as exc:
+        raise AuthError(exc.message, status_code=exc.status_code) from exc
+
     return user
 
 

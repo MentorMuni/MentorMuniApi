@@ -8,6 +8,10 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.common.organization_access import (
+    OrganizationAccessError,
+    ensure_organization_accepts_registration,
+)
 from app.common.security.passwords import hash_password
 from app.models.department import Department
 from app.models.enums import OrganizationType, RoleCode, UserStatus
@@ -83,6 +87,14 @@ async def create_user(
         organization_id=organization_id,
         organization_code=organization_code,
     )
+
+    # Suspended college: block student self-register, HOD create, etc.
+    # PUBLIC is never suspended, so individual signup stays open.
+    try:
+        ensure_organization_accepts_registration(org)
+    except OrganizationAccessError as exc:
+        raise UserServiceError(exc.message, status_code=exc.status_code) from exc
+
     role = await _get_role_by_code(db, role_code)
 
     try:

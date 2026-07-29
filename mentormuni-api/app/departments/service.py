@@ -5,6 +5,10 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.common.organization_access import (
+    OrganizationAccessError,
+    ensure_organization_active,
+)
 from app.models.department import Department
 from app.models.enums import DepartmentStatus, OrganizationType
 from app.models.organization import Organization
@@ -29,6 +33,10 @@ async def create_department(
         raise DepartmentError("Organization not found.", status_code=404)
     if org.organization_type != OrganizationType.COLLEGE.value:
         raise DepartmentError("Only COLLEGE organizations can have departments.")
+    try:
+        ensure_organization_active(org)
+    except OrganizationAccessError as exc:
+        raise DepartmentError(exc.message, status_code=exc.status_code) from exc
 
     code_norm = code.strip().upper()
     existing = await db.execute(
