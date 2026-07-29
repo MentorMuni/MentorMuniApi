@@ -10,6 +10,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.common.email import EmailError
+from app.common.email.flows import send_tpo_activation_email
+from app.common.email.templates import build_activation_url
 from app.common.security.jwt import create_access_token
 from app.core.config import settings
 from app.models.enums import PlatformRole
@@ -42,6 +45,7 @@ from app.platform.schemas import (
     PlatformUserUpdate,
     TpoListItem,
     TpoListResponse,
+    UpdateTpoRequest,
 )
 
 router = APIRouter(
@@ -350,6 +354,79 @@ async def list_org_tpo(
     return TpoListResponse(items=[_tpo_list_item(u) for u in items], total=total)
 
 
+async def _build_tpo_invite_response(
+    *,
+    user,
+    raw_token: str,
+    expires,
+    organization_name: str,
+    is_reinvite: bool,
+    is_update: bool = False,
+) -> CreateTpoResponse:
+    """Attach email delivery result; never fail the invite if SMTP is down."""
+    email_sent = False
+    email_skipped = False
+    email_detail = ""
+    try:
+        result = await send_tpo_activation_email(
+            to_email=user.email,
+            first_name=user.first_name,
+            last_name=user.last_name,
+            username=user.username,
+            organization_name=organization_name,
+            raw_token=raw_token,
+            expires_at=expires,
+            is_reinvite=is_reinvite or is_update,
+        )
+        email_sent = result.sent
+        email_skipped = result.skipped
+        email_detail = result.detail
+    except EmailError as exc:
+        email_sent = False
+        email_skipped = False
+        email_detail = exc.message
+
+    if is_update:
+        verb_ok = "TPO details updated and activation email sent to the new address."
+        verb_skip = "TPO details updated. Email is disabled; share activation_token manually."
+        verb_fail = "TPO details updated but activation email failed. Share activation_token manually."
+    elif is_reinvite:
+        verb_ok = "TPO re-invited and activation email sent."
+        verb_skip = "TPO re-invited. Email is disabled; share activation_token manually."
+        verb_fail = "TPO re-invited but activation email failed. Share activation_token manually."
+    else:
+        verb_ok = "TPO invited and activation email sent."
+        verb_skip = "TPO invited. Email is disabled; share activation_token manually."
+        verb_fail = "TPO invited but activation email failed. Share activation_token manually."
+
+    if email_sent:
+        message = verb_ok
+    elif email_skipped:
+        message = (
+            f"{verb_skip} "
+            "TPO sets password via POST /platform/auth/activate-tpo."
+        )
+    else:
+        message = f"{verb_fail} ({email_detail})"
+
+    return CreateTpoResponse(
+        id=user.id,
+        organization_id=user.organization_id,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        email=user.email,
+        username=user.username,
+        status=user.status,
+        activation_token=raw_token,
+        activation_url=build_activation_url(raw_token),
+        activation_expires_at=expires,
+        message=message,
+        email_sent=email_sent,
+        email_skipped=email_skipped,
+        email_detail=email_detail,
+    )
+
+
 @router.post(
     "/organizations/{organization_id}/tpo",
     response_model=CreateTpoResponse,
@@ -372,24 +449,16 @@ async def create_tpo(
             mobile=body.mobile,
             activation_hours=body.activation_hours,
         )
+        org = await svc.get_organization(db, organization_id)
     except svc.PlatformError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
-    return CreateTpoResponse(
-        id=user.id,
-        organization_id=user.organization_id,
-        first_name=user.first_name,
-        last_name=user.last_name,
-        email=user.email,
-        username=user.username,
-        status=user.status,
-        activation_token=raw_token,
-        activation_expires_at=expires,
-        message=(
-            "TPO invited. Send activation_token via email. "
-            "TPO calls POST /platform/auth/activate-tpo to set password. "
-            "Email delivery will be wired in a later phase."
-        ),
+    return await _build_tpo_invite_response(
+        user=user,
+        raw_token=raw_token,
+        expires=expires,
+        organization_name=org.name,
+        is_reinvite=False,
     )
 
 
@@ -403,16 +472,69 @@ async def reinvite_tpo(
     _user: PlatformUser = Depends(get_current_platform_user),
     db: AsyncSession = Depends(get_db),
 ) -> CreateTpoResponse:
-    """Regenerate activation token when TPO already exists."""
+    """Regenerate activation token when TPO already exists (same person, password reset)."""
     try:
         user, raw_token, expires = await svc.reinvite_tpo(
             db,
             organization_id=organization_id,
             activation_hours=activation_hours,
         )
+        org = await svc.get_organization(db, organization_id)
     except svc.PlatformError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
+    return await _build_tpo_invite_response(
+        user=user,
+        raw_token=raw_token,
+        expires=expires,
+        organization_name=org.name,
+        is_reinvite=True,
+    )
+
+
+@router.put(
+    "/organizations/{organization_id}/tpo",
+    response_model=CreateTpoResponse,
+)
+async def update_tpo(
+    organization_id: int,
+    body: UpdateTpoRequest,
+    _user: PlatformUser = Depends(get_current_platform_user),
+    db: AsyncSession = Depends(get_db),
+) -> CreateTpoResponse:
+    """
+    Change TPO details on the existing account (same user id).
+
+    When a TPO leaves: update name/email/username and (by default) force a new
+    password via activation email. College data and dashboard stay on this org.
+    """
+    try:
+        user, raw_token, expires = await svc.update_tpo(
+            db,
+            organization_id=organization_id,
+            first_name=body.first_name,
+            last_name=body.last_name,
+            email=str(body.email),
+            username=body.username,
+            mobile=body.mobile,
+            activation_hours=body.activation_hours,
+            reset_password=body.reset_password,
+        )
+        org = await svc.get_organization(db, organization_id)
+    except svc.PlatformError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    if body.reset_password and raw_token and expires:
+        return await _build_tpo_invite_response(
+            user=user,
+            raw_token=raw_token,
+            expires=expires,
+            organization_name=org.name,
+            is_reinvite=False,
+            is_update=True,
+        )
+
+    # Details-only update (no password reset / no email).
     return CreateTpoResponse(
         id=user.id,
         organization_id=user.organization_id,
@@ -421,12 +543,13 @@ async def reinvite_tpo(
         email=user.email,
         username=user.username,
         status=user.status,
-        activation_token=raw_token,
-        activation_expires_at=expires,
-        message=(
-            "TPO re-invited. Previous password cleared. "
-            "Send the new activation_token to the TPO."
-        ),
+        activation_token="",
+        activation_url="",
+        activation_expires_at=user.updated_at,
+        message="TPO details updated. Password was not reset.",
+        email_sent=False,
+        email_skipped=True,
+        email_detail="reset_password=false",
     )
 
 

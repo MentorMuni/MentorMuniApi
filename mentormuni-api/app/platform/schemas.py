@@ -184,6 +184,24 @@ class CreateTpoRequest(BaseModel):
     activation_hours: int = Field(default=72, ge=1, le=168)
 
 
+class UpdateTpoRequest(BaseModel):
+    """
+    Change TPO details on the existing ORG_ADMIN row (same user id).
+
+    Use when the TPO leaves: update name/email/username, force password reset
+    via activation email. Org / HOD / students / dashboard data stay intact.
+    """
+
+    first_name: str = Field(min_length=1, max_length=128)
+    last_name: str = Field(min_length=1, max_length=128)
+    email: EmailStr
+    mobile: Optional[str] = None
+    username: str = Field(min_length=3, max_length=128)
+    activation_hours: int = Field(default=72, ge=1, le=168)
+    # When true (default), clear password and send activate link to the new email.
+    reset_password: bool = True
+
+
 class CreateTpoResponse(BaseModel):
     id: int
     organization_id: int
@@ -192,11 +210,15 @@ class CreateTpoResponse(BaseModel):
     email: str
     username: str
     status: str
-    # Raw token returned once for email/WhatsApp until email service is wired.
-    # Frontend / ops should send this link; never store the raw token in DB.
+    # Raw token returned once. Prefer email delivery; token still returned for ops fallback.
     activation_token: str
+    # Full FE link (same URL embedded in the email).
+    activation_url: str
     activation_expires_at: datetime
     message: str
+    email_sent: bool = False
+    email_skipped: bool = False
+    email_detail: str = ""
 
 
 class TpoListItem(BaseModel):

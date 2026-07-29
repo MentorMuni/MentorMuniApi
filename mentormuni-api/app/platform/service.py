@@ -478,6 +478,89 @@ async def reinvite_tpo(
     return user, raw_token, expires
 
 
+async def update_tpo(
+    db: AsyncSession,
+    *,
+    organization_id: int,
+    first_name: str,
+    last_name: str,
+    email: str,
+    username: str,
+    mobile: str | None = None,
+    activation_hours: int = 72,
+    reset_password: bool = True,
+) -> tuple[User, str | None, datetime | None]:
+    """
+    Edit the live TPO in place (same user id).
+
+    Org / departments / HODs / students / subscriptions are untouched.
+    When reset_password=True (default): clears old password, sets INVITED,
+    returns a new activation token to email to the (possibly new) address.
+    """
+    org = await get_organization(db, organization_id)
+    try:
+        ensure_organization_accepts_activation(org)
+    except OrganizationAccessError as exc:
+        raise PlatformError(exc.message, status_code=exc.status_code) from exc
+
+    result = await db.execute(
+        select(User)
+        .join(Role, User.role_id == Role.id)
+        .where(
+            User.organization_id == organization_id,
+            Role.role_code == RoleCode.ORG_ADMIN.value,
+            User.status.in_([UserStatus.ACTIVE.value, UserStatus.INVITED.value]),
+        )
+        .options(selectinload(User.organization))
+    )
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise PlatformError(
+            "No active TPO found for this organization. Create a TPO first.",
+            status_code=404,
+        )
+
+    email_norm = email.lower().strip()
+    username_norm = username.strip()
+
+    dup = await db.execute(
+        select(User).where(
+            User.organization_id == organization_id,
+            User.id != user.id,
+            (User.email == email_norm) | (User.username == username_norm),
+        )
+    )
+    if dup.scalar_one_or_none():
+        raise PlatformError(
+            "Email or username already used by another user in this organization.",
+            status_code=409,
+        )
+
+    user.first_name = first_name.strip()
+    user.last_name = last_name.strip()
+    user.email = email_norm
+    user.username = username_norm
+    user.mobile = mobile
+
+    raw_token: str | None = None
+    expires: datetime | None = None
+    if reset_password:
+        raw_token = secrets.token_urlsafe(32)
+        expires = datetime.now(timezone.utc) + timedelta(hours=activation_hours)
+        user.password_hash = None
+        user.status = UserStatus.INVITED.value
+        user.activation_token_hash = _hash_token(raw_token)
+        user.activation_expires_at = expires
+    else:
+        # Details-only update; keep login if already ACTIVE.
+        user.activation_token_hash = None
+        user.activation_expires_at = None
+
+    await db.flush()
+    await db.refresh(user)
+    return user, raw_token, expires
+
+
 async def create_tpo(
     db: AsyncSession,
     *,
@@ -515,7 +598,8 @@ async def create_tpo(
     if existing_tpo.scalar_one_or_none():
         raise PlatformError(
             "This organization already has an ORG_ADMIN (TPO). "
-            "Use GET /platform/tpo to view it, or POST /platform/organizations/{id}/tpo/reinvite.",
+            "Use PUT /platform/organizations/{id}/tpo to change details, "
+            "or POST .../tpo/reinvite to reset password only.",
             status_code=409,
         )
 

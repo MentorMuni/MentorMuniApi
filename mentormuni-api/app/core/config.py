@@ -51,6 +51,32 @@ class Settings(BaseSettings):
     jwt_algorithm: str = Field(default="HS256")
     jwt_expire_minutes: int = Field(default=60 * 24, ge=5)  # 24h default
 
+    # --- Email (SMTP) — Gmail defaults in code; secrets / URLs via Railway ---
+    # Recipients see: "MentorMuni Team" <mentormuniteam@gmail.com>
+    #
+    # Railway (only these):
+    #   EMAIL_ENABLED=true
+    #   SMTP_PASSWORD=<Gmail App Password>
+    #   ORG_PORTAL_BASE_URL=https://www.mentormuni.com  (optional; already defaulted in code)
+    email_enabled: bool = Field(
+        default=False,
+        description="Master switch. Set true on Railway when App Password is configured.",
+    )
+    smtp_host: str = Field(default="smtp.gmail.com")
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_username: str = Field(default="mentormuniteam@gmail.com")
+    # Secret — set only via Railway / .env (never commit).
+    smtp_password: str = Field(default="")
+    smtp_use_tls: bool = Field(default=True)
+    smtp_use_ssl: bool = Field(default=False)
+    smtp_timeout_seconds: int = Field(default=30, ge=5, le=120)
+    email_from_address: str = Field(default="mentormuniteam@gmail.com")
+    email_from_name: str = Field(default="MentorMuni Team")
+    email_reply_to: str = Field(default="mentormuniteam@gmail.com")
+    # Env-specific portal URL for activation links (override on Railway if needed).
+    org_portal_base_url: str = Field(default="https://www.mentormuni.com")
+    tpo_activation_path: str = Field(default="/activate-tpo")
+
     @field_validator("database_url", mode="before")
     @classmethod
     def normalize_database_url(cls, value: object) -> object:
