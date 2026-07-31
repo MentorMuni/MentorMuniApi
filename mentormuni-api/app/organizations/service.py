@@ -124,6 +124,56 @@ async def list_organizations(
     return items, total
 
 
+async def list_college_names(
+    db: AsyncSession,
+    *,
+    active_only: bool = True,
+) -> list[Organization]:
+    """Return COLLEGE organizations (names for FE dropdowns). Excludes PUBLIC."""
+    stmt = (
+        select(Organization)
+        .where(Organization.organization_type == OrganizationType.COLLEGE.value)
+        .order_by(Organization.name.asc())
+    )
+    if active_only:
+        stmt = stmt.where(Organization.status == OrganizationStatus.ACTIVE.value)
+    return list((await db.execute(stmt)).scalars().all())
+
+
+async def get_college_by_code(db: AsyncSession, code: str) -> Organization:
+    code_norm = code.strip().upper()
+    result = await db.execute(
+        select(Organization).where(
+            Organization.code == code_norm,
+            Organization.organization_type == OrganizationType.COLLEGE.value,
+        )
+    )
+    org = result.scalar_one_or_none()
+    if org is None:
+        raise OrgError("College not found.", status_code=404)
+    if org.status != OrganizationStatus.ACTIVE.value:
+        raise OrgError("This college is not accepting enrollments.", status_code=403)
+    return org
+
+
+async def list_active_departments_for_college_code(
+    db: AsyncSession,
+    code: str,
+) -> list:
+    from app.models.department import Department
+    from app.models.enums import DepartmentStatus
+
+    org = await get_college_by_code(db, code)
+    result = await db.execute(
+        select(Department)
+        .where(Department.organization_id == org.id)
+        .where(Department.deleted_at.is_(None))
+        .where(Department.status == DepartmentStatus.ACTIVE.value)
+        .order_by(Department.name.asc())
+    )
+    return list(result.scalars().all())
+
+
 async def update_organization(
     db: AsyncSession,
     organization_id: int,

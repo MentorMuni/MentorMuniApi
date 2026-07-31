@@ -11,7 +11,12 @@ from app.common.email.exceptions import (
     EmailNotConfiguredError,
 )
 from app.common.email.sender import send_email
-from app.common.email.templates import render_tpo_activation_email
+from app.common.email.templates import (
+    render_password_reset_email,
+    render_staff_activation_email,
+    render_student_activation_email,
+    render_tpo_activation_email,
+)
 from app.common.email.types import EmailAddress, EmailSendResult, OutgoingEmail
 
 logger = logging.getLogger(__name__)
@@ -28,13 +33,6 @@ async def send_tpo_activation_email(
     expires_at: datetime,
     is_reinvite: bool = False,
 ) -> EmailSendResult:
-    """
-    Send TPO activate / re-activate email.
-
-    Does not raise on soft-skip (EMAIL_ENABLED=false).
-    Delivery / config errors are logged and re-raised as EmailError subclasses
-    so the caller can decide whether to fail the API or return a warning.
-    """
     content = render_tpo_activation_email(
         first_name=first_name,
         last_name=last_name,
@@ -65,4 +63,124 @@ async def send_tpo_activation_email(
             is_reinvite,
             exc,
         )
+        raise
+
+
+async def send_staff_activation_email(
+    *,
+    to_email: str,
+    first_name: str,
+    last_name: str,
+    username: str,
+    organization_name: str,
+    role_label: str,
+    raw_token: str,
+    expires_at: datetime,
+    is_reinvite: bool = False,
+) -> EmailSendResult:
+    content = render_staff_activation_email(
+        first_name=first_name,
+        last_name=last_name,
+        username=username,
+        organization_name=organization_name,
+        role_label=role_label,
+        raw_token=raw_token,
+        expires_at=expires_at,
+        is_reinvite=is_reinvite,
+    )
+    try:
+        return await send_email(
+            OutgoingEmail(
+                to=[
+                    EmailAddress(
+                        email=to_email,
+                        name=f"{first_name} {last_name}".strip() or None,
+                    )
+                ],
+                subject=content.subject,
+                text_body=content.text_body,
+                html_body=content.html_body,
+            )
+        )
+    except (EmailNotConfiguredError, EmailDeliveryError, EmailError) as exc:
+        logger.warning(
+            "staff_activation_email_failed to=%s role=%s err=%s",
+            to_email,
+            role_label,
+            exc,
+        )
+        raise
+
+
+async def send_student_activation_email(
+    *,
+    to_email: str,
+    first_name: str,
+    last_name: str,
+    username: str,
+    organization_name: str,
+    department_name: str | None,
+    raw_token: str,
+    expires_at: datetime,
+) -> EmailSendResult:
+    content = render_student_activation_email(
+        first_name=first_name,
+        last_name=last_name,
+        username=username,
+        organization_name=organization_name,
+        department_name=department_name,
+        raw_token=raw_token,
+        expires_at=expires_at,
+    )
+    try:
+        return await send_email(
+            OutgoingEmail(
+                to=[
+                    EmailAddress(
+                        email=to_email,
+                        name=f"{first_name} {last_name}".strip() or None,
+                    )
+                ],
+                subject=content.subject,
+                text_body=content.text_body,
+                html_body=content.html_body,
+            )
+        )
+    except (EmailNotConfiguredError, EmailDeliveryError, EmailError) as exc:
+        logger.warning("student_activation_email_failed to=%s err=%s", to_email, exc)
+        raise
+
+
+async def send_password_reset_email(
+    *,
+    to_email: str,
+    first_name: str,
+    last_name: str,
+    organization_name: str,
+    raw_token: str,
+    expires_at: datetime,
+) -> EmailSendResult:
+    content = render_password_reset_email(
+        first_name=first_name,
+        last_name=last_name,
+        organization_name=organization_name,
+        raw_token=raw_token,
+        expires_at=expires_at,
+    )
+    try:
+        return await send_email(
+            OutgoingEmail(
+                to=[
+                    EmailAddress(
+                        email=to_email,
+                        name=f"{first_name} {last_name}".strip() or None,
+                    )
+                ],
+                subject=content.subject,
+                text_body=content.text_body,
+                html_body=content.html_body,
+            )
+        )
+    except (EmailNotConfiguredError, EmailDeliveryError, EmailError) as exc:
+        logger.warning("password_reset_email_failed to=%s err=%s", to_email, exc)
         raise

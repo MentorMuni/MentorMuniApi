@@ -16,7 +16,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.common.database.base import Base
@@ -81,6 +81,19 @@ class User(Base):
         DateTime(timezone=True),
         nullable=True,
     )
+
+    # Forgot-password flow (hashed token; raw token only emailed once).
+    password_reset_token_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    password_reset_expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    # College enrollment metadata (optional until import/manual/register fills them).
+    roll_number: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    batch_year: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Who approved this user (HOD approving a college student).
     approved_by: Mapped[Optional[int]] = mapped_column(

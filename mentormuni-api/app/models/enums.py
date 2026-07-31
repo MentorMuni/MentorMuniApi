@@ -74,3 +74,19 @@ class RoleCode(str, Enum):
     ORG_ADMIN = "ORG_ADMIN"
     DEPARTMENT_ADMIN = "DEPARTMENT_ADMIN"
     STUDENT = "STUDENT"
+
+
+class NotificationAudience(str, Enum):
+    ORG = "ORG"
+    DEPARTMENT = "DEPARTMENT"
+    USERS = "USERS"
+
+
+class NotificationStatus(str, Enum):
+    ACTIVE = "ACTIVE"
+    INACTIVE = "INACTIVE"
+
+
+class NotificationRecipientStatus(str, Enum):
+    UNREAD = "UNREAD"
+    READ = "READ"

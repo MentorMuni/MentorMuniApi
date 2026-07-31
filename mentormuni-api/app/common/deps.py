@@ -52,6 +52,7 @@ async def get_current_user(
     result = await db.execute(
         select(User)
         .where(User.id == user_id)
+        .where(User.deleted_at.is_(None))
         .options(
             selectinload(User.role),
             selectinload(User.organization),

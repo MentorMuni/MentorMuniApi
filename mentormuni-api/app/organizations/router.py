@@ -3,6 +3,7 @@ Organization routes (MentorMuni platform + TPO reads).
 
 POST /organizations
 GET  /organizations
+GET  /organizations/colleges
 GET  /organizations/{id}
 PUT  /organizations/{id}
 POST /organizations/{id}/subscriptions
@@ -19,11 +20,15 @@ from app.models.user import User
 from app.organizations import service as org_service
 from app.organizations.schemas import (
     AssignSubscriptionRequest,
+    CollegeNameItem,
+    CollegeNamesResponse,
     OrganizationCreate,
     OrganizationListResponse,
     OrganizationResponse,
     OrganizationSubscriptionResponse,
     OrganizationUpdate,
+    PublicDepartmentItem,
+    PublicDepartmentsResponse,
 )
 
 router = APIRouter(
@@ -88,6 +93,48 @@ async def list_organizations(
     return OrganizationListResponse(
         items=[OrganizationResponse.model_validate(o) for o in items],
         total=total,
+    )
+
+
+@router.get("/colleges", response_model=CollegeNamesResponse)
+async def list_college_names(
+    include_suspended: bool = Query(
+        default=False,
+        description="If true, also return SUSPENDED colleges. Default: ACTIVE only.",
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> CollegeNamesResponse:
+    """
+    List college organization names (COLLEGE type only).
+
+    Intended for FE dropdowns (e.g. student self-register).
+    Requires X-API-Key only — no JWT.
+    """
+    items = await org_service.list_college_names(
+        db,
+        active_only=not include_suspended,
+    )
+    return CollegeNamesResponse(
+        items=[CollegeNameItem.model_validate(o) for o in items],
+        total=len(items),
+    )
+
+
+@router.get("/colleges/{code}/departments", response_model=PublicDepartmentsResponse)
+async def list_college_departments_public(
+    code: str,
+    db: AsyncSession = Depends(get_db),
+) -> PublicDepartmentsResponse:
+    """
+    Public (API-key) department list for student enroll dropdown.
+    No JWT — scoped by college organization_code.
+    """
+    try:
+        depts = await org_service.list_active_departments_for_college_code(db, code)
+    except org_service.OrgError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return PublicDepartmentsResponse(
+        departments=[PublicDepartmentItem.model_validate(d) for d in depts]
     )
 
 

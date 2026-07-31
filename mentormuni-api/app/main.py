@@ -51,9 +51,14 @@ from app.core.config import settings
 from app.common.database import close_db, init_db
 from app.auth.router import router as auth_router
 from app.organizations.router import router as organizations_router
+from app.organizations.departments_router import router as org_departments_router
+from app.organizations.students_router import router as org_students_router
 from app.subscriptions.router import router as subscription_plans_router
 from app.departments.router import router as departments_router
 from app.users.router import router as users_router
+from app.students.router import router as students_router
+from app.notifications.router import router as notifications_router
+from app.dashboard.router import router as dashboard_router
 from app.platform.router import router as platform_router
 
 
@@ -80,12 +85,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Phase 1 onboarding APIs (all require X-API-Key; user routes also need Bearer JWT)
+# Org Portal Track A (API key + JWT where required)
 app.include_router(auth_router)
+# Register before /organizations/{id} so static segments are not parsed as org ids
+app.include_router(org_departments_router)
+app.include_router(org_students_router)
 app.include_router(organizations_router)
 app.include_router(subscription_plans_router)
 app.include_router(departments_router)
 app.include_router(users_router)
+app.include_router(students_router)
+app.include_router(notifications_router)
+app.include_router(dashboard_router)
 # MentorMuni Platform Admin portal (tenant provisioning only)
 app.include_router(platform_router)
 

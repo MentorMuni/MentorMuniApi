@@ -61,6 +61,33 @@ class OrganizationListResponse(BaseModel):
     total: int
 
 
+class CollegeNameItem(BaseModel):
+    """Lightweight college row for dropdowns (self-register, etc.)."""
+
+    id: int
+    name: str
+    code: str
+
+    model_config = {"from_attributes": True}
+
+
+class CollegeNamesResponse(BaseModel):
+    items: list[CollegeNameItem]
+    total: int
+
+
+class PublicDepartmentItem(BaseModel):
+    id: int
+    name: str
+    code: str
+
+    model_config = {"from_attributes": True}
+
+
+class PublicDepartmentsResponse(BaseModel):
+    departments: list[PublicDepartmentItem]
+
+
 class AssignSubscriptionRequest(BaseModel):
     plan_id: int
     start_date: Optional[date] = None

@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.email import EmailError
 from app.common.email.flows import send_tpo_activation_email
-from app.common.email.templates import build_activation_url
+from app.common.email.templates import build_tpo_activation_url
 from app.common.security.jwt import create_access_token
 from app.core.config import settings
 from app.models.enums import PlatformRole
@@ -418,7 +418,7 @@ async def _build_tpo_invite_response(
         username=user.username,
         status=user.status,
         activation_token=raw_token,
-        activation_url=build_activation_url(raw_token),
+        activation_url=build_tpo_activation_url(raw_token),
         activation_expires_at=expires,
         message=message,
         email_sent=email_sent,

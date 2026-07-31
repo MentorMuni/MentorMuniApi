@@ -8,7 +8,7 @@ PUBLIC (B2C) organizations do not.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -51,6 +51,7 @@ class Department(Base):
         server_default=func.now(),
         nullable=False,
     )
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     organization: Mapped["Organization"] = relationship(back_populates="departments")
     users: Mapped[list["User"]] = relationship(back_populates="department")

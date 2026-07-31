@@ -15,6 +15,11 @@ from app.models.user import User
 from app.models.feature_catalog import FeatureCatalog
 from app.models.organization_feature import OrganizationFeature
 from app.models.platform_user import PlatformUser
+from app.models.permission import Permission
+from app.models.role_permission import RolePermission
+from app.models.audit_log import AuditLog
+from app.models.notification import Notification
+from app.models.notification_recipient import NotificationRecipient
 
 __all__ = [
     "Organization",
@@ -26,4 +31,9 @@ __all__ = [
     "FeatureCatalog",
     "OrganizationFeature",
     "PlatformUser",
+    "Permission",
+    "RolePermission",
+    "AuditLog",
+    "Notification",
+    "NotificationRecipient",
 ]

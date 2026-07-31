@@ -19,6 +19,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.common.database.base import Base
 
 if TYPE_CHECKING:
+    from app.models.role_permission import RolePermission
     from app.models.user import User
 
 
@@ -31,6 +32,7 @@ class Role(Base):
     role_name: Mapped[str] = mapped_column(String(128), nullable=False)
 
     users: Mapped[list["User"]] = relationship(back_populates="role")
+    permission_links: Mapped[list["RolePermission"]] = relationship(back_populates="role")
 
     def __repr__(self) -> str:
         return f"<Role id={self.id} code={self.role_code!r}>"

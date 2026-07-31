@@ -76,6 +76,13 @@ class Settings(BaseSettings):
     # Env-specific portal URL for activation links (override on Railway if needed).
     org_portal_base_url: str = Field(default="https://www.mentormuni.com")
     tpo_activation_path: str = Field(default="/activate-tpo")
+    # HOD activate page (FE: /activate-hod?token=…)
+    hod_activation_path: str = Field(default="/activate-hod")
+    # Student set-password page after approve / invite
+    student_activation_path: str = Field(default="/studentportal/set-password")
+    # Legacy alias — prefer hod_activation_path for HOD, tpo_activation_path for TPO
+    staff_activation_path: str = Field(default="/activate-hod")
+    password_reset_path: str = Field(default="/reset-password")
 
     @field_validator("database_url", mode="before")
     @classmethod
