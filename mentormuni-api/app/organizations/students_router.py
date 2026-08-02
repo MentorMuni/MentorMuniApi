@@ -24,6 +24,7 @@ from app.organizations.students_schemas import (
     StudentInviteRequest,
     StudentInviteResult,
     StudentManualCreate,
+    StudentManualCreateResponse,
     StudentPatchRequest,
 )
 
@@ -79,31 +80,47 @@ async def invite_students(
     ctx: TenantContext = Depends(require_permission("UPLOAD_STUDENTS", "APPROVE_STUDENT")),
 ) -> StudentInviteResult:
     try:
-        created, skipped, errors, items = await svc.invite_emails(
+        result = await svc.invite_emails(
             db,
             ctx,
             emails=[str(e) for e in body.emails],
             department_id=body.department_id,
             source=body.source,
+            auto_enroll=body.auto_enroll,
+            skip_approval=body.skip_approval,
         )
     except svc.StudentPortalError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    out_items: list = []
+    for i in result["items"]:
+        if "auth_status" in i:
+            out_items.append(OrgStudentResponse.model_validate(i))
+        else:
+            out_items.append(OrgInviteResponse.model_validate(i))
+
+    emailed = bool(result.get("emailed"))
     return StudentInviteResult(
-        created=created,
-        skipped=skipped,
-        errors=errors,
-        items=[OrgInviteResponse.model_validate(i) for i in items],
+        created=result["created"],
+        skipped=result["skipped"],
+        errors=result["errors"],
+        items=out_items,
+        emailed=emailed,
+        email_sent=emailed,
+        message=result.get("message") or "",
+        setup_url=result.get("setup_url"),
+        activation_token=result.get("activation_token"),
     )
 
 
-@router.post("", response_model=OrgInviteResponse, status_code=201)
+@router.post("", response_model=StudentManualCreateResponse, status_code=201)
 async def create_student_manual(
     body: StudentManualCreate,
     db: AsyncSession = Depends(get_db),
     ctx: TenantContext = Depends(require_permission("UPLOAD_STUDENTS", "APPROVE_STUDENT")),
-) -> OrgInviteResponse:
+) -> StudentManualCreateResponse:
     try:
-        row = await svc.create_manual(
+        payload = await svc.create_manual(
             db,
             ctx,
             name=body.name,
@@ -112,10 +129,31 @@ async def create_student_manual(
             roll_number=body.roll_number,
             batch_year=body.batch_year,
             source=body.source,
+            auto_enroll=body.auto_enroll,
+            skip_approval=body.skip_approval,
         )
     except svc.StudentPortalError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-    return OrgInviteResponse.model_validate(row)
+
+    student = (
+        OrgStudentResponse.model_validate(payload["student"])
+        if payload.get("student")
+        else None
+    )
+    invitation = (
+        OrgInviteResponse.model_validate(payload["invitation"])
+        if payload.get("invitation")
+        else None
+    )
+    return StudentManualCreateResponse(
+        student=student,
+        invitation=invitation,
+        email_sent=bool(payload.get("email_sent")),
+        emailed=bool(payload.get("emailed")),
+        activation_token=payload.get("activation_token"),
+        setup_url=payload.get("setup_url"),
+        message=payload.get("message") or "",
+    )
 
 
 @router.post("/import", response_model=StudentImportResult, status_code=201)
@@ -134,7 +172,7 @@ async def import_students(
         for r in body.rows
     ]
     try:
-        created, updated, skipped, errors, items = await svc.import_students(
+        result = await svc.import_students(
             db,
             ctx,
             department_id=body.department_id,
@@ -142,24 +180,26 @@ async def import_students(
             csv_text=body.csv_text,
             send_invite_email=body.send_invite_email,
             source=body.source,
+            auto_enroll=body.auto_enroll,
+            skip_approval=body.skip_approval,
         )
     except svc.StudentPortalError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
-    # Mixed invite/student rows — validate loosely via model_validate on invite shape first
     out_items: list = []
-    for i in items:
+    for i in result["items"]:
         if "auth_status" in i:
             out_items.append(OrgStudentResponse.model_validate(i))
         else:
             out_items.append(OrgInviteResponse.model_validate(i))
 
     return StudentImportResult(
-        created=created,
-        updated=updated,
-        skipped=skipped,
-        errors=errors,
+        created=result["created"],
+        updated=result["updated"],
+        skipped=result["skipped"],
+        errors=result["errors"],
         items=out_items,
+        message=result.get("message") or "",
     )
 
 

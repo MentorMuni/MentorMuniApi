@@ -20,6 +20,11 @@ import secrets
 
 from fastapi import Header, HTTPException, status
 
+from app.common.security.auth_errors import (
+    API_KEY_NOT_CONFIGURED,
+    INVALID_API_KEY,
+    auth_detail,
+)
 from app.core.config import settings
 
 API_KEY_HEADER = "X-API-Key"
@@ -48,11 +53,17 @@ async def require_api_key(
     if not settings.is_api_key_configured:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="API_KEY is not configured on the server.",
+            detail=auth_detail(
+                code=API_KEY_NOT_CONFIGURED,
+                message="API_KEY is not configured on the server.",
+            ),
         )
     if not verify_api_key(x_api_key):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or missing API key.",
+            detail=auth_detail(
+                code=INVALID_API_KEY,
+                message="Invalid or missing API key.",
+            ),
             headers={"WWW-Authenticate": "ApiKey"},
         )

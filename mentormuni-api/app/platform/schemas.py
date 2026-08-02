@@ -28,6 +28,7 @@ class PlatformMeResponse(BaseModel):
     email: str
     role: str
     status: str
+    must_change_password: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -36,6 +37,14 @@ class PlatformMeResponse(BaseModel):
 class PlatformChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str = Field(min_length=8, max_length=128)
+
+
+# ----- Activate TPO (org portal user via platform invite) -----
+
+
+class ActivateTpoResponse(BaseModel):
+    message: str
+    organization_code: Optional[str] = None
 
 
 class MessageResponse(BaseModel):
@@ -61,6 +70,10 @@ class PlatformOrganizationCreate(BaseModel):
 
 class PlatformOrganizationUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=2, max_length=255)
+    code: Optional[str] = Field(default=None, min_length=2, max_length=64)
+    organization_type: Optional[str] = Field(
+        default=None, pattern="^(COLLEGE|PUBLIC)$"
+    )
     status: Optional[str] = Field(default=None, pattern="^(ACTIVE|SUSPENDED)$")
     contact_person: Optional[str] = None
     contact_email: Optional[EmailStr] = None
@@ -108,6 +121,7 @@ class PlatformSubscriptionCreate(BaseModel):
 
 
 class PlatformSubscriptionUpdate(BaseModel):
+    plan_id: Optional[int] = None
     student_limit: Optional[int] = Field(default=None, ge=1)
     start_date: Optional[date] = None
     end_date: Optional[date] = None
@@ -258,6 +272,7 @@ class PlatformUserCreate(BaseModel):
 
 class PlatformUserUpdate(BaseModel):
     name: Optional[str] = None
+    email: Optional[EmailStr] = None
     role: Optional[str] = Field(default=None, pattern="^(PLATFORM_ADMIN|SUPPORT|SALES|OPERATIONS)$")
     status: Optional[str] = Field(default=None, pattern="^(ACTIVE|INACTIVE)$")
     password: Optional[str] = Field(default=None, min_length=8, max_length=128)
@@ -269,6 +284,7 @@ class PlatformUserResponse(BaseModel):
     email: str
     role: str
     status: str
+    must_change_password: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}

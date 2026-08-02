@@ -20,18 +20,42 @@ from app.common.organization_access import (
 from app.common.security.passwords import hash_password, verify_password
 from app.common.tenant.deps import load_permissions_for_role
 from app.core.config import settings
-from app.models.enums import UserStatus
+from app.models.enums import RoleCode, UserStatus
 from app.models.organization import Organization
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
 
+# FE-preferred role labels (DB still uses ORG_ADMIN / DEPARTMENT_ADMIN).
+_FE_ROLE_ALIAS = {
+    RoleCode.ORG_ADMIN.value: "TPO",
+    RoleCode.DEPARTMENT_ADMIN.value: "HOD",
+    RoleCode.STUDENT.value: "STUDENT",
+}
+
 
 class AuthError(Exception):
-    def __init__(self, message: str, *, status_code: int = 400) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int = 400,
+        code: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.message = message
         self.status_code = status_code
+        self.code = code
+
+
+def fe_role_alias(role_code: str | None) -> str:
+    if not role_code:
+        return "VIEWER"
+    return _FE_ROLE_ALIAS.get(role_code, role_code)
+
+
+def user_display_name(user: User) -> str:
+    return f"{user.first_name} {user.last_name}".strip() or user.email
 
 
 def _hash_token(raw: str) -> str:
@@ -74,7 +98,11 @@ async def authenticate_user(
     users = list(result.scalars().unique().all())
 
     if not users:
-        raise AuthError("Invalid credentials.", status_code=401)
+        raise AuthError(
+            "Invalid credentials.",
+            status_code=401,
+            code="INVALID_CREDENTIALS",
+        )
     if len(users) > 1:
         raise AuthError(
             "Multiple accounts match. Pass organization_code to disambiguate.",
@@ -83,26 +111,51 @@ async def authenticate_user(
 
     user = users[0]
     if not user.password_hash or not verify_password(password, user.password_hash):
-        raise AuthError("Invalid credentials.", status_code=401)
+        raise AuthError(
+            "Invalid credentials.",
+            status_code=401,
+            code="INVALID_CREDENTIALS",
+        )
     if user.status == UserStatus.INVITED.value:
         raise AuthError(
             "Account invited but not activated. Set your password via the activation link.",
             status_code=403,
+            code="ACCOUNT_INACTIVE",
         )
     if user.status == UserStatus.PENDING.value:
-        raise AuthError("Account pending approval.", status_code=403)
+        raise AuthError(
+            "Account pending approval.",
+            status_code=403,
+            code="ACCOUNT_INACTIVE",
+        )
     if user.status == UserStatus.REJECTED.value:
-        raise AuthError("Account was rejected.", status_code=403)
+        raise AuthError(
+            "Account was rejected.",
+            status_code=403,
+            code="ACCOUNT_INACTIVE",
+        )
     if user.status == UserStatus.BLOCKED.value:
-        raise AuthError("Account is blocked.", status_code=403)
+        raise AuthError(
+            "Account is blocked.",
+            status_code=403,
+            code="ACCOUNT_INACTIVE",
+        )
     if user.status != UserStatus.ACTIVE.value:
-        raise AuthError(f"Account is {user.status}.", status_code=403)
+        raise AuthError(
+            f"Account is {user.status}.",
+            status_code=403,
+            code="ACCOUNT_INACTIVE",
+        )
 
     try:
         role_code = user.role.role_code if user.role else None
         ensure_organization_active_for_login(user.organization, role_code=role_code)
     except OrganizationAccessError as exc:
-        raise AuthError(exc.message, status_code=exc.status_code) from exc
+        raise AuthError(
+            exc.message,
+            status_code=exc.status_code,
+            code="ORG_SUSPENDED",
+        ) from exc
 
     return user
 
@@ -122,6 +175,7 @@ async def change_password(
     if not user.password_hash or not verify_password(current_password, user.password_hash):
         raise AuthError("Current password is incorrect.", status_code=400)
     user.password_hash = hash_password(new_password)
+    user.must_change_password = False
     await db.flush()
 
 
@@ -223,22 +277,40 @@ async def activate_invited_user(
     )
     user = result.scalar_one_or_none()
     if user is None:
-        raise AuthError("Invalid or already-used activation token.", status_code=400)
+        raise AuthError(
+            "Invalid or already-used activation token.",
+            status_code=400,
+            code="ACTIVATION_TOKEN_INVALID",
+        )
     if user.status != UserStatus.INVITED.value:
-        raise AuthError("Account is not awaiting activation.", status_code=400)
+        raise AuthError(
+            "Account is not awaiting activation.",
+            status_code=400,
+            code="ACCOUNT_NOT_INVITED",
+        )
     if user.activation_expires_at and user.activation_expires_at < datetime.now(timezone.utc):
-        raise AuthError("Activation token expired. Ask admin to re-invite.", status_code=400)
+        raise AuthError(
+            "Activation token expired. Ask admin to re-invite.",
+            status_code=400,
+            code="ACTIVATION_TOKEN_EXPIRED",
+        )
 
     if user.organization is not None:
         try:
             ensure_organization_accepts_activation(user.organization)
         except OrganizationAccessError as exc:
-            raise AuthError(exc.message, status_code=exc.status_code) from exc
+            raise AuthError(
+                exc.message,
+                status_code=exc.status_code,
+                code="ORG_SUSPENDED",
+            ) from exc
 
     user.password_hash = hash_password(new_password)
     user.status = UserStatus.ACTIVE.value
     user.activation_token_hash = None
     user.activation_expires_at = None
+    # Activate sets the password the user chose — do not force a second change.
+    user.must_change_password = False
     await db.flush()
     return user
 
@@ -251,9 +323,14 @@ async def audit_hod_activate(db: AsyncSession, user: User) -> None:
         organization_id=user.organization_id,
         actor_user_id=user.id,
         action="hod.activate",
-        entity_type="user",
-        entity_id=user.id,
-        payload={"department_id": user.department_id},
+        entity_type="department",
+        entity_id=user.department_id,
+        payload={
+            "hod_user_id": user.id,
+            "department_id": user.department_id,
+            "email": user.email,
+            "name": f"{user.first_name} {user.last_name}".strip(),
+        },
     )
 
 

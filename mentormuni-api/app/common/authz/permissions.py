@@ -5,8 +5,9 @@ from __future__ import annotations
 from collections.abc import Callable, Coroutine
 from typing import Any
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends
 
+from app.common.security.auth_errors import FORBIDDEN_ROLE, raise_forbidden
 from app.common.tenant.context import TenantContext
 from app.common.tenant.deps import get_tenant_context
 
@@ -20,9 +21,9 @@ def require_permission(*codes: str) -> Callable[..., Coroutine[Any, Any, TenantC
         ctx: TenantContext = Depends(get_tenant_context),
     ) -> TenantContext:
         if codes and not ctx.has_permission(*codes):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Missing permission. Requires one of: {', '.join(codes)}",
+            raise_forbidden(
+                code=FORBIDDEN_ROLE,
+                message=f"Missing permission. Requires one of: {', '.join(codes)}",
             )
         return ctx
 

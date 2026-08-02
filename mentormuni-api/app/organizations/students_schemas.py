@@ -12,6 +12,8 @@ class StudentInviteRequest(BaseModel):
     emails: list[EmailStr] = Field(min_length=1)
     department_id: int
     source: str = "invite"
+    auto_enroll: bool = False
+    skip_approval: bool = False
 
 
 class StudentManualCreate(BaseModel):
@@ -21,6 +23,8 @@ class StudentManualCreate(BaseModel):
     roll_number: Optional[str] = Field(default=None, max_length=64)
     batch_year: Optional[int] = Field(default=None, ge=1990, le=2100)
     source: str = "manual"
+    auto_enroll: bool = False
+    skip_approval: bool = False
 
 
 class StudentImportRow(BaseModel):
@@ -34,17 +38,23 @@ class StudentImportRequest(BaseModel):
     department_id: int
     rows: list[StudentImportRow] = Field(default_factory=list)
     csv_text: Optional[str] = None
-    send_invite_email: bool = False
+    send_invite_email: bool = True
     source: str = "import"
+    auto_enroll: bool = False
+    skip_approval: bool = False
 
 
 class StudentPatchRequest(BaseModel):
     department_id: Optional[int] = None
-    status: Optional[str] = Field(default=None, pattern="^(ACTIVE|BLOCKED|PENDING|INVITED)$")
+    status: Optional[str] = Field(
+        default=None,
+        pattern="^(ACTIVE|BLOCKED|PENDING|INVITED|DISABLED|disabled|Inactive|inactive)$",
+    )
     roll_number: Optional[str] = Field(default=None, max_length=64)
     batch_year: Optional[int] = Field(default=None, ge=1990, le=2100)
     first_name: Optional[str] = Field(default=None, min_length=1, max_length=128)
     last_name: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    name: Optional[str] = Field(default=None, min_length=1, max_length=256)
 
 
 class OrgStudentResponse(BaseModel):
@@ -99,7 +109,12 @@ class StudentInviteResult(BaseModel):
     created: int
     skipped: int
     errors: list[str] = Field(default_factory=list)
-    items: list[OrgInviteResponse] = Field(default_factory=list)
+    items: list[Union[OrgInviteResponse, OrgStudentResponse]] = Field(default_factory=list)
+    emailed: bool = False
+    email_sent: bool = False
+    message: str = ""
+    setup_url: Optional[str] = None
+    activation_token: Optional[str] = None
 
 
 class StudentImportResult(BaseModel):
@@ -108,10 +123,23 @@ class StudentImportResult(BaseModel):
     skipped: int
     errors: list[dict] = Field(default_factory=list)
     items: list[Union[OrgInviteResponse, OrgStudentResponse]] = Field(default_factory=list)
+    message: str = ""
 
 
 class StudentApproveResponse(BaseModel):
     student: OrgStudentResponse
+    email_sent: bool = False
+    emailed: bool = False
+    activation_token: Optional[str] = None
+    setup_url: Optional[str] = None
+    message: str = ""
+
+
+class StudentManualCreateResponse(BaseModel):
+    """Manual add — pending invite row OR auto-enrolled student envelope."""
+
+    student: Optional[OrgStudentResponse] = None
+    invitation: Optional[OrgInviteResponse] = None
     email_sent: bool = False
     emailed: bool = False
     activation_token: Optional[str] = None

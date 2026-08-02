@@ -1,4 +1,4 @@
-"""Department schemas."""
+"""Department schemas — Org Portal FE contract."""
 
 from __future__ import annotations
 
@@ -37,6 +37,16 @@ class DepartmentResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class MentorHistoryItem(BaseModel):
+    id: str
+    at: datetime
+    event: str  # invited | activated | revoked | replaced | reinvited
+    name: str = ""
+    email: str = ""
+    reason: str = ""
+    replaced_by_email: str = ""
+
+
 class OrgDepartmentResponse(BaseModel):
     """FE-friendly department row for /organizations/departments."""
 
@@ -52,10 +62,24 @@ class OrgDepartmentResponse(BaseModel):
     student_count: int = 0
     invited_at: Optional[datetime] = None
     activated_at: Optional[datetime] = None
+    mentor_history: list[MentorHistoryItem] = Field(default_factory=list)
+    # Present on invite responses when flattened (legacy); prefer HodLifecycleResponse
     activation_token: Optional[str] = None
+    activation_url: Optional[str] = None
+    emailed: Optional[bool] = None
     message: Optional[str] = None
 
     model_config = {"from_attributes": True}
+
+
+class HodLifecycleResponse(BaseModel):
+    """Invite / reinvite / revoke / replace response (FE contract)."""
+
+    message: str
+    emailed: bool = False
+    activation_token: Optional[str] = None
+    activation_url: Optional[str] = None
+    department: OrgDepartmentResponse
 
 
 class HodInviteRequest(BaseModel):

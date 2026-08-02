@@ -12,8 +12,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import jwt
-from fastapi import HTTPException, status
 
+from app.common.security.auth_errors import (
+    TOKEN_EXPIRED,
+    TOKEN_INVALID,
+    TOKEN_WRONG_SCOPE,
+    TOKEN_WRONG_TYPE,
+    raise_unauthorized,
+)
 from app.core.config import settings
 
 
@@ -52,29 +58,19 @@ def decode_access_token(token: str, *, expected_scope: str | None = None) -> dic
             settings.effective_jwt_secret,
             algorithms=[settings.jwt_algorithm],
         )
-    except jwt.ExpiredSignatureError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token expired. Please log in again.",
-            headers={"WWW-Authenticate": "Bearer"},
-        ) from exc
-    except jwt.InvalidTokenError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token.",
-            headers={"WWW-Authenticate": "Bearer"},
-        ) from exc
+    except jwt.ExpiredSignatureError:
+        raise_unauthorized(
+            code=TOKEN_EXPIRED,
+            message="Token expired. Please log in again.",
+        )
+    except jwt.InvalidTokenError:
+        raise_unauthorized(code=TOKEN_INVALID, message="Invalid token.")
 
     if payload.get("type") != "access":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token type.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise_unauthorized(code=TOKEN_WRONG_TYPE, message="Invalid token type.")
     if expected_scope and payload.get("scope", "tenant") != expected_scope:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Token scope must be '{expected_scope}'.",
-            headers={"WWW-Authenticate": "Bearer"},
+        raise_unauthorized(
+            code=TOKEN_WRONG_SCOPE,
+            message=f"Token scope must be '{expected_scope}'.",
         )
     return payload

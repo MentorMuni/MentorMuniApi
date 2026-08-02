@@ -21,6 +21,7 @@ from app.platform import service as svc
 from app.platform.deps import get_current_platform_user, get_db, require_api_key, require_platform_roles
 from app.platform.schemas import (
     ActivateTpoRequest,
+    ActivateTpoResponse,
     CreateTpoRequest,
     CreateTpoResponse,
     FeatureCatalogResponse,
@@ -65,12 +66,28 @@ async def platform_login(
     body: PlatformLoginRequest,
     db: AsyncSession = Depends(get_db),
 ) -> PlatformTokenResponse:
+    from app.common.security.auth_errors import (
+        ACCOUNT_INACTIVE,
+        INVALID_CREDENTIALS,
+        auth_detail,
+    )
+
     try:
         user = await svc.authenticate_platform_user(
             db, email=str(body.email), password=body.password
         )
     except svc.PlatformError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        code = (
+            INVALID_CREDENTIALS
+            if exc.status_code == 401
+            else ACCOUNT_INACTIVE
+            if exc.status_code == 403
+            else "PLATFORM_ERROR"
+        )
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=auth_detail(code=code, message=exc.message),
+        ) from exc
 
     token = create_access_token(
         user_id=user.id,
@@ -108,17 +125,21 @@ async def platform_change_password(
     return MessageResponse(message="Password updated.")
 
 
-@router.post("/auth/activate-tpo", response_model=MessageResponse)
+@router.post("/auth/activate-tpo", response_model=ActivateTpoResponse)
 async def activate_tpo(
     body: ActivateTpoRequest,
     db: AsyncSession = Depends(get_db),
-) -> MessageResponse:
+) -> ActivateTpoResponse:
     """TPO sets password via one-time token (no platform JWT needed)."""
     try:
-        await svc.activate_tpo(db, token=body.token, new_password=body.new_password)
+        user = await svc.activate_tpo(db, token=body.token, new_password=body.new_password)
     except svc.PlatformError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-    return MessageResponse(message="Password set. You can log in to the Organization Portal.")
+    org_code = user.organization.code if user.organization else None
+    return ActivateTpoResponse(
+        message="Password set. You can log in to the Organization Portal.",
+        organization_code=org_code,
+    )
 
 
 # =============================================================================
@@ -197,6 +218,20 @@ async def update_organization(
         org = await svc.update_organization(
             db, organization_id, **body.model_dump(exclude_unset=True)
         )
+    except svc.PlatformError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return PlatformOrganizationResponse.model_validate(org)
+
+
+@router.delete("/organizations/{organization_id}", response_model=PlatformOrganizationResponse)
+async def delete_organization(
+    organization_id: int,
+    _user: PlatformUser = Depends(get_current_platform_user),
+    db: AsyncSession = Depends(get_db),
+) -> PlatformOrganizationResponse:
+    """Soft-delete: set status=SUSPENDED and cancel ACTIVE subscriptions."""
+    try:
+        org = await svc.delete_organization(db, organization_id)
     except svc.PlatformError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     return PlatformOrganizationResponse.model_validate(org)
@@ -595,6 +630,22 @@ async def update_platform_user(
         user = await svc.update_platform_user(
             db, user_id, **body.model_dump(exclude_unset=True)
         )
+    except svc.PlatformError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return PlatformUserResponse.model_validate(user)
+
+
+@router.delete("/users/{user_id}", response_model=PlatformUserResponse)
+async def delete_platform_user(
+    user_id: int,
+    _user: PlatformUser = Depends(
+        require_platform_roles(PlatformRole.PLATFORM_ADMIN.value)
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> PlatformUserResponse:
+    """Soft-delete: set status=INACTIVE. Invite = POST /platform/users with temp password."""
+    try:
+        user = await svc.delete_platform_user(db, user_id)
     except svc.PlatformError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     return PlatformUserResponse.model_validate(user)

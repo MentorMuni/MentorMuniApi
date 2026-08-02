@@ -62,11 +62,12 @@ class OrganizationListResponse(BaseModel):
 
 
 class CollegeNameItem(BaseModel):
-    """Lightweight college row for dropdowns (self-register, etc.)."""
+    """Lightweight college row for login / enroll dropdowns."""
 
     id: int
     name: str
     code: str
+    status: str = "ACTIVE"
 
     model_config = {"from_attributes": True}
 
@@ -110,6 +111,7 @@ class OrganizationSubscriptionResponse(BaseModel):
 
 class SubscriptionPlanResponse(BaseModel):
     id: int
+    plan_code: Optional[str] = None
     plan_name: str
     plan_type: str
     duration_months: int

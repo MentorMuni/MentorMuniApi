@@ -16,7 +16,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.common.database.base import Base
@@ -73,6 +73,12 @@ class User(Base):
         nullable=False,
         default=UserStatus.PENDING.value,
         index=True,
+    )
+    must_change_password: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
     )
 
     # One-time activation for TPO invite (hashed token; raw token only emailed once).

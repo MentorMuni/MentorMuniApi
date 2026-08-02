@@ -112,6 +112,46 @@ def to_student_row(
     }
 
 
+def _wants_auto_enroll(*, auto_enroll: bool = False, skip_approval: bool = False) -> bool:
+    """HOD/TPO staff add — roster immediately (INVITED) instead of PENDING queue."""
+    return bool(auto_enroll or skip_approval)
+
+
+async def _email_setup_for_invited(
+    db: AsyncSession,
+    *,
+    user: User,
+    raw_token: str | None,
+    expires: datetime | None,
+    actor: User,
+) -> tuple[User, str | None, str | None, bool]:
+    """
+    Send set-password email for a freshly INVITED student.
+
+    If create_user already minted a token, use it; otherwise rotate via issue_student_activation.
+    Returns (user, token|None, setup_url|None, email_sent).
+    """
+    if raw_token and expires:
+        setup_url = user_service.build_student_activation_url(raw_token)
+        email_sent = await user_service.send_student_set_password_email(
+            user=user, raw_token=raw_token, expires=expires
+        )
+        await write_audit(
+            db,
+            organization_id=user.organization_id,
+            actor_user_id=actor.id,
+            action="student.set_password_link",
+            entity_type="user",
+            entity_id=user.id,
+            payload={"email_sent": email_sent, "source": "auto_enroll"},
+        )
+        # Always surface token + url so FE can copy when SMTP fails or for ops.
+        return user, raw_token, setup_url, email_sent
+    return await user_service.issue_student_activation(
+        db, user=user, actor=actor, send_email=True
+    )
+
+
 def _resolve_department_id(ctx: TenantContext, department_id: int | None) -> int:
     if ctx.role == RoleCode.DEPARTMENT_ADMIN.value:
         if ctx.department_id is None:
@@ -196,96 +236,22 @@ async def list_invites(
     return rows, len(rows)
 
 
-async def invite_emails(
+async def _create_student_user(
     db: AsyncSession,
     ctx: TenantContext,
     *,
-    emails: list[str],
-    department_id: int,
-    source: str = "invite",
-) -> tuple[int, int, list[str], list[dict]]:
-    dept_id = _resolve_department_id(ctx, department_id)
-    created_rows: list[dict] = []
-    skipped = 0
-    errors: list[str] = []
-
-    for email in emails:
-        email_norm = str(email).lower().strip()
-        first_name, last_name = _split_name(None, email_norm)
-        username = _username_from_email(email_norm)
-        # uniquify username on collision
-        try:
-            user, _, _ = await user_service.create_user(
-                db,
-                first_name=first_name,
-                last_name=last_name,
-                email=email_norm,
-                username=username,
-                password=None,
-                role_code=RoleCode.STUDENT.value,
-                organization_id=ctx.organization_id,
-                department_id=dept_id,
-                created_by=ctx.user,
-                invite_without_password=True,
-            )
-            created_rows.append(to_invite_row(user, source=source))
-        except user_service.UserServiceError as exc:
-            if exc.status_code == 409:
-                # retry with unique username if only username collided
-                try:
-                    user, _, _ = await user_service.create_user(
-                        db,
-                        first_name=first_name,
-                        last_name=last_name,
-                        email=email_norm,
-                        username=f"{username}.{secrets.token_hex(2)}",
-                        password=None,
-                        role_code=RoleCode.STUDENT.value,
-                        organization_id=ctx.organization_id,
-                        department_id=dept_id,
-                        created_by=ctx.user,
-                        invite_without_password=True,
-                    )
-                    created_rows.append(to_invite_row(user, source=source))
-                    continue
-                except user_service.UserServiceError as exc2:
-                    if exc2.status_code == 409:
-                        skipped += 1
-                        errors.append(f"{email_norm}: already exists")
-                    else:
-                        errors.append(f"{email_norm}: {exc2.message}")
-            else:
-                errors.append(f"{email_norm}: {exc.message}")
-
-    await write_audit(
-        db,
-        organization_id=ctx.organization_id,
-        actor_user_id=ctx.user_id,
-        action="student.invite",
-        entity_type="department",
-        entity_id=dept_id,
-        payload={"created": len(created_rows), "skipped": skipped, "source": source},
-    )
-    return len(created_rows), skipped, errors, created_rows
-
-
-async def create_manual(
-    db: AsyncSession,
-    ctx: TenantContext,
-    *,
-    name: str,
-    email: str,
-    department_id: int,
+    first_name: str,
+    last_name: str,
+    email_norm: str,
+    username: str,
+    dept_id: int,
     roll_number: str | None = None,
     batch_year: int | None = None,
-    source: str = "manual",
-) -> dict:
-    dept_id = _resolve_department_id(ctx, department_id)
-    email_norm = email.lower().strip()
-    first_name, last_name = _split_name(name, email_norm)
-    username = _username_from_email(email_norm)
+    auto_enroll: bool = False,
+) -> tuple[User, str | None, datetime | None]:
+    """Create student; on username collision retry with unique suffix (email conflict stays 409)."""
     try:
-        user, _, _ = await user_service.create_user(
+        return await user_service.create_user(
             db,
             first_name=first_name,
             last_name=last_name,
@@ -299,10 +265,14 @@ async def create_manual(
             invite_without_password=True,
             roll_number=roll_number,
             batch_year=batch_year,
+            auto_enroll=auto_enroll,
         )
     except user_service.UserServiceError as exc:
-        if exc.status_code == 409:
-            user, _, _ = await user_service.create_user(
+        if exc.status_code != 409:
+            raise
+        # Email conflict vs username-only: retry unique username once.
+        try:
+            return await user_service.create_user(
                 db,
                 first_name=first_name,
                 last_name=last_name,
@@ -316,9 +286,140 @@ async def create_manual(
                 invite_without_password=True,
                 roll_number=roll_number,
                 batch_year=batch_year,
+                auto_enroll=auto_enroll,
+            )
+        except user_service.UserServiceError:
+            raise exc from None
+
+
+async def invite_emails(
+    db: AsyncSession,
+    ctx: TenantContext,
+    *,
+    emails: list[str],
+    department_id: int,
+    source: str = "invite",
+    auto_enroll: bool = False,
+    skip_approval: bool = False,
+) -> dict:
+    dept_id = _resolve_department_id(ctx, department_id)
+    enroll = _wants_auto_enroll(auto_enroll=auto_enroll, skip_approval=skip_approval)
+    created_rows: list[dict] = []
+    skipped = 0
+    errors: list[str] = []
+    any_emailed = False
+    first_setup_url: str | None = None
+    first_token: str | None = None
+
+    for email in emails:
+        email_norm = str(email).lower().strip()
+        first_name, last_name = _split_name(None, email_norm)
+        username = _username_from_email(email_norm)
+        try:
+            user, raw_token, expires = await _create_student_user(
+                db,
+                ctx,
+                first_name=first_name,
+                last_name=last_name,
+                email_norm=email_norm,
+                username=username,
+                dept_id=dept_id,
+                auto_enroll=enroll,
+            )
+        except user_service.UserServiceError as exc:
+            if exc.status_code == 409:
+                skipped += 1
+                errors.append(f"{email_norm}: already exists")
+            else:
+                errors.append(f"{email_norm}: {exc.message}")
+            continue
+
+        if enroll:
+            user, token, setup_url, email_sent = await _email_setup_for_invited(
+                db, user=user, raw_token=raw_token, expires=expires, actor=ctx.user
+            )
+            any_emailed = any_emailed or email_sent
+            if setup_url and not first_setup_url:
+                first_setup_url = setup_url
+                first_token = token
+            created_rows.append(
+                to_student_row(
+                    user,
+                    source=source,
+                    setup_url=setup_url,
+                    activation_token=token,
+                )
             )
         else:
-            raise StudentPortalError(exc.message, status_code=exc.status_code) from exc
+            created_rows.append(to_invite_row(user, source=source))
+
+    await write_audit(
+        db,
+        organization_id=ctx.organization_id,
+        actor_user_id=ctx.user_id,
+        action="student.invite",
+        entity_type="department",
+        entity_id=dept_id,
+        payload={
+            "created": len(created_rows),
+            "skipped": skipped,
+            "source": source,
+            "auto_enroll": enroll,
+        },
+    )
+    if enroll:
+        message = (
+            "Invites sent. Students are on the roster."
+            if any_emailed
+            else "Students added to roster. Share set-password links if email did not send."
+        )
+    else:
+        message = "Students queued for approval."
+    return {
+        "created": len(created_rows),
+        "skipped": skipped,
+        "errors": errors,
+        "items": created_rows,
+        "emailed": any_emailed,
+        "setup_url": first_setup_url,
+        "activation_token": first_token,
+        "message": message,
+    }
+
+
+async def create_manual(
+    db: AsyncSession,
+    ctx: TenantContext,
+    *,
+    name: str,
+    email: str,
+    department_id: int,
+    roll_number: str | None = None,
+    batch_year: int | None = None,
+    source: str = "manual",
+    auto_enroll: bool = False,
+    skip_approval: bool = False,
+) -> dict:
+    dept_id = _resolve_department_id(ctx, department_id)
+    enroll = _wants_auto_enroll(auto_enroll=auto_enroll, skip_approval=skip_approval)
+    email_norm = email.lower().strip()
+    first_name, last_name = _split_name(name, email_norm)
+    username = _username_from_email(email_norm)
+    try:
+        user, raw_token, expires = await _create_student_user(
+            db,
+            ctx,
+            first_name=first_name,
+            last_name=last_name,
+            email_norm=email_norm,
+            username=username,
+            dept_id=dept_id,
+            roll_number=roll_number,
+            batch_year=batch_year,
+            auto_enroll=enroll,
+        )
+    except user_service.UserServiceError as exc:
+        raise StudentPortalError(exc.message, status_code=exc.status_code) from exc
 
     await write_audit(
         db,
@@ -327,9 +428,43 @@ async def create_manual(
         action="student.invite",
         entity_type="user",
         entity_id=user.id,
-        payload={"source": source},
+        payload={"source": source, "auto_enroll": enroll},
     )
-    return to_invite_row(user, source=source)
+
+    if not enroll:
+        return {
+            "invitation": to_invite_row(user, source=source),
+            "student": None,
+            "email_sent": False,
+            "emailed": False,
+            "activation_token": None,
+            "setup_url": None,
+            "message": "Student queued for approval.",
+        }
+
+    user, token, setup_url, email_sent = await _email_setup_for_invited(
+        db, user=user, raw_token=raw_token, expires=expires, actor=ctx.user
+    )
+    message = (
+        "Student added to roster. Set-password email sent."
+        if email_sent
+        else "Student added to roster. Share the set-password link with the student."
+    )
+    return {
+        "student": to_student_row(
+            user,
+            source=source,
+            setup_url=setup_url,
+            activation_token=token,
+            message=message,
+        ),
+        "invitation": None,
+        "email_sent": email_sent,
+        "emailed": email_sent,
+        "activation_token": token,
+        "setup_url": setup_url,
+        "message": message,
+    }
 
 
 def _parse_csv_rows(csv_text: str) -> list[dict]:
@@ -377,8 +512,14 @@ async def import_students(
     csv_text: str | None = None,
     send_invite_email: bool = False,
     source: str = "import",
-) -> tuple[int, int, int, list[dict], list[dict]]:
+    auto_enroll: bool = False,
+    skip_approval: bool = False,
+) -> dict:
     dept_id = _resolve_department_id(ctx, department_id)
+    enroll = _wants_auto_enroll(auto_enroll=auto_enroll, skip_approval=skip_approval)
+    # Auto-enroll implies setup email; otherwise honor explicit send_invite_email.
+    do_email = enroll or bool(send_invite_email)
+
     parsed = list(rows or [])
     if csv_text:
         parsed.extend(_parse_csv_rows(csv_text))
@@ -402,64 +543,36 @@ async def import_students(
         roll = row.get("roll_number")
         batch = row.get("batch_year")
         try:
-            user, _, _ = await user_service.create_user(
+            user, raw_token, expires = await _create_student_user(
                 db,
+                ctx,
                 first_name=first_name,
                 last_name=last_name,
-                email=email,
+                email_norm=email,
                 username=username,
-                password=None,
-                role_code=RoleCode.STUDENT.value,
-                organization_id=ctx.organization_id,
-                department_id=dept_id,
-                created_by=ctx.user,
-                invite_without_password=True,
+                dept_id=dept_id,
                 roll_number=str(roll) if roll else None,
                 batch_year=int(batch) if batch is not None else None,
+                auto_enroll=enroll or do_email,
             )
         except user_service.UserServiceError as exc:
-            if exc.status_code == 409:
-                try:
-                    user, _, _ = await user_service.create_user(
-                        db,
-                        first_name=first_name,
-                        last_name=last_name,
-                        email=email,
-                        username=f"{username}.{secrets.token_hex(2)}",
-                        password=None,
-                        role_code=RoleCode.STUDENT.value,
-                        organization_id=ctx.organization_id,
-                        department_id=dept_id,
-                        created_by=ctx.user,
-                        invite_without_password=True,
-                        roll_number=str(roll) if roll else None,
-                        batch_year=int(batch) if batch is not None else None,
-                    )
-                except user_service.UserServiceError as exc2:
-                    skipped += 1
-                    errors.append({"row": row_num, "email": email, "message": exc2.message})
-                    continue
-            else:
-                errors.append({"row": row_num, "email": email, "message": exc.message})
-                continue
+            skipped += 1
+            errors.append({"row": row_num, "email": email, "message": exc.message})
+            continue
 
         created += 1
-        if send_invite_email:
-            try:
-                user, token, setup_url, email_sent = await user_service.approve_user(
-                    db, user_id=user.id, approver=ctx.user, send_password_email=True
+        if enroll or do_email:
+            user, token, setup_url, _ = await _email_setup_for_invited(
+                db, user=user, raw_token=raw_token, expires=expires, actor=ctx.user
+            )
+            items.append(
+                to_student_row(
+                    user,
+                    source=source,
+                    setup_url=setup_url,
+                    activation_token=token,
                 )
-                items.append(
-                    to_student_row(
-                        user,
-                        source=source,
-                        setup_url=setup_url,
-                        activation_token=token,
-                    )
-                )
-            except user_service.UserServiceError as exc:
-                errors.append({"row": row_num, "email": email, "message": exc.message})
-                items.append(to_invite_row(user, source=source))
+            )
         else:
             items.append(to_invite_row(user, source=source))
 
@@ -474,10 +587,24 @@ async def import_students(
             "created": created,
             "skipped": skipped,
             "errors": len(errors),
-            "send_invite_email": send_invite_email,
+            "send_invite_email": do_email,
+            "auto_enroll": enroll,
         },
     )
-    return created, updated, skipped, errors, items
+    if enroll:
+        message = f"Import complete. {created} student(s) on the roster."
+    elif do_email:
+        message = f"Import complete. {created} student(s) approved with setup email."
+    else:
+        message = f"Import complete. {created} student(s) queued for approval."
+    return {
+        "created": created,
+        "updated": updated,
+        "skipped": skipped,
+        "errors": errors,
+        "items": items,
+        "message": message,
+    }
 
 
 async def approve_invite(
@@ -611,16 +738,27 @@ async def patch_student(
     if not ctx.sees_all_students and user.department_id != ctx.department_id:
         raise StudentPortalError("Outside your department.", status_code=403)
 
-    if "department_id" in fields and fields["department_id"] is not None:
+    updates = dict(fields)
+
+    if "name" in updates and updates["name"] is not None:
+        first_name, last_name = _split_name(str(updates.pop("name")), user.email)
+        updates.setdefault("first_name", first_name)
+        updates.setdefault("last_name", last_name)
+
+    if "department_id" in updates and updates["department_id"] is not None:
         if ctx.role == RoleCode.DEPARTMENT_ADMIN.value:
             raise StudentPortalError("HOD cannot reassign department.", status_code=403)
-        fields["department_id"] = int(fields["department_id"])
+        updates["department_id"] = int(updates["department_id"])
 
-    if "status" in fields and fields["status"]:
-        fields["status"] = str(fields["status"]).upper()
+    if "status" in updates and updates["status"]:
+        status_raw = str(updates["status"]).strip().upper()
+        # FE "DISABLED" / Inactive → BLOCKED (cannot login)
+        if status_raw in {"DISABLED", "INACTIVE"}:
+            status_raw = UserStatus.BLOCKED.value
+        updates["status"] = status_raw
 
     try:
-        user = await user_service.update_user(db, student_id, **fields)
+        user = await user_service.update_user(db, student_id, **updates)
     except user_service.UserServiceError as exc:
         raise StudentPortalError(exc.message, status_code=exc.status_code) from exc
 
@@ -631,6 +769,6 @@ async def patch_student(
         action="student.update",
         entity_type="user",
         entity_id=user.id,
-        payload=fields,
+        payload=updates,
     )
     return to_student_row(user)

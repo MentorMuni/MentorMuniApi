@@ -1,4 +1,4 @@
-"""Auth request/response schemas."""
+"""Auth request/response schemas — Org Portal FE contract."""
 
 from __future__ import annotations
 
@@ -17,12 +17,46 @@ class LoginRequest(BaseModel):
     organization_code: Optional[str] = None
 
 
+class MeResponse(BaseModel):
+    """Session user for Org Portal (login.user + GET /auth/me)."""
+
+    id: int
+    name: str
+    email: str
+    # FE-preferred: TPO | HOD | STUDENT | VIEWER
+    role: str
+    # DB role_code: ORG_ADMIN | DEPARTMENT_ADMIN | STUDENT
+    role_code: str
+    role_name: str = ""
+    organization_id: int
+    organization_name: str
+    organization_code: str
+    organization_type: str = "COLLEGE"
+    department_id: Optional[int] = None
+    department_name: str = ""
+    department_code: str = ""
+    permissions: list[str] = Field(default_factory=list)
+    must_change_password: bool = False
+    # Back-compat fields
+    user_id: int
+    first_name: str = ""
+    last_name: str = ""
+    mobile: Optional[str] = None
+    username: str = ""
+    status: str = "ACTIVE"
+    created_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
 class TokenResponse(BaseModel):
-    """Login payload for Org Portal FE — JWT + TenantContext fields."""
+    """Login payload — JWT + session user."""
 
     access_token: str
     token_type: str = "bearer"
     expires_in_minutes: int
+    user: MeResponse
+    # Flat mirrors (older FE clients)
     user_id: int
     organization_id: int
     department_id: Optional[int] = None
@@ -52,28 +86,9 @@ class ActivateAccountRequest(BaseModel):
     new_password: str = Field(min_length=8, max_length=128)
 
 
-class MeResponse(BaseModel):
-    id: int
-    user_id: int
-    organization_id: int
-    organization_code: str
-    organization_name: str
-    organization_type: str
-    department_id: Optional[int] = None
-    department_code: Optional[str] = None
-    role: str
-    role_code: str
-    role_name: str
-    permissions: list[str]
-    first_name: str
-    last_name: str
-    email: str
-    mobile: Optional[str] = None
-    username: str
-    status: str
-    created_at: datetime
-
-    model_config = {"from_attributes": True}
+class ActivateAccountResponse(BaseModel):
+    message: str
+    organization_code: Optional[str] = None
 
 
 class MessageResponse(BaseModel):

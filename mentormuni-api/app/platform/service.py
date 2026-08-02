@@ -14,6 +14,7 @@ from sqlalchemy.orm import selectinload
 from app.common.organization_access import (
     OrganizationAccessError,
     ensure_organization_accepts_activation,
+    is_public_organization,
     reject_create_public_as_suspended,
     reject_suspend_if_public,
 )
@@ -80,6 +81,7 @@ async def change_platform_password(
     if not verify_password(current_password, user.password_hash):
         raise PlatformError("Current password is incorrect.")
     user.password_hash = hash_password(new_password)
+    user.must_change_password = False
     await db.flush()
 
 
@@ -184,6 +186,28 @@ async def update_organization(db: AsyncSession, organization_id: int, **fields: 
         except OrganizationAccessError as exc:
             raise PlatformError(exc.message, status_code=exc.status_code) from exc
 
+    if "code" in fields and fields["code"] is not None:
+        new_code = str(fields["code"]).strip().upper()
+        if new_code != org.code:
+            if is_public_organization(org):
+                raise PlatformError("PUBLIC organization code cannot be changed.", status_code=400)
+            clash = await db.execute(
+                select(Organization).where(
+                    Organization.code == new_code,
+                    Organization.id != organization_id,
+                )
+            )
+            if clash.scalar_one_or_none():
+                raise PlatformError(
+                    f"Organization code '{new_code}' already exists.",
+                    status_code=409,
+                )
+            fields["code"] = new_code
+
+    if "organization_type" in fields and fields["organization_type"] is not None:
+        if is_public_organization(org) and str(fields["organization_type"]) != org.organization_type:
+            raise PlatformError("PUBLIC organization type cannot be changed.", status_code=400)
+
     for key, value in fields.items():
         if value is None and key not in {
             "contact_person",
@@ -198,6 +222,30 @@ async def update_organization(db: AsyncSession, organization_id: int, **fields: 
         if key == "contact_email" and value is not None:
             value = str(value).lower()
         setattr(org, key, value)
+    await db.flush()
+    await db.refresh(org)
+    return org
+
+
+async def delete_organization(db: AsyncSession, organization_id: int) -> Organization:
+    """Soft-delete: suspend org and cancel ACTIVE subscriptions. PUBLIC is protected."""
+    org = await get_organization(db, organization_id)
+    if is_public_organization(org):
+        raise PlatformError(
+            "The PUBLIC (MentorMuni Public) organization cannot be deleted.",
+            status_code=400,
+        )
+
+    org.status = OrganizationStatus.SUSPENDED.value
+    active = await db.execute(
+        select(OrganizationSubscription).where(
+            OrganizationSubscription.organization_id == organization_id,
+            OrganizationSubscription.status == SubscriptionStatus.ACTIVE.value,
+        )
+    )
+    for row in active.scalars().all():
+        row.status = SubscriptionStatus.CANCELLED.value
+
     await db.flush()
     await db.refresh(org)
     return org
@@ -317,6 +365,35 @@ async def update_subscription(
     sub = result.scalar_one_or_none()
     if sub is None:
         raise PlatformError("Subscription not found.", status_code=404)
+
+    plan_id = fields.pop("plan_id", None)
+    if plan_id is not None:
+        plan = await db.get(SubscriptionPlan, int(plan_id))
+        if plan is None:
+            raise PlatformError("Subscription plan not found.", status_code=404)
+        sub.plan_id = plan.id
+        sub.plan_name = plan.plan_name
+        if fields.get("student_limit") is None:
+            # Keep existing limit unless caller overrides; only seed when unset.
+            if not sub.student_limit:
+                sub.student_limit = plan.max_students
+
+    new_status = fields.get("status")
+    if (
+        isinstance(new_status, str)
+        and new_status == SubscriptionStatus.ACTIVE.value
+        and sub.status != SubscriptionStatus.ACTIVE.value
+    ):
+        # Reactivating: expire any other ACTIVE row for this org.
+        others = await db.execute(
+            select(OrganizationSubscription).where(
+                OrganizationSubscription.organization_id == sub.organization_id,
+                OrganizationSubscription.status == SubscriptionStatus.ACTIVE.value,
+                OrganizationSubscription.id != sub.id,
+            )
+        )
+        for row in others.scalars().all():
+            row.status = SubscriptionStatus.EXPIRED.value
 
     for key, value in fields.items():
         if value is None:
@@ -651,11 +728,17 @@ async def activate_tpo(
     )
     user = result.scalar_one_or_none()
     if user is None:
-        raise PlatformError("Invalid or already-used activation token.", status_code=400)
+        raise PlatformError(
+            "Invalid or already-used activation token.",
+            status_code=400,
+        )
     if user.status != UserStatus.INVITED.value:
         raise PlatformError("Account is not awaiting activation.", status_code=400)
     if user.activation_expires_at and user.activation_expires_at < datetime.now(timezone.utc):
-        raise PlatformError("Activation token expired. Ask platform to re-invite.", status_code=400)
+        raise PlatformError(
+            "Activation token expired. Ask platform to re-invite.",
+            status_code=400,
+        )
 
     if user.organization is not None:
         try:
@@ -667,6 +750,9 @@ async def activate_tpo(
     user.status = UserStatus.ACTIVE.value
     user.activation_token_hash = None
     user.activation_expires_at = None
+    # Activate sets the password the user chose — do not force a second change.
+    if hasattr(user, "must_change_password"):
+        user.must_change_password = False
     await db.flush()
     return user
 
@@ -688,6 +774,7 @@ async def create_platform_user(db: AsyncSession, **fields: object) -> PlatformUs
         password_hash=hash_password(str(fields["password"])),
         role=str(fields["role"]),
         status=PlatformUserStatus.ACTIVE.value,
+        must_change_password=True,
     )
     db.add(user)
     await db.flush()
@@ -707,9 +794,35 @@ async def update_platform_user(db: AsyncSession, user_id: int, **fields: object)
 
     if "password" in fields and fields["password"]:
         user.password_hash = hash_password(str(fields["password"]))
+        user.must_change_password = True
+    if "email" in fields and fields["email"] is not None:
+        new_email = str(fields["email"]).lower().strip()
+        if new_email != user.email:
+            clash = await db.execute(
+                select(PlatformUser).where(
+                    PlatformUser.email == new_email,
+                    PlatformUser.id != user_id,
+                )
+            )
+            if clash.scalar_one_or_none():
+                raise PlatformError("Email already exists.", status_code=409)
+            user.email = new_email
     for key in ("name", "role", "status"):
         if key in fields and fields[key] is not None:
             setattr(user, key, fields[key])
+    await db.flush()
+    await db.refresh(user)
+    return user
+
+
+async def delete_platform_user(db: AsyncSession, user_id: int) -> PlatformUser:
+    """Soft-delete: set status INACTIVE. No separate invite flow — use POST /users."""
+    user = await db.get(PlatformUser, user_id)
+    if user is None:
+        raise PlatformError("Platform user not found.", status_code=404)
+    if user.email.lower() == "mentormuniteam@gmail.com":
+        raise PlatformError("Primary platform admin cannot be deleted.", status_code=400)
+    user.status = PlatformUserStatus.INACTIVE.value
     await db.flush()
     await db.refresh(user)
     return user

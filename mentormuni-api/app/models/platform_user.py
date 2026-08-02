@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, DateTime, String, func
+from sqlalchemy import BigInteger, Boolean, DateTime, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.common.database.base import Base
@@ -34,6 +34,12 @@ class PlatformUser(Base):
         String(32),
         nullable=False,
         default=PlatformUserStatus.ACTIVE.value,
+    )
+    must_change_password: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
     )
 
     created_at: Mapped[datetime] = mapped_column(

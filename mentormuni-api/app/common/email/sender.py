@@ -17,10 +17,15 @@ Usage::
 Configure via env (see Settings / .env.example). When ``EMAIL_ENABLED=false``,
 ``send_email`` returns ``skipped=True`` and does not raise — callers stay safe
 in local/dev without SMTP.
+
+Railway note: outbound SMTP to ``smtp.gmail.com:587`` often times out.
+Prefer ``SMTP_PORT=465`` + ``SMTP_USE_SSL=true``, or rely on the automatic
+587 → 465 fallback in ``send_email``.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import ssl
 from email.message import EmailMessage
@@ -117,6 +122,65 @@ def _all_envelope_recipients(payload: OutgoingEmail) -> list[str]:
     return unique
 
 
+def _is_connect_timeout(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    if "timed out" in text or "timeout" in text:
+        return True
+    if isinstance(exc, (TimeoutError, asyncio.TimeoutError, OSError, ConnectionError)):
+        return True
+    # aiosmtplib wraps some connect failures
+    name = type(exc).__name__.lower()
+    return "timeout" in name
+
+
+def _smtp_attempts() -> list[tuple[int, bool, bool]]:
+    """
+    Ordered (port, start_tls, use_ssl) attempts.
+
+    Primary = Settings. Then Gmail-friendly alternate if host is Gmail and
+    primary looks like the flaky Railway :587 STARTTLS path.
+    """
+    primary_start_tls = settings.smtp_use_tls and not settings.smtp_use_ssl
+    primary = (settings.smtp_port, primary_start_tls, bool(settings.smtp_use_ssl))
+    attempts = [primary]
+
+    host = (settings.smtp_host or "").lower()
+    if "gmail.com" in host or "google.com" in host:
+        # Railway often cannot open smtp.gmail.com:587 — SSL 465 usually works.
+        alt = (465, False, True)
+        if alt != primary:
+            attempts.append(alt)
+        # Also try 587 STARTTLS if primary was 465
+        alt587 = (587, True, False)
+        if alt587 != primary and alt587 not in attempts:
+            attempts.append(alt587)
+
+    return attempts
+
+
+async def _smtp_send_once(
+    mime: EmailMessage,
+    *,
+    recipients: list[str],
+    port: int,
+    start_tls: bool,
+    use_ssl: bool,
+) -> None:
+    tls_context = ssl.create_default_context() if (start_tls or use_ssl) else None
+    await aiosmtplib.send(
+        mime,
+        hostname=settings.smtp_host,
+        port=port,
+        username=settings.smtp_username or None,
+        password=settings.smtp_password or None,
+        start_tls=start_tls,
+        use_tls=use_ssl,
+        tls_context=tls_context,
+        recipients=recipients,
+        timeout=settings.smtp_timeout_seconds,
+    )
+
+
 async def send_email(
     payload: OutgoingEmail,
     *,
@@ -140,8 +204,11 @@ async def send_email(
     """
     if not settings.email_enabled:
         detail = "EMAIL_ENABLED is false; email not sent."
-        logger.info("email_skipped reason=disabled to=%s subject=%r", 
-                    [a.email for a in payload.to], payload.subject)
+        logger.info(
+            "email_skipped reason=disabled to=%s subject=%r",
+            [a.email for a in payload.to],
+            payload.subject,
+        )
         if raise_on_skip:
             raise EmailNotConfiguredError(detail)
         return EmailSendResult(sent=False, skipped=True, detail=detail)
@@ -160,44 +227,62 @@ async def send_email(
     recipients = _all_envelope_recipients(payload)
     message_id: Optional[str] = mime["Message-ID"]
 
-    use_tls = settings.smtp_use_tls and not settings.smtp_use_ssl
-    tls_context = ssl.create_default_context() if (use_tls or settings.smtp_use_ssl) else None
+    last_exc: BaseException | None = None
+    for idx, (port, start_tls, use_ssl) in enumerate(_smtp_attempts()):
+        try:
+            await _smtp_send_once(
+                mime,
+                recipients=recipients,
+                port=port,
+                start_tls=start_tls,
+                use_ssl=use_ssl,
+            )
+            if idx > 0:
+                logger.warning(
+                    "email_sent_via_fallback host=%s port=%s start_tls=%s ssl=%s",
+                    settings.smtp_host,
+                    port,
+                    start_tls,
+                    use_ssl,
+                )
+            logger.info(
+                "email_sent to=%s subject=%r message_id=%s port=%s",
+                recipients,
+                payload.subject,
+                message_id,
+                port,
+            )
+            return EmailSendResult(
+                sent=True,
+                skipped=False,
+                detail="Email sent.",
+                message_id=str(message_id) if message_id else None,
+            )
+        except EmailError:
+            raise
+        except Exception as exc:
+            last_exc = exc
+            logger.warning(
+                "email_smtp_attempt_failed host=%s port=%s start_tls=%s ssl=%s err=%s",
+                settings.smtp_host,
+                port,
+                start_tls,
+                use_ssl,
+                exc,
+            )
+            # Only fall through to next attempt on connect/timeout style failures
+            if not _is_connect_timeout(exc) and idx == 0:
+                # Auth / recipient errors — don't retry other ports
+                if "authentication" in str(exc).lower() or "535" in str(exc):
+                    break
+            continue
 
-    try:
-        await aiosmtplib.send(
-            mime,
-            hostname=settings.smtp_host,
-            port=settings.smtp_port,
-            username=settings.smtp_username or None,
-            password=settings.smtp_password or None,
-            start_tls=use_tls,
-            use_tls=settings.smtp_use_ssl,
-            tls_context=tls_context,
-            recipients=recipients,
-            timeout=settings.smtp_timeout_seconds,
-        )
-    except EmailError:
-        raise
-    except Exception as exc:
-        logger.exception(
-            "email_delivery_failed to=%s subject=%r",
-            recipients,
-            payload.subject,
-        )
-        raise EmailDeliveryError(f"Failed to send email: {exc}") from exc
-
-    logger.info(
-        "email_sent to=%s subject=%r message_id=%s",
+    logger.exception(
+        "email_delivery_failed to=%s subject=%r",
         recipients,
         payload.subject,
-        message_id,
     )
-    return EmailSendResult(
-        sent=True,
-        skipped=False,
-        detail="Email sent.",
-        message_id=str(message_id) if message_id else None,
-    )
+    raise EmailDeliveryError(f"Failed to send email: {last_exc}") from last_exc
 
 
 async def send_simple_email(

@@ -2,6 +2,9 @@
 Subscription plan catalog (read-only for frontend).
 
 GET /subscription-plans
+
+Auth: X-API-Key required. Bearer JWT not required.
+Use returned ``id`` / ``plan_code`` — never hardcode plan IDs.
 """
 
 from __future__ import annotations
@@ -20,7 +23,15 @@ router = APIRouter(
 )
 
 
-@router.get("", response_model=list[SubscriptionPlanResponse])
+@router.get(
+    "",
+    response_model=list[SubscriptionPlanResponse],
+    summary="List subscription plans",
+    description=(
+        "Requires X-API-Key only. Canonical plan_code values: "
+        "STARTER, GROWTH, ENTERPRISE, PREMIUM_STUDENT."
+    ),
+)
 async def list_subscription_plans(
     plan_type: str | None = Query(default=None, description="COLLEGE or INDIVIDUAL"),
     db: AsyncSession = Depends(get_db),

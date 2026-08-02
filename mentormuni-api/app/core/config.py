@@ -54,22 +54,26 @@ class Settings(BaseSettings):
     # --- Email (SMTP) — Gmail defaults in code; secrets / URLs via Railway ---
     # Recipients see: "MentorMuni Team" <mentormuniteam@gmail.com>
     #
-    # Railway (only these):
+    # Railway (recommended — port 587 often times out from Railway → Gmail):
     #   EMAIL_ENABLED=true
     #   SMTP_PASSWORD=<Gmail App Password>
-    #   ORG_PORTAL_BASE_URL=https://www.mentormuni.com  (optional; already defaulted in code)
+    #   SMTP_PORT=465
+    #   SMTP_USE_SSL=true
+    #   SMTP_USE_TLS=false
+    #   ORG_PORTAL_BASE_URL=https://www.mentormuni.com
     email_enabled: bool = Field(
         default=False,
         description="Master switch. Set true on Railway when App Password is configured.",
     )
     smtp_host: str = Field(default="smtp.gmail.com")
-    smtp_port: int = Field(default=587, ge=1, le=65535)
+    # Prefer 465/SSL on Railway; 587 STARTTLS frequently times out there.
+    smtp_port: int = Field(default=465, ge=1, le=65535)
     smtp_username: str = Field(default="mentormuniteam@gmail.com")
     # Secret — set only via Railway / .env (never commit).
     smtp_password: str = Field(default="")
-    smtp_use_tls: bool = Field(default=True)
-    smtp_use_ssl: bool = Field(default=False)
-    smtp_timeout_seconds: int = Field(default=30, ge=5, le=120)
+    smtp_use_tls: bool = Field(default=False)  # STARTTLS (port 587)
+    smtp_use_ssl: bool = Field(default=True)  # implicit SSL (port 465)
+    smtp_timeout_seconds: int = Field(default=45, ge=5, le=120)
     email_from_address: str = Field(default="mentormuniteam@gmail.com")
     email_from_name: str = Field(default="MentorMuni Team")
     email_reply_to: str = Field(default="mentormuniteam@gmail.com")

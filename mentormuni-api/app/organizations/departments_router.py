@@ -12,18 +12,25 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.common.authz import require_permission
 from app.common.audit import write_audit
+from app.common.authz import require_permission
 from app.common.deps import get_db, require_api_key
+from app.common.security.auth_errors import (
+    TOKEN_INVALID,
+    TOKEN_MISSING,
+    auth_detail,
+    raise_unauthorized,
+)
 from app.common.security.jwt import decode_access_token
 from app.common.tenant.context import TenantContext
-from app.common.tenant.deps import build_tenant_context, get_tenant_context
+from app.common.tenant.deps import build_tenant_context
 from app.departments import hod as hod_service
 from app.departments import service as dept_service
 from app.departments.schemas import (
     DepartmentCreate,
     DepartmentUpdate,
     HodInviteRequest,
+    HodLifecycleResponse,
     HodReplaceRequest,
     HodRevokeRequest,
     OrgDepartmentResponse,
@@ -39,6 +46,24 @@ router = APIRouter(
 )
 
 _bearer = HTTPBearer(auto_error=False)
+
+
+def _dept_response(payload: dict) -> OrgDepartmentResponse:
+    return OrgDepartmentResponse.model_validate(payload)
+
+
+def _lifecycle_response(payload: dict) -> HodLifecycleResponse:
+    return HodLifecycleResponse.model_validate(payload)
+
+
+def _dept_http(exc: dept_service.DepartmentError) -> HTTPException:
+    return HTTPException(
+        status_code=exc.status_code,
+        detail=auth_detail(
+            code=exc.code or "DEPARTMENT_ERROR",
+            message=exc.message,
+        ),
+    )
 
 
 @router.get("", response_model=Union[list[OrgDepartmentResponse], PublicDepartmentsResponse])
@@ -64,12 +89,12 @@ async def list_org_departments(
 
     # Authenticated TPO/HOD list
     if credentials is None or credentials.scheme.lower() != "bearer":
-        raise HTTPException(status_code=401, detail="Missing Authorization Bearer token.")
+        raise_unauthorized(code=TOKEN_MISSING, message="Missing Authorization Bearer token.")
     payload = decode_access_token(credentials.credentials, expected_scope="tenant")
     try:
         user_id = int(payload["sub"])
-    except (KeyError, TypeError, ValueError) as exc:
-        raise HTTPException(status_code=401, detail="Invalid token subject.") from exc
+    except (KeyError, TypeError, ValueError):
+        raise_unauthorized(code=TOKEN_INVALID, message="Invalid token subject.")
     try:
         user = await user_service.get_user(db, user_id)
     except user_service.UserServiceError as exc:
@@ -78,7 +103,7 @@ async def list_org_departments(
 
     items = await dept_service.list_departments(db, organization_id=ctx.organization_id)
     return [
-        OrgDepartmentResponse.model_validate(await hod_service.enrich_department(db, d))
+        _dept_response(await hod_service.enrich_department(db, d))
         for d in items
     ]
 
@@ -108,8 +133,8 @@ async def create_org_department(
             payload={"code": dept.code, "name": dept.name},
         )
     except dept_service.DepartmentError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-    return OrgDepartmentResponse.model_validate(await hod_service.enrich_department(db, dept))
+        raise _dept_http(exc) from exc
+    return _dept_response(await hod_service.enrich_department(db, dept))
 
 
 @router.put("/{department_id}", response_model=OrgDepartmentResponse)
@@ -126,7 +151,7 @@ async def update_org_department(
         dept = await dept_service.update_department(
             db,
             department_id,
-            **body.model_dump(exclude_unset=True),
+            **body.model_dump(exclude_unset=True, exclude={"hod_name", "hod_email"}),
         )
         await write_audit(
             db,
@@ -138,8 +163,8 @@ async def update_org_department(
             payload=body.model_dump(exclude_unset=True, exclude={"hod_name", "hod_email"}),
         )
     except dept_service.DepartmentError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-    return OrgDepartmentResponse.model_validate(await hod_service.enrich_department(db, dept))
+        raise _dept_http(exc) from exc
+    return _dept_response(await hod_service.enrich_department(db, dept))
 
 
 @router.delete("/{department_id}", response_model=OrgDepartmentResponse)
@@ -162,17 +187,21 @@ async def delete_org_department(
             entity_id=dept.id,
         )
     except dept_service.DepartmentError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-    return OrgDepartmentResponse.model_validate(await hod_service.enrich_department(db, dept))
+        raise _dept_http(exc) from exc
+    return _dept_response(await hod_service.enrich_department(db, dept))
 
 
-@router.post("/{department_id}/hod", response_model=OrgDepartmentResponse, status_code=201)
+@router.post(
+    "/{department_id}/hod",
+    response_model=HodLifecycleResponse,
+    status_code=201,
+)
 async def invite_department_hod(
     department_id: int,
     body: HodInviteRequest,
     db: AsyncSession = Depends(get_db),
     ctx: TenantContext = Depends(require_permission("CREATE_HOD")),
-) -> OrgDepartmentResponse:
+) -> HodLifecycleResponse:
     try:
         payload, _ = await hod_service.invite_hod(
             db,
@@ -182,39 +211,41 @@ async def invite_department_hod(
             actor=ctx.user,
         )
     except dept_service.DepartmentError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        raise _dept_http(exc) from exc
     except Exception as exc:
-        # create_user raises UserServiceError
         from app.users.service import UserServiceError
 
         if isinstance(exc, UserServiceError):
-            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail=auth_detail(code="HOD_EMAIL_CONFLICT", message=exc.message),
+            ) from exc
         raise
-    return OrgDepartmentResponse.model_validate(payload)
+    return _lifecycle_response(payload)
 
 
-@router.post("/{department_id}/hod/reinvite", response_model=OrgDepartmentResponse)
+@router.post("/{department_id}/hod/reinvite", response_model=HodLifecycleResponse)
 async def reinvite_department_hod(
     department_id: int,
     db: AsyncSession = Depends(get_db),
     ctx: TenantContext = Depends(require_permission("CREATE_HOD")),
-) -> OrgDepartmentResponse:
+) -> HodLifecycleResponse:
     try:
         payload = await hod_service.reinvite_hod(
             db, department_id=department_id, actor=ctx.user
         )
     except dept_service.DepartmentError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-    return OrgDepartmentResponse.model_validate(payload)
+        raise _dept_http(exc) from exc
+    return _lifecycle_response(payload)
 
 
-@router.post("/{department_id}/hod/revoke", response_model=OrgDepartmentResponse)
+@router.post("/{department_id}/hod/revoke", response_model=HodLifecycleResponse)
 async def revoke_department_hod(
     department_id: int,
     body: HodRevokeRequest | None = None,
     db: AsyncSession = Depends(get_db),
     ctx: TenantContext = Depends(require_permission("CREATE_HOD")),
-) -> OrgDepartmentResponse:
+) -> HodLifecycleResponse:
     try:
         payload = await hod_service.revoke_hod(
             db,
@@ -223,17 +254,17 @@ async def revoke_department_hod(
             reason=(body.reason if body else None),
         )
     except dept_service.DepartmentError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-    return OrgDepartmentResponse.model_validate(payload)
+        raise _dept_http(exc) from exc
+    return _lifecycle_response(payload)
 
 
-@router.post("/{department_id}/hod/replace", response_model=OrgDepartmentResponse)
+@router.post("/{department_id}/hod/replace", response_model=HodLifecycleResponse)
 async def replace_department_hod(
     department_id: int,
     body: HodReplaceRequest,
     db: AsyncSession = Depends(get_db),
     ctx: TenantContext = Depends(require_permission("CREATE_HOD")),
-) -> OrgDepartmentResponse:
+) -> HodLifecycleResponse:
     try:
         payload = await hod_service.replace_hod(
             db,
@@ -244,11 +275,14 @@ async def replace_department_hod(
             reason=body.reason,
         )
     except dept_service.DepartmentError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        raise _dept_http(exc) from exc
     except Exception as exc:
         from app.users.service import UserServiceError
 
         if isinstance(exc, UserServiceError):
-            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail=auth_detail(code="HOD_EMAIL_CONFLICT", message=exc.message),
+            ) from exc
         raise
-    return OrgDepartmentResponse.model_validate(payload)
+    return _lifecycle_response(payload)

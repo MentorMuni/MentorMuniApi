@@ -27,6 +27,10 @@ class SubscriptionPlan(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
 
+    # Stable catalog key across environments (prefer over numeric id in FE config).
+    plan_code: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True, unique=True, index=True
+    )
     plan_name: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
     plan_type: Mapped[str] = mapped_column(String(32), nullable=False)  # COLLEGE | INDIVIDUAL
 

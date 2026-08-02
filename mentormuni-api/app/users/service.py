@@ -35,10 +35,11 @@ PUBLIC_ORG_CODE = "PUBLIC"
 
 
 class UserServiceError(Exception):
-    def __init__(self, message: str, *, status_code: int = 400) -> None:
+    def __init__(self, message: str, *, status_code: int = 400, code: str | None = None) -> None:
         super().__init__(message)
         self.message = message
         self.status_code = status_code
+        self.code = code
 
 
 def _hash_token(raw: str) -> str:
@@ -110,11 +111,16 @@ async def create_user(
     roll_number: str | None = None,
     batch_year: int | None = None,
     invite_without_password: bool = False,
+    auto_enroll: bool = False,
 ) -> tuple[User, str | None, datetime | None]:
     """
     Returns (user, raw_activation_token|None, expires|None).
-    HOD created by TPO without password → INVITED + activation token.
-    Student invited by staff without password → PENDING (awaiting approve).
+
+    Status rules:
+    - HOD (no password) → INVITED + activation token
+    - Student + auto_enroll (staff add) → INVITED + activation token
+    - Student without auto_enroll (staff) → PENDING (approval queue)
+    - Self-register without password → PENDING
     """
     if individual:
         role_code = RoleCode.STUDENT.value
@@ -166,6 +172,7 @@ async def create_user(
         raise UserServiceError(
             "Email or username already exists in this organization.",
             status_code=409,
+            code="HOD_EMAIL_CONFLICT",
         )
 
     invite_hod = (
@@ -186,14 +193,21 @@ async def create_user(
 
     if individual or org.organization_type == OrganizationType.PUBLIC.value:
         status = UserStatus.ACTIVE.value
-    elif invite_student or self_enroll_no_password:
-        status = UserStatus.PENDING.value
-    elif role.role_code == RoleCode.STUDENT.value:
-        status = UserStatus.PENDING.value
+        needs_activation_token = False
     elif invite_hod:
         status = UserStatus.INVITED.value
+        needs_activation_token = True
+    elif invite_student and auto_enroll:
+        # Staff add with auto_enroll → roster immediately (INVITED + setup link)
+        status = UserStatus.INVITED.value
+        needs_activation_token = True
+    elif invite_student or self_enroll_no_password or role.role_code == RoleCode.STUDENT.value:
+        # PENDING queue (self-register or staff without auto_enroll)
+        status = UserStatus.PENDING.value
+        needs_activation_token = False
     else:
         status = UserStatus.ACTIVE.value
+        needs_activation_token = False
 
     if created_by is not None:
         actor_role = created_by.role.role_code
@@ -232,17 +246,12 @@ async def create_user(
         elif actor_role == RoleCode.STUDENT.value:
             raise UserServiceError("Students cannot create users.", status_code=403)
 
-    if invite_hod or ((invite_student or self_enroll_no_password) and not password):
-        # INVITED HOD or student enroll/invite without password yet
-        raw_token = None
-        expires = None
-        activation_hash = None
+    if needs_activation_token:
+        raw_token = secrets.token_urlsafe(32)
+        expires = datetime.now(timezone.utc) + timedelta(hours=activation_hours)
         password_hash = None
-        if invite_hod:
-            raw_token = secrets.token_urlsafe(32)
-            expires = datetime.now(timezone.utc) + timedelta(hours=activation_hours)
-            activation_hash = _hash_token(raw_token)
-    elif status == UserStatus.ACTIVE.value or status == UserStatus.PENDING.value:
+        activation_hash = _hash_token(raw_token)
+    elif status == UserStatus.ACTIVE.value:
         if not password:
             raise UserServiceError("password is required for this role/status.", status_code=422)
         password_hash = hash_password(password)
@@ -250,10 +259,11 @@ async def create_user(
         expires = None
         activation_hash = None
     else:
-        raw_token = secrets.token_urlsafe(32)
-        expires = datetime.now(timezone.utc) + timedelta(hours=activation_hours)
-        password_hash = None
-        activation_hash = _hash_token(raw_token)
+        # PENDING — no token until approve
+        password_hash = hash_password(password) if password else None
+        raw_token = None
+        expires = None
+        activation_hash = None
 
     user = User(
         organization_id=org.id,
@@ -268,6 +278,7 @@ async def create_user(
         status=status,
         activation_token_hash=activation_hash,
         activation_expires_at=expires,
+        must_change_password=False,
         roll_number=(roll_number.strip() if roll_number else None),
         batch_year=batch_year,
     )
@@ -282,7 +293,7 @@ async def create_user(
             action="USER_CREATE",
             entity_type="user",
             entity_id=user.id,
-            payload={"role_code": role.role_code, "status": status},
+            payload={"role_code": role.role_code, "status": status, "auto_enroll": auto_enroll},
         )
 
     return await _reload_user(db, user.id), raw_token, expires
@@ -592,8 +603,7 @@ async def approve_user(
     )
     await db.flush()
     user = await get_user(db, user.id)
-    if email_sent:
-        return user, None, setup_url, True
+    # Always return token + setup_url so FE can copy when SMTP is flaky.
     return user, raw_token, setup_url, email_sent
 
 
@@ -700,8 +710,6 @@ async def issue_student_activation(
             payload={"email_sent": email_sent},
         )
 
-    if email_sent:
-        return user, None, setup_url, True
     return user, raw_token, setup_url, email_sent
 
 

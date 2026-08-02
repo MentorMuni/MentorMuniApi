@@ -368,13 +368,13 @@ TPO GET /organizations/audit-logs sees hod.invite
 |--------|------|--------|
 | `GET` | `/organizations/students?department_id=` | Roster (ACTIVE / INVITED / BLOCKED) |
 | `GET` | `/organizations/students/invites?status=pending` | Approval queue |
-| `POST` | `/organizations/students/invite` | `{ emails[], department_id }` → PENDING |
-| `POST` | `/organizations/students` | Manual `{ name, email, department_id, roll_number?, batch_year? }` |
-| `POST` | `/organizations/students/import` | JSON `rows[]` and/or `csv_text`; `send_invite_email` auto-approves + emails |
-| `POST` | `/organizations/students/invites/:id/approve` | → INVITED + set-password email (`/studentportal/set-password?token=`) |
-| `POST` | `/organizations/students/invites/:id/reject` | → REJECTED |
+| `POST` | `/organizations/students/invite` | `{ emails[], department_id, auto_enroll?/skip_approval? }` → PENDING **or** INVITED + email when flags set |
+| `POST` | `/organizations/students` | Manual `{ name, email, department_id, roll_number?, batch_year?, auto_enroll?/skip_approval? }` → invitation **or** `{ student, emailed, setup_url?, activation_token?, message }` |
+| `POST` | `/organizations/students/import` | JSON `rows[]` and/or `csv_text`; `auto_enroll`/`skip_approval`/`send_invite_email` → INVITED + emails |
+| `POST` | `/organizations/students/invites/:id/approve` | → INVITED + set-password email (`emailed`, `setup_url`/`activation_token`, `message`) |
+| `POST` | `/organizations/students/invites/:id/reject` | → REJECTED (cannot login) |
 | `POST` | `/organizations/students/:id/resend-invite` | Rotate set-password token + email (`resend-setup` / `resend-activation` aliases) |
-| `PATCH` | `/organizations/students/:id` | Reassign dept (TPO) / disable |
+| `PATCH` | `/organizations/students/:id` | `name`, `roll_number`, `batch_year`, `status` (DISABLED→BLOCKED), `department_id` (TPO) |
 | `POST` | `/auth/activate-student` | `{ token, new_password }` |
 
 Migration: `0005_student_enrollment` adds `users.roll_number`, `users.batch_year`.

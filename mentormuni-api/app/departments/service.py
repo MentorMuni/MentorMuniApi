@@ -17,10 +17,17 @@ from app.models.organization import Organization
 
 
 class DepartmentError(Exception):
-    def __init__(self, message: str, *, status_code: int = 400) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int = 400,
+        code: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.message = message
         self.status_code = status_code
+        self.code = code
 
 
 async def create_department(
@@ -32,13 +39,24 @@ async def create_department(
 ) -> Department:
     org = await db.get(Organization, organization_id)
     if org is None:
-        raise DepartmentError("Organization not found.", status_code=404)
+        raise DepartmentError(
+            "Organization not found.",
+            status_code=404,
+            code="DEPARTMENT_ORG_NOT_FOUND",
+        )
     if org.organization_type != OrganizationType.COLLEGE.value:
-        raise DepartmentError("Only COLLEGE organizations can have departments.")
+        raise DepartmentError(
+            "Only COLLEGE organizations can have departments.",
+            code="DEPARTMENT_ORG_TYPE",
+        )
     try:
         ensure_organization_active(org)
     except OrganizationAccessError as exc:
-        raise DepartmentError(exc.message, status_code=exc.status_code) from exc
+        raise DepartmentError(
+            exc.message,
+            status_code=exc.status_code,
+            code="ORG_SUSPENDED",
+        ) from exc
 
     code_norm = code.strip().upper()
     existing = await db.execute(
@@ -52,6 +70,7 @@ async def create_department(
         raise DepartmentError(
             f"Department code '{code_norm}' already exists in this organization.",
             status_code=409,
+            code="DEPARTMENT_CODE_EXISTS",
         )
 
     dept = Department(
@@ -83,7 +102,11 @@ async def list_departments(
 async def get_department(db: AsyncSession, department_id: int) -> Department:
     dept = await db.get(Department, department_id)
     if dept is None or dept.deleted_at is not None:
-        raise DepartmentError("Department not found.", status_code=404)
+        raise DepartmentError(
+            "Department not found.",
+            status_code=404,
+            code="DEPARTMENT_NOT_FOUND",
+        )
     return dept
 
 
@@ -111,6 +134,7 @@ async def update_department(
             raise DepartmentError(
                 f"Department code '{code_norm}' already exists in this organization.",
                 status_code=409,
+                code="DEPARTMENT_CODE_EXISTS",
             )
         fields["code"] = code_norm
 
@@ -134,6 +158,7 @@ async def soft_delete_department(db: AsyncSession, department_id: int) -> Depart
         raise DepartmentError(
             "Cannot delete department while students are assigned. Reassign students first.",
             status_code=409,
+            code="DEPARTMENT_HAS_STUDENTS",
         )
     dept.deleted_at = datetime.now(timezone.utc)
     dept.status = DepartmentStatus.INACTIVE.value
