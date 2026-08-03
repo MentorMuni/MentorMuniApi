@@ -1,5 +1,9 @@
 """
-Async SMTP email sender — shared by all product flows.
+Async email sender — shared by all product flows.
+
+Transports (auto-selected):
+  1. Resend HTTP API when ``RESEND_API_KEY`` is set (preferred on Railway).
+  2. SMTP (Gmail etc.) when only ``SMTP_PASSWORD`` is set — often blocked on Railway.
 
 Usage::
 
@@ -14,13 +18,7 @@ Usage::
         )
     )
 
-Configure via env (see Settings / .env.example). When ``EMAIL_ENABLED=false``,
-``send_email`` returns ``skipped=True`` and does not raise — callers stay safe
-in local/dev without SMTP.
-
-Railway note: outbound SMTP to ``smtp.gmail.com:587`` often times out.
-Prefer ``SMTP_PORT=465`` + ``SMTP_USE_SSL=true``, or rely on the automatic
-587 → 465 fallback in ``send_email``.
+When ``EMAIL_ENABLED=false``, ``send_email`` returns ``skipped=True`` and does not raise.
 """
 
 from __future__ import annotations
@@ -33,6 +31,7 @@ from email.utils import formataddr, make_msgid
 from typing import Optional
 
 import aiosmtplib
+import httpx
 
 from app.common.email.exceptions import (
     EmailDeliveryError,
@@ -44,19 +43,28 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+RESEND_API_URL = "https://api.resend.com/emails"
+
 
 def is_email_enabled() -> bool:
     return bool(settings.email_enabled)
 
 
-def is_email_configured() -> bool:
-    """True when we can attempt SMTP (enabled + from + password)."""
+def _has_resend() -> bool:
+    return bool((settings.resend_api_key or "").strip())
+
+
+def _has_smtp() -> bool:
     return bool(
-        settings.email_enabled
-        and settings.smtp_host
+        settings.smtp_host
         and settings.email_from_address
-        and settings.smtp_password
+        and (settings.smtp_password or "").strip()
     )
+
+
+def is_email_configured() -> bool:
+    """True when we can attempt a send (enabled + Resend or SMTP)."""
+    return bool(settings.email_enabled and settings.email_from_address and (_has_resend() or _has_smtp()))
 
 
 def _default_from_address() -> EmailAddress:
@@ -111,7 +119,6 @@ def _all_envelope_recipients(payload: OutgoingEmail) -> list[str]:
     for group in (payload.to, payload.cc, payload.bcc):
         for item in group:
             addrs.append(item.email.strip())
-    # Preserve order, drop dupes
     seen: set[str] = set()
     unique: list[str] = []
     for a in addrs:
@@ -128,34 +135,20 @@ def _is_connect_timeout(exc: BaseException) -> bool:
         return True
     if isinstance(exc, (TimeoutError, asyncio.TimeoutError, OSError, ConnectionError)):
         return True
-    # aiosmtplib wraps some connect failures
     name = type(exc).__name__.lower()
     return "timeout" in name
 
 
 def _smtp_attempts() -> list[tuple[int, bool, bool]]:
-    """
-    Ordered (port, start_tls, use_ssl) attempts.
-
-    Primary = Settings. Then Gmail-friendly alternate if host is Gmail and
-    primary looks like the flaky Railway :587 STARTTLS path.
-    """
+    """Ordered (port, start_tls, use_ssl) attempts — configured port only."""
     primary_start_tls = settings.smtp_use_tls and not settings.smtp_use_ssl
-    primary = (settings.smtp_port, primary_start_tls, bool(settings.smtp_use_ssl))
-    attempts = [primary]
+    primary = (int(settings.smtp_port), primary_start_tls, bool(settings.smtp_use_ssl))
 
     host = (settings.smtp_host or "").lower()
-    if "gmail.com" in host or "google.com" in host:
-        # Railway often cannot open smtp.gmail.com:587 — SSL 465 usually works.
-        alt = (465, False, True)
-        if alt != primary:
-            attempts.append(alt)
-        # Also try 587 STARTTLS if primary was 465
-        alt587 = (587, True, False)
-        if alt587 != primary and alt587 not in attempts:
-            attempts.append(alt587)
-
-    return attempts
+    is_gmail = "gmail.com" in host or "google.com" in host
+    if is_gmail and primary[0] == 587:
+        return [(465, False, True), primary]
+    return [primary]
 
 
 async def _smtp_send_once(
@@ -181,54 +174,105 @@ async def _smtp_send_once(
     )
 
 
-async def send_email(
-    payload: OutgoingEmail,
-    *,
-    raise_on_skip: bool = False,
-) -> EmailSendResult:
-    """
-    Send a customized email via SMTP.
+async def _send_via_resend(payload: OutgoingEmail) -> EmailSendResult:
+    """Send via Resend HTTPS API — works from Railway where Gmail SMTP does not."""
+    api_key = (settings.resend_api_key or "").strip()
+    if not api_key:
+        raise EmailNotConfiguredError("RESEND_API_KEY is not set.")
 
-    Parameters
-    ----------
-    payload:
-        Recipients + subject + body (caller-owned content).
-    raise_on_skip:
-        If True and email is disabled, raise ``EmailNotConfiguredError``.
-        Default False → soft skip for local/dev.
+    sender = payload.from_address or _default_from_address()
+    if not sender.email:
+        raise EmailNotConfiguredError("EMAIL_FROM_ADDRESS is not set.")
 
-    Returns
-    -------
-    EmailSendResult
-        ``sent=True`` on success; ``skipped=True`` when email is disabled.
-    """
-    if not settings.email_enabled:
-        detail = "EMAIL_ENABLED is false; email not sent."
-        logger.info(
-            "email_skipped reason=disabled to=%s subject=%r",
+    body: dict = {
+        "from": _format_address(sender),
+        "to": [_format_address(a) for a in payload.to],
+        "subject": payload.subject.strip(),
+    }
+    if payload.html_body:
+        body["html"] = payload.html_body
+    if payload.text_body:
+        body["text"] = payload.text_body
+    if payload.cc:
+        body["cc"] = [_format_address(a) for a in payload.cc]
+    if payload.bcc:
+        body["bcc"] = [_format_address(a) for a in payload.bcc]
+
+    reply = payload.reply_to
+    if reply is None and settings.email_reply_to:
+        reply = EmailAddress(email=settings.email_reply_to)
+    if reply is not None:
+        body["reply_to"] = _format_address(reply)
+
+    timeout = float(min(max(settings.smtp_timeout_seconds, 8), 30))
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(
+                RESEND_API_URL,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=body,
+            )
+    except httpx.TimeoutException as exc:
+        raise EmailDeliveryError(
+            f"Resend API timed out after {timeout}s: {exc}"
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise EmailDeliveryError(f"Resend API request failed: {exc}") from exc
+
+    if resp.status_code >= 400:
+        detail = resp.text
+        try:
+            data = resp.json()
+            detail = data.get("message") or data.get("error") or detail
+        except Exception:
+            pass
+        logger.error(
+            "email_resend_failed status=%s to=%s detail=%s",
+            resp.status_code,
             [a.email for a in payload.to],
-            payload.subject,
+            detail,
         )
-        if raise_on_skip:
-            raise EmailNotConfiguredError(detail)
-        return EmailSendResult(sent=False, skipped=True, detail=detail)
+        raise EmailDeliveryError(f"Resend failed ({resp.status_code}): {detail}")
 
+    message_id = None
+    try:
+        message_id = str((resp.json() or {}).get("id") or "") or None
+    except Exception:
+        pass
+
+    logger.info(
+        "email_sent via=resend to=%s subject=%r message_id=%s",
+        [a.email for a in payload.to],
+        payload.subject,
+        message_id,
+    )
+    return EmailSendResult(
+        sent=True,
+        skipped=False,
+        detail="Email sent via Resend.",
+        message_id=message_id,
+    )
+
+
+async def _send_via_smtp(payload: OutgoingEmail) -> EmailSendResult:
     if not settings.smtp_host or not settings.email_from_address:
-        detail = "Email enabled but SMTP_HOST / EMAIL_FROM_ADDRESS missing."
-        logger.error("email_misconfigured: %s", detail)
-        raise EmailNotConfiguredError(detail)
-
+        raise EmailNotConfiguredError("Email enabled but SMTP_HOST / EMAIL_FROM_ADDRESS missing.")
     if not settings.smtp_password:
-        detail = "Email enabled but SMTP_PASSWORD is not set (use Gmail App Password on Railway)."
-        logger.error("email_misconfigured: %s", detail)
-        raise EmailNotConfiguredError(detail)
+        raise EmailNotConfiguredError(
+            "Email enabled but neither RESEND_API_KEY nor SMTP_PASSWORD is set."
+        )
 
     mime = _build_mime_message(payload)
     recipients = _all_envelope_recipients(payload)
     message_id: Optional[str] = mime["Message-ID"]
 
     last_exc: BaseException | None = None
+    attempted_ports: list[int] = []
     for idx, (port, start_tls, use_ssl) in enumerate(_smtp_attempts()):
+        attempted_ports.append(port)
         try:
             await _smtp_send_once(
                 mime,
@@ -246,7 +290,7 @@ async def send_email(
                     use_ssl,
                 )
             logger.info(
-                "email_sent to=%s subject=%r message_id=%s port=%s",
+                "email_sent via=smtp to=%s subject=%r message_id=%s port=%s",
                 recipients,
                 payload.subject,
                 message_id,
@@ -270,19 +314,73 @@ async def send_email(
                 use_ssl,
                 exc,
             )
-            # Only fall through to next attempt on connect/timeout style failures
             if not _is_connect_timeout(exc) and idx == 0:
-                # Auth / recipient errors — don't retry other ports
                 if "authentication" in str(exc).lower() or "535" in str(exc):
                     break
             continue
 
     logger.exception(
-        "email_delivery_failed to=%s subject=%r",
+        "email_delivery_failed to=%s subject=%r ports=%s",
         recipients,
         payload.subject,
+        attempted_ports,
     )
-    raise EmailDeliveryError(f"Failed to send email: {last_exc}") from last_exc
+    ports_txt = ",".join(str(p) for p in attempted_ports) or str(settings.smtp_port)
+    hint = ""
+    if last_exc is not None and _is_connect_timeout(last_exc):
+        hint = (
+            " Railway often blocks Gmail SMTP — set RESEND_API_KEY and use Resend, "
+            "or share the activation link manually."
+        )
+    raise EmailDeliveryError(
+        f"Failed to send email via {settings.smtp_host}:{ports_txt}: {last_exc}.{hint}"
+    ) from last_exc
+
+
+async def send_email(
+    payload: OutgoingEmail,
+    *,
+    raise_on_skip: bool = False,
+) -> EmailSendResult:
+    """
+    Send a customized email via Resend (preferred) or SMTP.
+
+    Parameters
+    ----------
+    payload:
+        Recipients + subject + body (caller-owned content).
+    raise_on_skip:
+        If True and email is disabled, raise ``EmailNotConfiguredError``.
+        Default False → soft skip for local/dev.
+    """
+    if not settings.email_enabled:
+        detail = "EMAIL_ENABLED is false; email not sent."
+        logger.info(
+            "email_skipped reason=disabled to=%s subject=%r",
+            [a.email for a in payload.to],
+            payload.subject,
+        )
+        if raise_on_skip:
+            raise EmailNotConfiguredError(detail)
+        return EmailSendResult(sent=False, skipped=True, detail=detail)
+
+    if not settings.email_from_address:
+        detail = "Email enabled but EMAIL_FROM_ADDRESS is missing."
+        logger.error("email_misconfigured: %s", detail)
+        raise EmailNotConfiguredError(detail)
+
+    if _has_resend():
+        return await _send_via_resend(payload)
+
+    if _has_smtp():
+        return await _send_via_smtp(payload)
+
+    detail = (
+        "Email enabled but no transport configured. "
+        "Set RESEND_API_KEY (recommended on Railway) or SMTP_PASSWORD."
+    )
+    logger.error("email_misconfigured: %s", detail)
+    raise EmailNotConfiguredError(detail)
 
 
 async def send_simple_email(

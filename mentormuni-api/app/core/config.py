@@ -51,29 +51,44 @@ class Settings(BaseSettings):
     jwt_algorithm: str = Field(default="HS256")
     jwt_expire_minutes: int = Field(default=60 * 24, ge=5)  # 24h default
 
-    # --- Email (SMTP) — Gmail defaults in code; secrets / URLs via Railway ---
-    # Recipients see: "MentorMuni Team" <mentormuniteam@gmail.com>
-    #
-    # Railway (recommended — port 587 often times out from Railway → Gmail):
+    # --- Email ---
+    # Production on Railway: use Resend (HTTPS). Gmail SMTP times out from Railway.
     #   EMAIL_ENABLED=true
+    #   RESEND_API_KEY=re_xxxx
+    #   EMAIL_FROM_ADDRESS=MentorMuni Team <noreply@mentormuni.com>  # must be on a Resend-verified domain
+    #   # For Resend sandbox only: EMAIL_FROM_ADDRESS=beth.t@example.com
+    #   ORG_PORTAL_BASE_URL=https://www.mentormuni.com
+    #
+    # Local / optional SMTP fallback (often blocked on Railway):
     #   SMTP_PASSWORD=<Gmail App Password>
     #   SMTP_PORT=465
     #   SMTP_USE_SSL=true
     #   SMTP_USE_TLS=false
-    #   ORG_PORTAL_BASE_URL=https://www.mentormuni.com
     email_enabled: bool = Field(
         default=False,
-        description="Master switch. Set true on Railway when App Password is configured.",
+        description="Master switch. Set true when Resend or SMTP is configured.",
     )
+    # Prefer Resend on Railway — HTTPS works; Gmail SMTP usually times out.
+    resend_api_key: str = Field(default="")
     smtp_host: str = Field(default="smtp.gmail.com")
     # Prefer 465/SSL on Railway; 587 STARTTLS frequently times out there.
     smtp_port: int = Field(default=465, ge=1, le=65535)
     smtp_username: str = Field(default="mentormuniteam@gmail.com")
     # Secret — set only via Railway / .env (never commit).
+    # Google App Passwords may be pasted with spaces; we strip them.
     smtp_password: str = Field(default="")
     smtp_use_tls: bool = Field(default=False)  # STARTTLS (port 587)
     smtp_use_ssl: bool = Field(default=True)  # implicit SSL (port 465)
-    smtp_timeout_seconds: int = Field(default=45, ge=5, le=120)
+
+    @field_validator("smtp_password", mode="before")
+    @classmethod
+    def strip_smtp_password_spaces(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.replace(" ", "").strip()
+        return value
+
+    # Keep low: invite APIs await send inline; long timeouts freeze the UI.
+    smtp_timeout_seconds: int = Field(default=12, ge=5, le=60)
     email_from_address: str = Field(default="mentormuniteam@gmail.com")
     email_from_name: str = Field(default="MentorMuni Team")
     email_reply_to: str = Field(default="mentormuniteam@gmail.com")

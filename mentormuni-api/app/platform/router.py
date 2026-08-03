@@ -7,6 +7,8 @@ Require: X-API-Key + platform Bearer JWT (except login + TPO activate).
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -398,24 +400,38 @@ async def _build_tpo_invite_response(
     is_reinvite: bool,
     is_update: bool = False,
 ) -> CreateTpoResponse:
-    """Attach email delivery result; never fail the invite if SMTP is down."""
+    """Attach email delivery result; never fail the invite if SMTP is down.
+
+    Hard-caps wait so a dead SMTP path cannot freeze the Add TPO modal.
+    """
     email_sent = False
     email_skipped = False
     email_detail = ""
+    # One connect budget + small buffer; do not multiply by every fallback port.
+    email_budget = float(min(settings.smtp_timeout_seconds + 3, 20))
     try:
-        result = await send_tpo_activation_email(
-            to_email=user.email,
-            first_name=user.first_name,
-            last_name=user.last_name,
-            username=user.username,
-            organization_name=organization_name,
-            raw_token=raw_token,
-            expires_at=expires,
-            is_reinvite=is_reinvite or is_update,
+        result = await asyncio.wait_for(
+            send_tpo_activation_email(
+                to_email=user.email,
+                first_name=user.first_name,
+                last_name=user.last_name,
+                username=user.username,
+                organization_name=organization_name,
+                raw_token=raw_token,
+                expires_at=expires,
+                is_reinvite=is_reinvite or is_update,
+            ),
+            timeout=email_budget,
         )
         email_sent = result.sent
         email_skipped = result.skipped
         email_detail = result.detail
+    except asyncio.TimeoutError:
+        email_sent = False
+        email_skipped = False
+        email_detail = (
+            "Email send timed out. Share the activation link or token manually."
+        )
     except EmailError as exc:
         email_sent = False
         email_skipped = False
