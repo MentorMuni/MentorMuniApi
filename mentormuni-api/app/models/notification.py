@@ -35,7 +35,11 @@ class Notification(Base):
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
-    # ORG | DEPARTMENT | USERS
+    # event | workshop | announcement
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, default="announcement")
+    # Optional event/workshop date (calendar day)
+    event_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # ORG | DEPARTMENT | HODS | USERS
     audience: Mapped[str] = mapped_column(String(32), nullable=False, default="ORG")
     department_id: Mapped[Optional[int]] = mapped_column(
         BigInteger,
@@ -44,6 +48,10 @@ class Notification(Base):
         index=True,
     )
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="ACTIVE")
+    # queued | sending | sent | partial | failed | cancelled
+    delivery_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="queued", server_default="queued"
+    )
     metadata_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

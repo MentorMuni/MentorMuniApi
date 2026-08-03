@@ -20,6 +20,8 @@ from app.models.role_permission import RolePermission
 from app.models.audit_log import AuditLog
 from app.models.notification import Notification
 from app.models.notification_recipient import NotificationRecipient
+from app.models.workspace_item import WorkspaceItem
+from app.models.upcoming_drive import UpcomingDrive
 
 __all__ = [
     "Organization",
@@ -36,4 +38,6 @@ __all__ = [
     "AuditLog",
     "Notification",
     "NotificationRecipient",
+    "WorkspaceItem",
+    "UpcomingDrive",
 ]

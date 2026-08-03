@@ -53,6 +53,9 @@ from app.auth.router import router as auth_router
 from app.organizations.router import router as organizations_router
 from app.organizations.departments_router import router as org_departments_router
 from app.organizations.students_router import router as org_students_router
+from app.organizations.notifications_router import router as org_notifications_router
+from app.organizations.workspace_router import router as org_workspace_router
+from app.organizations.upcoming_drives_router import router as org_upcoming_drives_router
 from app.subscriptions.router import router as subscription_plans_router
 from app.departments.router import router as departments_router
 from app.users.router import router as users_router
@@ -90,6 +93,9 @@ app.include_router(auth_router)
 # Register before /organizations/{id} so static segments are not parsed as org ids
 app.include_router(org_departments_router)
 app.include_router(org_students_router)
+app.include_router(org_notifications_router)
+app.include_router(org_workspace_router)
+app.include_router(org_upcoming_drives_router)
 app.include_router(organizations_router)
 app.include_router(subscription_plans_router)
 app.include_router(departments_router)

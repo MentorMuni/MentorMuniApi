@@ -90,9 +90,25 @@ class OrgAdminTitle(str, Enum):
 
 
 class NotificationAudience(str, Enum):
-    ORG = "ORG"
-    DEPARTMENT = "DEPARTMENT"
+    ORG = "ORG"  # all active students in org (FE: all)
+    DEPARTMENT = "DEPARTMENT"  # students in one department
+    HODS = "HODS"  # live DEPARTMENT_ADMINs only
     USERS = "USERS"
+
+
+class NotificationKind(str, Enum):
+    EVENT = "event"
+    WORKSHOP = "workshop"
+    ANNOUNCEMENT = "announcement"
+
+
+class NotificationDeliveryStatus(str, Enum):
+    QUEUED = "queued"
+    SENDING = "sending"
+    SENT = "sent"
+    PARTIAL = "partial"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class NotificationStatus(str, Enum):
