@@ -32,6 +32,7 @@ async def send_tpo_activation_email(
     raw_token: str,
     expires_at: datetime,
     is_reinvite: bool = False,
+    role_label: str = "Org Admin",
 ) -> EmailSendResult:
     content = render_tpo_activation_email(
         first_name=first_name,
@@ -41,6 +42,7 @@ async def send_tpo_activation_email(
         raw_token=raw_token,
         expires_at=expires_at,
         is_reinvite=is_reinvite,
+        role_label=role_label,
     )
     try:
         return await send_email(

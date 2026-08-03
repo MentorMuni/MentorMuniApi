@@ -76,6 +76,19 @@ class RoleCode(str, Enum):
     STUDENT = "STUDENT"
 
 
+class OrgAdminTitle(str, Enum):
+    """
+    Display title for ORG_ADMIN users (same access, different label).
+
+    Max one ACTIVE/INVITED of each title per organization.
+    Primary contact for the org = TPO.
+    """
+
+    TPO = "TPO"
+    DEAN = "DEAN"
+    DIRECTOR = "DIRECTOR"
+
+
 class NotificationAudience(str, Enum):
     ORG = "ORG"
     DEPARTMENT = "DEPARTMENT"

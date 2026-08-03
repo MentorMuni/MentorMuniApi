@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 # ----- Auth -----
@@ -185,7 +185,9 @@ class OrgFeaturesSaveRequest(BaseModel):
     features: list[OrgFeatureToggle]
 
 
-# ----- TPO -----
+# ----- TPO / Org Admin (ORG_ADMIN with title TPO|DEAN|DIRECTOR) -----
+
+ORG_ADMIN_TITLES = ("TPO", "DEAN", "DIRECTOR")
 
 
 class CreateTpoRequest(BaseModel):
@@ -194,26 +196,53 @@ class CreateTpoRequest(BaseModel):
     email: EmailStr
     mobile: Optional[str] = None
     username: str = Field(min_length=3, max_length=128)
+    # TPO (primary) | DEAN | DIRECTOR — same ORG_ADMIN access
+    title: str = Field(default="TPO", description="TPO | DEAN | DIRECTOR")
     # Optional override; default = 72 hours
     activation_hours: int = Field(default=72, ge=1, le=168)
+
+    @field_validator("title")
+    @classmethod
+    def normalize_title(cls, value: str) -> str:
+        code = str(value or "TPO").strip().upper()
+        if code not in ORG_ADMIN_TITLES:
+            raise ValueError(f"title must be one of: {', '.join(ORG_ADMIN_TITLES)}")
+        return code
 
 
 class UpdateTpoRequest(BaseModel):
     """
-    Change TPO details on the existing ORG_ADMIN row (same user id).
+    Change Org Admin details on an existing ORG_ADMIN row (same user id).
 
-    Use when the TPO leaves: update name/email/username, force password reset
-    via activation email. Org / HOD / students / dashboard data stay intact.
+    Pass user_id when the org has multiple admins (TPO / Dean / Director).
     """
 
+    user_id: Optional[int] = Field(
+        default=None,
+        description="Required when org has more than one Org Admin.",
+    )
     first_name: str = Field(min_length=1, max_length=128)
     last_name: str = Field(min_length=1, max_length=128)
     email: EmailStr
     mobile: Optional[str] = None
     username: str = Field(min_length=3, max_length=128)
+    title: Optional[str] = Field(
+        default=None,
+        description="Optional retitle: TPO | DEAN | DIRECTOR",
+    )
     activation_hours: int = Field(default=72, ge=1, le=168)
     # When true (default), clear password and send activate link to the new email.
     reset_password: bool = True
+
+    @field_validator("title")
+    @classmethod
+    def normalize_optional_title(cls, value: Optional[str]) -> Optional[str]:
+        if value is None or str(value).strip() == "":
+            return None
+        code = str(value).strip().upper()
+        if code not in ORG_ADMIN_TITLES:
+            raise ValueError(f"title must be one of: {', '.join(ORG_ADMIN_TITLES)}")
+        return code
 
 
 class CreateTpoResponse(BaseModel):
@@ -224,9 +253,12 @@ class CreateTpoResponse(BaseModel):
     email: str
     username: str
     status: str
+    title: str = "TPO"
+    is_primary: bool = True
+    display_role: str = "Org Admin"
     # Raw token returned once. Prefer email delivery; token still returned for ops fallback.
     activation_token: str
-    # Full FE link (same URL embedded in the email).
+    # Full FE link (same URL embedded in the email). Path stays /activate-tpo.
     activation_url: str
     activation_expires_at: datetime
     message: str
@@ -246,6 +278,9 @@ class TpoListItem(BaseModel):
     username: str
     mobile: Optional[str] = None
     status: str
+    title: str = "TPO"
+    is_primary: bool = False
+    display_role: str = "Org Admin"
     created_at: datetime
     activation_pending: bool
 
@@ -253,6 +288,14 @@ class TpoListItem(BaseModel):
 class TpoListResponse(BaseModel):
     items: list[TpoListItem]
     total: int
+
+
+class DeactivateOrgAdminResponse(BaseModel):
+    id: int
+    organization_id: int
+    title: str
+    status: str
+    message: str
 
 
 class ActivateTpoRequest(BaseModel):

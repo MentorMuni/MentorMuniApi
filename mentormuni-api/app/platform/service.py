@@ -20,6 +20,7 @@ from app.common.organization_access import (
 )
 from app.common.security.passwords import hash_password, verify_password
 from app.models.enums import (
+    OrgAdminTitle,
     OrganizationStatus,
     PlatformRole,
     PlatformUserStatus,
@@ -483,8 +484,81 @@ async def save_org_features(
 
 
 # =============================================================================
-# TPO (ORG_ADMIN) invite
+# TPO / Org Admin (ORG_ADMIN) invite — titles: TPO | DEAN | DIRECTOR
 # =============================================================================
+
+ORG_ADMIN_LIVE_STATUSES = (UserStatus.ACTIVE.value, UserStatus.INVITED.value)
+MAX_ORG_ADMINS_PER_ORG = 3
+
+
+def org_admin_display_label(title: str | None) -> str:
+    """User-facing role label (activation URL stays /activate-tpo)."""
+    code = (title or OrgAdminTitle.TPO.value).upper()
+    if code == OrgAdminTitle.DEAN.value:
+        return "Org Admin (Dean)"
+    if code == OrgAdminTitle.DIRECTOR.value:
+        return "Org Admin (Director)"
+    return "Org Admin (TPO)"
+
+
+def _normalize_org_admin_title(title: str | None) -> str:
+    code = (title or OrgAdminTitle.TPO.value).strip().upper()
+    try:
+        return OrgAdminTitle(code).value
+    except ValueError as exc:
+        raise PlatformError(
+            f"title must be one of: {', '.join(t.value for t in OrgAdminTitle)}",
+            status_code=422,
+        ) from exc
+
+
+async def _list_live_org_admins(db: AsyncSession, organization_id: int) -> list[User]:
+    result = await db.execute(
+        select(User)
+        .join(Role, User.role_id == Role.id)
+        .where(
+            User.organization_id == organization_id,
+            Role.role_code == RoleCode.ORG_ADMIN.value,
+            User.status.in_(list(ORG_ADMIN_LIVE_STATUSES)),
+        )
+        .options(selectinload(User.organization))
+        .order_by(User.id.asc())
+    )
+    return list(result.scalars().unique().all())
+
+
+async def _get_org_admin_user(
+    db: AsyncSession,
+    *,
+    organization_id: int,
+    user_id: int | None = None,
+    prefer_primary: bool = True,
+) -> User:
+    """Resolve a live Org Admin. Prefer TPO when user_id omitted."""
+    live = await _list_live_org_admins(db, organization_id)
+    if not live:
+        raise PlatformError(
+            "No Org Admin found for this organization.",
+            status_code=404,
+        )
+    if user_id is not None:
+        for user in live:
+            if user.id == user_id:
+                return user
+        raise PlatformError(
+            f"Org Admin user_id={user_id} not found (or inactive) for this organization.",
+            status_code=404,
+        )
+    if len(live) == 1:
+        return live[0]
+    if prefer_primary:
+        for user in live:
+            if (user.org_admin_title or OrgAdminTitle.TPO.value) == OrgAdminTitle.TPO.value:
+                return user
+    raise PlatformError(
+        "Multiple Org Admins exist. Pass user_id to select TPO, Dean, or Director.",
+        status_code=400,
+    )
 
 
 async def list_tpos(
@@ -492,7 +566,7 @@ async def list_tpos(
     *,
     organization_id: int | None = None,
 ) -> tuple[list[User], int]:
-    """List all ORG_ADMIN (TPO) accounts for Platform Settings page."""
+    """List all ORG_ADMIN accounts (TPO / Dean / Director) for Platform Settings."""
     stmt = (
         select(User)
         .join(Role, User.role_id == Role.id)
@@ -518,11 +592,12 @@ async def reinvite_tpo(
     db: AsyncSession,
     *,
     organization_id: int,
+    user_id: int | None = None,
     activation_hours: int = 72,
 ) -> tuple[User, str, datetime]:
     """
-    Regenerate activation token for an existing TPO (INVITED or ACTIVE).
-    Use this when Settings shows a TPO already exists and you need a new invite link.
+    Regenerate activation token for an existing Org Admin (INVITED or ACTIVE).
+    Pass user_id when the org has multiple admins.
     """
     org = await get_organization(db, organization_id)
     try:
@@ -530,19 +605,9 @@ async def reinvite_tpo(
     except OrganizationAccessError as exc:
         raise PlatformError(exc.message, status_code=exc.status_code) from exc
 
-    result = await db.execute(
-        select(User)
-        .join(Role, User.role_id == Role.id)
-        .where(
-            User.organization_id == organization_id,
-            Role.role_code == RoleCode.ORG_ADMIN.value,
-            User.status.in_([UserStatus.ACTIVE.value, UserStatus.INVITED.value]),
-        )
-        .options(selectinload(User.organization))
+    user = await _get_org_admin_user(
+        db, organization_id=organization_id, user_id=user_id, prefer_primary=True
     )
-    user = result.scalar_one_or_none()
-    if user is None:
-        raise PlatformError("No ORG_ADMIN (TPO) found for this organization.", status_code=404)
 
     raw_token = secrets.token_urlsafe(32)
     expires = datetime.now(timezone.utc) + timedelta(hours=activation_hours)
@@ -564,15 +629,16 @@ async def update_tpo(
     email: str,
     username: str,
     mobile: str | None = None,
+    user_id: int | None = None,
+    title: str | None = None,
     activation_hours: int = 72,
     reset_password: bool = True,
 ) -> tuple[User, str | None, datetime | None]:
     """
-    Edit the live TPO in place (same user id).
+    Edit an Org Admin in place (same user id).
 
     Org / departments / HODs / students / subscriptions are untouched.
-    When reset_password=True (default): clears old password, sets INVITED,
-    returns a new activation token to email to the (possibly new) address.
+    Deactivating a different admin is a separate call.
     """
     org = await get_organization(db, organization_id)
     try:
@@ -580,22 +646,9 @@ async def update_tpo(
     except OrganizationAccessError as exc:
         raise PlatformError(exc.message, status_code=exc.status_code) from exc
 
-    result = await db.execute(
-        select(User)
-        .join(Role, User.role_id == Role.id)
-        .where(
-            User.organization_id == organization_id,
-            Role.role_code == RoleCode.ORG_ADMIN.value,
-            User.status.in_([UserStatus.ACTIVE.value, UserStatus.INVITED.value]),
-        )
-        .options(selectinload(User.organization))
+    user = await _get_org_admin_user(
+        db, organization_id=organization_id, user_id=user_id, prefer_primary=True
     )
-    user = result.scalar_one_or_none()
-    if user is None:
-        raise PlatformError(
-            "No active TPO found for this organization. Create a TPO first.",
-            status_code=404,
-        )
 
     email_norm = email.lower().strip()
     username_norm = username.strip()
@@ -613,6 +666,21 @@ async def update_tpo(
             status_code=409,
         )
 
+    if title is not None:
+        new_title = _normalize_org_admin_title(title)
+        live = await _list_live_org_admins(db, organization_id)
+        for other in live:
+            if other.id == user.id:
+                continue
+            other_title = other.org_admin_title or OrgAdminTitle.TPO.value
+            if other_title == new_title:
+                raise PlatformError(
+                    f"This organization already has a live Org Admin with title {new_title}. "
+                    "Deactivate them first or pick another title.",
+                    status_code=409,
+                )
+        user.org_admin_title = new_title
+
     user.first_name = first_name.strip()
     user.last_name = last_name.strip()
     user.email = email_norm
@@ -629,7 +697,6 @@ async def update_tpo(
         user.activation_token_hash = _hash_token(raw_token)
         user.activation_expires_at = expires
     else:
-        # Details-only update; keep login if already ACTIVE.
         user.activation_token_hash = None
         user.activation_expires_at = None
 
@@ -647,6 +714,7 @@ async def create_tpo(
     email: str,
     username: str,
     mobile: str | None = None,
+    title: str = OrgAdminTitle.TPO.value,
     activation_hours: int = 72,
 ) -> tuple[User, str, datetime]:
     org = await get_organization(db, organization_id)
@@ -662,23 +730,22 @@ async def create_tpo(
     if role is None:
         raise PlatformError("ORG_ADMIN role missing. Run migrations/seed.", status_code=500)
 
-    # One active/invited TPO per org is enough for Phase 1.
-    existing_tpo = await db.execute(
-        select(User)
-        .join(Role, User.role_id == Role.id)
-        .where(
-            User.organization_id == organization_id,
-            Role.role_code == RoleCode.ORG_ADMIN.value,
-            User.status.in_([UserStatus.ACTIVE.value, UserStatus.INVITED.value]),
-        )
-    )
-    if existing_tpo.scalar_one_or_none():
+    title_norm = _normalize_org_admin_title(title)
+    live = await _list_live_org_admins(db, organization_id)
+    if len(live) >= MAX_ORG_ADMINS_PER_ORG:
         raise PlatformError(
-            "This organization already has an ORG_ADMIN (TPO). "
-            "Use PUT /platform/organizations/{id}/tpo to change details, "
-            "or POST .../tpo/reinvite to reset password only.",
+            f"This organization already has {MAX_ORG_ADMINS_PER_ORG} Org Admins "
+            "(TPO, Dean, Director). Deactivate one before adding another.",
             status_code=409,
         )
+    for other in live:
+        other_title = other.org_admin_title or OrgAdminTitle.TPO.value
+        if other_title == title_norm:
+            raise PlatformError(
+                f"This organization already has a live {title_norm}. "
+                "Use Edit / Reinvite for that person, or pick Dean / Director / TPO.",
+                status_code=409,
+            )
 
     email_norm = email.lower().strip()
     username_norm = username.strip()
@@ -703,6 +770,7 @@ async def create_tpo(
         email=email_norm,
         mobile=mobile,
         username=username_norm,
+        org_admin_title=title_norm,
         password_hash=None,
         status=UserStatus.INVITED.value,
         activation_token_hash=_hash_token(raw_token),
@@ -712,6 +780,40 @@ async def create_tpo(
     await db.flush()
     await db.refresh(user)
     return user, raw_token, expires
+
+
+async def deactivate_org_admin(
+    db: AsyncSession,
+    *,
+    organization_id: int,
+    user_id: int,
+) -> User:
+    """
+    Soft-deactivate one Org Admin without affecting other admins or org data.
+    Frees that title slot so another person can be invited later.
+    """
+    result = await db.execute(
+        select(User)
+        .join(Role, User.role_id == Role.id)
+        .where(
+            User.id == user_id,
+            User.organization_id == organization_id,
+            Role.role_code == RoleCode.ORG_ADMIN.value,
+        )
+        .options(selectinload(User.organization))
+    )
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise PlatformError("Org Admin not found for this organization.", status_code=404)
+    if user.status == UserStatus.BLOCKED.value:
+        return user
+
+    user.status = UserStatus.BLOCKED.value
+    user.activation_token_hash = None
+    user.activation_expires_at = None
+    await db.flush()
+    await db.refresh(user)
+    return user
 
 
 async def activate_tpo(
@@ -750,6 +852,8 @@ async def activate_tpo(
     user.status = UserStatus.ACTIVE.value
     user.activation_token_hash = None
     user.activation_expires_at = None
+    if not user.org_admin_title:
+        user.org_admin_title = OrgAdminTitle.TPO.value
     # Activate sets the password the user chose — do not force a second change.
     if hasattr(user, "must_change_password"):
         user.must_change_password = False

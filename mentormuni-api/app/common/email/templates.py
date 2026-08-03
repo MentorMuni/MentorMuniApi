@@ -103,14 +103,15 @@ def render_tpo_activation_email(
     raw_token: str,
     expires_at: datetime,
     is_reinvite: bool = False,
+    role_label: str = "Org Admin",
 ) -> RenderedEmailContent:
-    """TPO invite / reinvite — set your own password via activation link."""
+    """Org Admin invite / reinvite — set password via /activate-tpo link."""
     return render_staff_activation_email(
         first_name=first_name,
         last_name=last_name,
         username=username,
         organization_name=organization_name,
-        role_label="TPO (Organization Admin)",
+        role_label=role_label or "Org Admin",
         raw_token=raw_token,
         expires_at=expires_at,
         is_reinvite=is_reinvite,

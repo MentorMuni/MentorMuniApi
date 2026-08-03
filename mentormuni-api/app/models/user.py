@@ -63,6 +63,8 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     mobile: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     username: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    # ORG_ADMIN only: TPO | DEAN | DIRECTOR. NULL for HOD / students.
+    org_admin_title: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
 
     # bcrypt hash — never store plain text. Use app.common.security.passwords.
     # NULL while status=INVITED (TPO has not set password yet).

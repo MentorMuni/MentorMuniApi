@@ -26,6 +26,7 @@ from app.platform.schemas import (
     ActivateTpoResponse,
     CreateTpoRequest,
     CreateTpoResponse,
+    DeactivateOrgAdminResponse,
     FeatureCatalogResponse,
     MessageResponse,
     OrgFeaturesResponse,
@@ -349,11 +350,16 @@ async def save_org_features(
 
 
 # =============================================================================
-# TPO (ORG_ADMIN) — Create / List / Reinvite
+# Org Admin (ORG_ADMIN) — TPO / Dean / Director (same access)
 # =============================================================================
 
 
+def _org_admin_title(user) -> str:
+    return getattr(user, "org_admin_title", None) or "TPO"
+
+
 def _tpo_list_item(user) -> TpoListItem:
+    title = _org_admin_title(user)
     return TpoListItem(
         id=user.id,
         organization_id=user.organization_id,
@@ -365,8 +371,43 @@ def _tpo_list_item(user) -> TpoListItem:
         username=user.username,
         mobile=user.mobile,
         status=user.status,
+        title=title,
+        is_primary=title == "TPO",
+        display_role="Org Admin",
         created_at=user.created_at,
         activation_pending=user.status == "INVITED",
+    )
+
+
+def _create_tpo_response(
+    *,
+    user,
+    raw_token: str,
+    expires,
+    message: str,
+    email_sent: bool = False,
+    email_skipped: bool = False,
+    email_detail: str = "",
+) -> CreateTpoResponse:
+    title = _org_admin_title(user)
+    return CreateTpoResponse(
+        id=user.id,
+        organization_id=user.organization_id,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        email=user.email,
+        username=user.username,
+        status=user.status,
+        title=title,
+        is_primary=title == "TPO",
+        display_role="Org Admin",
+        activation_token=raw_token,
+        activation_url=build_tpo_activation_url(raw_token) if raw_token else "",
+        activation_expires_at=expires,
+        message=message,
+        email_sent=email_sent,
+        email_skipped=email_skipped,
+        email_detail=email_detail,
     )
 
 
@@ -376,7 +417,7 @@ async def list_tpos(
     _user: PlatformUser = Depends(get_current_platform_user),
     db: AsyncSession = Depends(get_db),
 ) -> TpoListResponse:
-    """Settings page: list all ORG_ADMIN (TPO) accounts."""
+    """List Org Admins (TPO / Dean / Director)."""
     items, total = await svc.list_tpos(db, organization_id=organization_id)
     return TpoListResponse(items=[_tpo_list_item(u) for u in items], total=total)
 
@@ -400,14 +441,12 @@ async def _build_tpo_invite_response(
     is_reinvite: bool,
     is_update: bool = False,
 ) -> CreateTpoResponse:
-    """Attach email delivery result; never fail the invite if SMTP is down.
-
-    Hard-caps wait so a dead SMTP path cannot freeze the Add TPO modal.
-    """
+    """Attach email delivery result; never fail the invite if SMTP/Resend is down."""
     email_sent = False
     email_skipped = False
     email_detail = ""
-    # One connect budget + small buffer; do not multiply by every fallback port.
+    role_label = svc.org_admin_display_label(getattr(user, "org_admin_title", None))
+    short_label = "Org Admin"
     email_budget = float(min(settings.smtp_timeout_seconds + 3, 20))
     try:
         result = await asyncio.wait_for(
@@ -420,6 +459,7 @@ async def _build_tpo_invite_response(
                 raw_token=raw_token,
                 expires_at=expires,
                 is_reinvite=is_reinvite or is_update,
+                role_label=role_label,
             ),
             timeout=email_budget,
         )
@@ -438,39 +478,32 @@ async def _build_tpo_invite_response(
         email_detail = exc.message
 
     if is_update:
-        verb_ok = "TPO details updated and activation email sent to the new address."
-        verb_skip = "TPO details updated. Email is disabled; share activation_token manually."
-        verb_fail = "TPO details updated but activation email failed. Share activation_token manually."
+        verb_ok = f"{short_label} details updated and activation email sent to the new address."
+        verb_skip = f"{short_label} details updated. Email is disabled; share activation_token manually."
+        verb_fail = f"{short_label} details updated but activation email failed. Share activation_token manually."
     elif is_reinvite:
-        verb_ok = "TPO re-invited and activation email sent."
-        verb_skip = "TPO re-invited. Email is disabled; share activation_token manually."
-        verb_fail = "TPO re-invited but activation email failed. Share activation_token manually."
+        verb_ok = f"{short_label} re-invited and activation email sent."
+        verb_skip = f"{short_label} re-invited. Email is disabled; share activation_token manually."
+        verb_fail = f"{short_label} re-invited but activation email failed. Share activation_token manually."
     else:
-        verb_ok = "TPO invited and activation email sent."
-        verb_skip = "TPO invited. Email is disabled; share activation_token manually."
-        verb_fail = "TPO invited but activation email failed. Share activation_token manually."
+        verb_ok = f"{short_label} ({role_label}) invited and activation email sent."
+        verb_skip = f"{short_label} invited. Email is disabled; share activation_token manually."
+        verb_fail = f"{short_label} invited but activation email failed. Share activation_token manually."
 
     if email_sent:
         message = verb_ok
     elif email_skipped:
         message = (
             f"{verb_skip} "
-            "TPO sets password via POST /platform/auth/activate-tpo."
+            "Set password via POST /platform/auth/activate-tpo."
         )
     else:
         message = f"{verb_fail} ({email_detail})"
 
-    return CreateTpoResponse(
-        id=user.id,
-        organization_id=user.organization_id,
-        first_name=user.first_name,
-        last_name=user.last_name,
-        email=user.email,
-        username=user.username,
-        status=user.status,
-        activation_token=raw_token,
-        activation_url=build_tpo_activation_url(raw_token),
-        activation_expires_at=expires,
+    return _create_tpo_response(
+        user=user,
+        raw_token=raw_token,
+        expires=expires,
         message=message,
         email_sent=email_sent,
         email_skipped=email_skipped,
@@ -498,6 +531,7 @@ async def create_tpo(
             email=str(body.email),
             username=body.username,
             mobile=body.mobile,
+            title=body.title,
             activation_hours=body.activation_hours,
         )
         org = await svc.get_organization(db, organization_id)
@@ -520,14 +554,16 @@ async def create_tpo(
 async def reinvite_tpo(
     organization_id: int,
     activation_hours: int = Query(default=72, ge=1, le=168),
+    user_id: int | None = Query(default=None),
     _user: PlatformUser = Depends(get_current_platform_user),
     db: AsyncSession = Depends(get_db),
 ) -> CreateTpoResponse:
-    """Regenerate activation token when TPO already exists (same person, password reset)."""
+    """Regenerate activation token. Pass user_id when multiple Org Admins exist."""
     try:
         user, raw_token, expires = await svc.reinvite_tpo(
             db,
             organization_id=organization_id,
+            user_id=user_id,
             activation_hours=activation_hours,
         )
         org = await svc.get_organization(db, organization_id)
@@ -554,20 +590,21 @@ async def update_tpo(
     db: AsyncSession = Depends(get_db),
 ) -> CreateTpoResponse:
     """
-    Change TPO details on the existing account (same user id).
+    Change Org Admin details (same user id).
 
-    When a TPO leaves: update name/email/username and (by default) force a new
-    password via activation email. College data and dashboard stay on this org.
+    Pass body.user_id when the org has TPO + Dean + Director.
     """
     try:
         user, raw_token, expires = await svc.update_tpo(
             db,
             organization_id=organization_id,
+            user_id=body.user_id,
             first_name=body.first_name,
             last_name=body.last_name,
             email=str(body.email),
             username=body.username,
             mobile=body.mobile,
+            title=body.title,
             activation_hours=body.activation_hours,
             reset_password=body.reset_password,
         )
@@ -585,22 +622,41 @@ async def update_tpo(
             is_update=True,
         )
 
-    # Details-only update (no password reset / no email).
-    return CreateTpoResponse(
-        id=user.id,
-        organization_id=user.organization_id,
-        first_name=user.first_name,
-        last_name=user.last_name,
-        email=user.email,
-        username=user.username,
-        status=user.status,
-        activation_token="",
-        activation_url="",
-        activation_expires_at=user.updated_at,
-        message="TPO details updated. Password was not reset.",
+    return _create_tpo_response(
+        user=user,
+        raw_token="",
+        expires=user.updated_at,
+        message="Org Admin details updated. Password was not reset.",
         email_sent=False,
         email_skipped=True,
         email_detail="reset_password=false",
+    )
+
+
+@router.post(
+    "/organizations/{organization_id}/tpo/{user_id}/deactivate",
+    response_model=DeactivateOrgAdminResponse,
+)
+async def deactivate_org_admin(
+    organization_id: int,
+    user_id: int,
+    _user: PlatformUser = Depends(get_current_platform_user),
+    db: AsyncSession = Depends(get_db),
+) -> DeactivateOrgAdminResponse:
+    """Deactivate one Org Admin; others and org data stay intact."""
+    try:
+        user = await svc.deactivate_org_admin(
+            db, organization_id=organization_id, user_id=user_id
+        )
+    except svc.PlatformError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    title = _org_admin_title(user)
+    return DeactivateOrgAdminResponse(
+        id=user.id,
+        organization_id=user.organization_id,
+        title=title,
+        status=user.status,
+        message=f"Org Admin ({title}) deactivated. Other admins are unchanged.",
     )
 
 
