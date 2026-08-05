@@ -1,7 +1,7 @@
 """
 Org Portal students — FE contract under /organizations/students.
 
-Roster · invite · import · approve/reject · patch
+Roster · invite · import · approve/reject · patch · delete
 """
 
 from __future__ import annotations
@@ -19,6 +19,8 @@ from app.organizations.students_schemas import (
     OrgStudentListResponse,
     OrgStudentResponse,
     StudentApproveResponse,
+    StudentDecisionRequest,
+    StudentDeleteResponse,
     StudentImportRequest,
     StudentImportResult,
     StudentInviteRequest,
@@ -26,6 +28,8 @@ from app.organizations.students_schemas import (
     StudentManualCreate,
     StudentManualCreateResponse,
     StudentPatchRequest,
+    StudentRejectResponse,
+    StudentUpdateResponse,
 )
 
 router = APIRouter(
@@ -206,11 +210,15 @@ async def import_students(
 @router.post("/invites/{invite_id}/approve", response_model=StudentApproveResponse)
 async def approve_invite(
     invite_id: int,
+    body: StudentDecisionRequest | None = None,
     db: AsyncSession = Depends(get_db),
     ctx: TenantContext = Depends(require_permission("APPROVE_STUDENT")),
 ) -> StudentApproveResponse:
+    decision = body or StudentDecisionRequest()
     try:
-        payload = await svc.approve_invite(db, ctx, invite_id=invite_id)
+        payload = await svc.approve_invite(
+            db, ctx, invite_id=invite_id, send_email=decision.send_email
+        )
     except svc.StudentPortalError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     return StudentApproveResponse(
@@ -223,17 +231,28 @@ async def approve_invite(
     )
 
 
-@router.post("/invites/{invite_id}/reject", response_model=OrgInviteResponse)
+@router.post("/invites/{invite_id}/reject", response_model=StudentRejectResponse)
 async def reject_invite(
     invite_id: int,
+    body: StudentDecisionRequest | None = None,
     db: AsyncSession = Depends(get_db),
     ctx: TenantContext = Depends(require_permission("APPROVE_STUDENT")),
-) -> OrgInviteResponse:
+) -> StudentRejectResponse:
+    decision = body or StudentDecisionRequest()
     try:
-        row = await svc.reject_invite(db, ctx, invite_id=invite_id)
+        payload = await svc.reject_invite(
+            db, ctx, invite_id=invite_id, send_email=decision.send_email
+        )
     except svc.StudentPortalError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-    return OrgInviteResponse.model_validate(row)
+    return StudentRejectResponse(
+        emailed=bool(payload.get("emailed")),
+        email_sent=bool(payload.get("email_sent")),
+        message=payload.get("message") or "",
+        invitation=OrgInviteResponse.model_validate(payload["invitation"])
+        if payload.get("invitation")
+        else None,
+    )
 
 
 def _approve_like_response(payload: dict) -> StudentApproveResponse:
@@ -263,7 +282,7 @@ async def resend_student_setup_link(
     return _approve_like_response(payload)
 
 
-@router.patch("/{student_id}", response_model=OrgStudentResponse)
+@router.patch("/{student_id}", response_model=StudentUpdateResponse)
 async def patch_student(
     student_id: int,
     body: StudentPatchRequest,
@@ -271,7 +290,7 @@ async def patch_student(
     ctx: TenantContext = Depends(
         require_permission("MANAGE_USER_STATUS", "UPLOAD_STUDENTS", "APPROVE_STUDENT")
     ),
-) -> OrgStudentResponse:
+) -> StudentUpdateResponse:
     try:
         row = await svc.patch_student(
             db,
@@ -281,4 +300,22 @@ async def patch_student(
         )
     except svc.StudentPortalError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-    return OrgStudentResponse.model_validate(row)
+    return StudentUpdateResponse(
+        student=OrgStudentResponse.model_validate(row),
+        message="Student updated.",
+    )
+
+
+@router.delete("/{student_id}", response_model=StudentDeleteResponse)
+async def delete_student(
+    student_id: int,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(
+        require_permission("MANAGE_USER_STATUS", "UPLOAD_STUDENTS", "APPROVE_STUDENT")
+    ),
+) -> StudentDeleteResponse:
+    try:
+        await svc.delete_student(db, ctx, student_id=student_id)
+    except svc.StudentPortalError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return StudentDeleteResponse(ok=True, message="Student removed.")

@@ -101,7 +101,10 @@ class Settings(BaseSettings):
     student_activation_path: str = Field(default="/studentportal/set-password")
     # Legacy alias — prefer hod_activation_path for HOD, tpo_activation_path for TPO
     staff_activation_path: str = Field(default="/activate-hod")
-    password_reset_path: str = Field(default="/reset-password")
+    # Org / Mentormuni staff password reset page
+    password_reset_path: str = Field(default="/Organization/reset-password")
+    # Student portal password reset (forgot-password flow)
+    student_password_reset_path: str = Field(default="/studentportal/reset-password")
 
     @field_validator("database_url", mode="before")
     @classmethod

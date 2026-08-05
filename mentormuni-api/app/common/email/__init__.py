@@ -9,6 +9,7 @@ from app.common.email.flows import (
     send_password_reset_email,
     send_staff_activation_email,
     send_student_activation_email,
+    send_student_enrollment_denied_email,
     send_tpo_activation_email,
 )
 from app.common.email.sender import (
@@ -33,5 +34,6 @@ __all__ = [
     "send_simple_email",
     "send_staff_activation_email",
     "send_student_activation_email",
+    "send_student_enrollment_denied_email",
     "send_tpo_activation_email",
 ]

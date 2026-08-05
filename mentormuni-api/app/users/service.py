@@ -587,10 +587,9 @@ async def approve_user(
         user.activation_expires_at = expires
         setup_url = build_student_activation_url(raw_token)
         if send_password_email:
-            email_sent = await send_student_set_password_email(user=user, raw_token=raw_token, expires=expires)
-            if email_sent:
-                # Don't expose token when mail succeeded
-                pass
+            email_sent = await send_student_set_password_email(
+                user=user, raw_token=raw_token, expires=expires
+            )
 
     await write_audit(
         db,
@@ -603,11 +602,22 @@ async def approve_user(
     )
     await db.flush()
     user = await get_user(db, user.id)
-    # Always return token + setup_url so FE can copy when SMTP is flaky.
+    # Always return token + setup_url so FE can copy when mail fails.
     return user, raw_token, setup_url, email_sent
 
 
-async def reject_user(db: AsyncSession, *, user_id: int, approver: User) -> User:
+async def reject_user(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    approver: User,
+    send_email: bool = True,
+) -> tuple[User, bool]:
+    """
+    Reject PENDING student.
+
+    Returns (user, email_sent).
+    """
     user = await get_user(db, user_id)
     if user.organization_id != approver.organization_id:
         raise UserServiceError("Cannot reject user from another organization.", status_code=403)
@@ -628,6 +638,11 @@ async def reject_user(db: AsyncSession, *, user_id: int, approver: User) -> User
     user.status = UserStatus.REJECTED.value
     user.approved_by = approver.id
     user.approved_at = datetime.now(timezone.utc)
+
+    email_sent = False
+    if send_email:
+        email_sent = await send_student_enrollment_denied_email(user=user)
+
     await write_audit(
         db,
         organization_id=approver.organization_id,
@@ -635,9 +650,10 @@ async def reject_user(db: AsyncSession, *, user_id: int, approver: User) -> User
         action="student.reject",
         entity_type="user",
         entity_id=user.id,
+        payload={"email_sent": email_sent},
     )
     await db.flush()
-    return await get_user(db, user_id)
+    return await get_user(db, user_id), email_sent
 
 
 async def send_student_set_password_email(
@@ -649,7 +665,7 @@ async def send_student_set_password_email(
     from app.common.email.flows import send_student_activation_email
 
     try:
-        await send_student_activation_email(
+        result = await send_student_activation_email(
             to_email=user.email,
             first_name=user.first_name,
             last_name=user.last_name,
@@ -659,9 +675,26 @@ async def send_student_set_password_email(
             raw_token=raw_token,
             expires_at=expires,
         )
-        return True
+        return bool(getattr(result, "sent", False))
     except EmailError as exc:
         logger.warning("student_set_password_email_failed to=%s err=%s", user.email, exc)
+        return False
+
+
+async def send_student_enrollment_denied_email(*, user: User) -> bool:
+    from app.common.email.flows import send_student_enrollment_denied_email as _send
+
+    try:
+        result = await _send(
+            to_email=user.email,
+            first_name=user.first_name,
+            last_name=user.last_name,
+            organization_name=user.organization.name,
+            department_name=user.department.name if user.department else None,
+        )
+        return bool(getattr(result, "sent", False))
+    except EmailError as exc:
+        logger.warning("student_enrollment_denied_email_failed to=%s err=%s", user.email, exc)
         return False
 
 

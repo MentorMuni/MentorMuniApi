@@ -182,51 +182,93 @@ async def change_password(
 async def request_password_reset(
     db: AsyncSession,
     *,
-    email: str,
+    email: str | None = None,
+    username: str | None = None,
+    identifier: str | None = None,
     organization_code: str | None = None,
-) -> tuple[str, bool]:
+    portal: str | None = "organization",
+) -> tuple[str, bool, str | None]:
     """
     Always returns a generic success message to the caller.
-    If a matching ACTIVE user exists, emails a reset link.
+
+    Lookup: email and/or username (or a single identifier = college ID / email).
+    If a matching ACTIVE user with a password exists, emails a reset link.
+
+    Returns (message, emailed, reset_url|None).
+    reset_url is included when a token was minted but email did not send,
+    so staff can still share the link.
     """
-    generic = "If an account exists for that email, a reset link has been sent."
+    from app.common.email.templates import build_password_reset_url
+
+    generic = "If an account exists for those details, a reset link has been sent."
+
+    email_norm = (email or "").strip().lower() or None
+    username_norm = (username or "").strip() or None
+    ident = (identifier or "").strip() or None
+    if ident and not email_norm and not username_norm:
+        if "@" in ident:
+            email_norm = ident.lower()
+        else:
+            username_norm = ident
+
+    if not email_norm and not username_norm:
+        return generic, False, None
+
+    portal_key = (portal or "organization").strip().lower()
+    if portal_key in {"student", "students", "studentportal"}:
+        reset_path = settings.student_password_reset_path or "/studentportal/reset-password"
+    else:
+        reset_path = settings.password_reset_path or "/Organization/reset-password"
+
     stmt = (
         select(User)
         .join(Organization, User.organization_id == Organization.id)
-        .where(User.email == email.lower().strip())
         .where(User.deleted_at.is_(None))
         .options(selectinload(User.organization), selectinload(User.role))
     )
     if organization_code:
-        stmt = stmt.where(Organization.code == organization_code.upper())
+        stmt = stmt.where(Organization.code == organization_code.upper().strip())
+
+    if email_norm and username_norm:
+        stmt = stmt.where(
+            or_(User.email == email_norm, User.username == username_norm)
+        )
+    elif email_norm:
+        stmt = stmt.where(User.email == email_norm)
+    else:
+        stmt = stmt.where(User.username == username_norm)
 
     result = await db.execute(stmt)
     users = list(result.scalars().unique().all())
     if len(users) != 1:
-        return generic, False
+        return generic, False, None
 
     user = users[0]
     if user.status != UserStatus.ACTIVE.value or not user.password_hash:
-        return generic, False
+        return generic, False, None
 
     raw_token = secrets.token_urlsafe(32)
     user.password_reset_token_hash = _hash_token(raw_token)
     user.password_reset_expires_at = datetime.now(timezone.utc) + timedelta(hours=2)
     await db.flush()
 
+    reset_url = build_password_reset_url(raw_token, path=reset_path)
+
     try:
-        await send_password_reset_email(
+        result_mail = await send_password_reset_email(
             to_email=user.email,
             first_name=user.first_name,
             last_name=user.last_name,
             organization_name=user.organization.name,
             raw_token=raw_token,
             expires_at=user.password_reset_expires_at,
+            reset_path=reset_path,
         )
-        return generic, True
+        emailed = bool(getattr(result_mail, "sent", False))
+        return generic, emailed, (None if emailed else reset_url)
     except EmailError as exc:
         logger.warning("password_reset_email_failed to=%s err=%s", user.email, exc)
-        return generic, False
+        return generic, False, reset_url
 
 
 async def reset_password(db: AsyncSession, *, token: str, new_password: str) -> None:

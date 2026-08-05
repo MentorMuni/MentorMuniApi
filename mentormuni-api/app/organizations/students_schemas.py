@@ -45,16 +45,20 @@ class StudentImportRequest(BaseModel):
 
 
 class StudentPatchRequest(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=256)
+    first_name: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    last_name: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = Field(default=None, max_length=32)
+    contact: Optional[str] = Field(default=None, max_length=32)
+    mobile: Optional[str] = Field(default=None, max_length=32)
+    roll_number: Optional[str] = Field(default=None, max_length=64)
+    batch_year: Optional[int] = Field(default=None, ge=1990, le=2100)
     department_id: Optional[int] = None
     status: Optional[str] = Field(
         default=None,
         pattern="^(ACTIVE|BLOCKED|PENDING|INVITED|DISABLED|disabled|Inactive|inactive)$",
     )
-    roll_number: Optional[str] = Field(default=None, max_length=64)
-    batch_year: Optional[int] = Field(default=None, ge=1990, le=2100)
-    first_name: Optional[str] = Field(default=None, min_length=1, max_length=128)
-    last_name: Optional[str] = Field(default=None, min_length=1, max_length=128)
-    name: Optional[str] = Field(default=None, min_length=1, max_length=256)
 
 
 class OrgStudentResponse(BaseModel):
@@ -70,6 +74,8 @@ class OrgStudentResponse(BaseModel):
     department_code: Optional[str] = None
     roll_number: Optional[str] = None
     batch_year: Optional[int] = None
+    phone: Optional[str] = None
+    mobile: Optional[str] = None
     status: str
     auth_status: str  # needs_password | ready
     source: Optional[str] = None
@@ -78,6 +84,18 @@ class OrgStudentResponse(BaseModel):
     setup_url: Optional[str] = None
     activation_token: Optional[str] = None
     message: Optional[str] = None
+
+
+class StudentUpdateResponse(BaseModel):
+    """PATCH /organizations/students/{id} envelope (FE also accepts bare student)."""
+
+    student: OrgStudentResponse
+    message: str = "Student updated."
+
+
+class StudentDeleteResponse(BaseModel):
+    ok: bool = True
+    message: str = "Student removed."
 
 
 class OrgStudentListResponse(BaseModel):
@@ -126,6 +144,12 @@ class StudentImportResult(BaseModel):
     message: str = ""
 
 
+class StudentDecisionRequest(BaseModel):
+    """Approve / deny pending enrollment. Frontend always sends send_email: true."""
+
+    send_email: bool = True
+
+
 class StudentApproveResponse(BaseModel):
     student: OrgStudentResponse
     email_sent: bool = False
@@ -133,6 +157,13 @@ class StudentApproveResponse(BaseModel):
     activation_token: Optional[str] = None
     setup_url: Optional[str] = None
     message: str = ""
+
+
+class StudentRejectResponse(BaseModel):
+    emailed: bool = False
+    email_sent: bool = False
+    message: str = ""
+    invitation: Optional[OrgInviteResponse] = None
 
 
 class StudentManualCreateResponse(BaseModel):

@@ -70,8 +70,24 @@ class ChangePasswordRequest(BaseModel):
 
 
 class ForgotPasswordRequest(BaseModel):
-    email: EmailStr
+    """
+    Request a password-reset email.
+
+    Accepts email and/or username, or a single identifier (college ID / username / email).
+    """
+
+    email: Optional[EmailStr] = None
+    username: Optional[str] = Field(default=None, max_length=100)
+    identifier: Optional[str] = Field(default=None, max_length=255)
     organization_code: Optional[str] = None
+    # organization → Org/Mentormuni login; student → Student portal
+    portal: Optional[str] = Field(default="organization", max_length=32)
+
+
+class ForgotPasswordResponse(BaseModel):
+    message: str
+    emailed: bool = False
+    reset_url: Optional[str] = None
 
 
 class ResetPasswordRequest(BaseModel):

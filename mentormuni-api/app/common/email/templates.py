@@ -240,13 +240,56 @@ Then log in at the Student Portal with your college and credentials.
     return RenderedEmailContent(subject=subject, text_body=text_body, html_body=html_body)
 
 
-def build_password_reset_url(raw_token: str) -> str:
+def render_student_enrollment_denied_email(
+    *,
+    first_name: str,
+    last_name: str,
+    organization_name: str,
+    department_name: str | None,
+) -> RenderedEmailContent:
+    display_name = f"{first_name} {last_name}".strip() or "there"
+    dept_bit = f" ({department_name})" if department_name else ""
+    contact = (
+        f"your HOD{f' ({department_name})' if department_name else ''} or TPO"
+        if department_name
+        else "your HOD or TPO"
+    )
+
+    subject = f"Enrollment update — {organization_name}"
+    text_body = f"""Hi {display_name},
+
+Your enrollment request for {organization_name}{dept_bit} on MentorMuni was not approved.
+
+If you believe this is a mistake, please contact {contact} at your college.
+
+{email_signature_text()}
+"""
+    html_body = f"""<!DOCTYPE html>
+<html>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.5; color: #111;">
+  <p>Hi {display_name},</p>
+  <p>Your enrollment request for <strong>{organization_name}</strong>
+     {f'— <strong>{department_name}</strong>' if department_name else ''}
+     on MentorMuni was <strong>not approved</strong>.</p>
+  <p>If you believe this is a mistake, please contact {contact} at your college.</p>
+  {email_signature_html()}
+</body>
+</html>
+"""
+    return RenderedEmailContent(subject=subject, text_body=text_body, html_body=html_body)
+
+
+def build_password_reset_url(raw_token: str, *, path: str | None = None) -> str:
     base = (settings.org_portal_base_url or "https://www.mentormuni.com").rstrip("/")
     query = urlencode({"token": raw_token})
-    path = (settings.password_reset_path or "/reset-password").strip()
-    if not path.startswith("/"):
-        path = "/" + path
-    return f"{base}{path}?{query}"
+    reset_path = (
+        path
+        or settings.password_reset_path
+        or "/Organization/reset-password"
+    ).strip()
+    if not reset_path.startswith("/"):
+        reset_path = "/" + reset_path
+    return f"{base}{reset_path}?{query}"
 
 
 def render_password_reset_email(
@@ -256,9 +299,10 @@ def render_password_reset_email(
     organization_name: str,
     raw_token: str,
     expires_at: datetime,
+    reset_path: str | None = None,
 ) -> RenderedEmailContent:
     display_name = f"{first_name} {last_name}".strip() or "there"
-    reset_url = build_password_reset_url(raw_token)
+    reset_url = build_password_reset_url(raw_token, path=reset_path)
     expires_label = expires_at.strftime("%d %b %Y %H:%M UTC")
 
     subject = f"Reset your MentorMuni password — {organization_name}"

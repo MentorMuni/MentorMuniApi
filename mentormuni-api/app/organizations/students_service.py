@@ -101,6 +101,8 @@ def to_student_row(
         "department_code": user.department.code if user.department else None,
         "roll_number": user.roll_number,
         "batch_year": user.batch_year,
+        "phone": user.mobile,
+        "mobile": user.mobile,
         "status": user.status.lower() if user.status else user.status,
         "auth_status": _auth_status(user),
         "source": source,
@@ -612,6 +614,7 @@ async def approve_invite(
     ctx: TenantContext,
     *,
     invite_id: int,
+    send_email: bool = True,
 ) -> dict:
     user = await user_service.get_user(db, invite_id)
     if user.organization_id != ctx.organization_id:
@@ -621,20 +624,23 @@ async def approve_invite(
 
     try:
         user, token, setup_url, email_sent = await user_service.approve_user(
-            db, user_id=invite_id, approver=ctx.user
+            db,
+            user_id=invite_id,
+            approver=ctx.user,
+            send_password_email=send_email,
         )
     except user_service.UserServiceError as exc:
         raise StudentPortalError(exc.message, status_code=exc.status_code) from exc
 
-    message = (
-        "Approved. Set-password email sent."
-        if email_sent
-        else (
-            "Approved. Share the set-password link with the student."
-            if setup_url
-            else "Approved. Student can log in."
+    if setup_url:
+        message = (
+            "Approved. Set-password email sent."
+            if email_sent
+            else "Approved. Share the set-password link with the student."
         )
-    )
+    else:
+        message = "Approved. Student can log in."
+
     return {
         "student": to_student_row(
             user,
@@ -643,6 +649,7 @@ async def approve_invite(
             message=message,
         ),
         "email_sent": email_sent,
+        "emailed": email_sent,
         "activation_token": token,
         "setup_url": setup_url,
         "message": message,
@@ -654,6 +661,7 @@ async def reject_invite(
     ctx: TenantContext,
     *,
     invite_id: int,
+    send_email: bool = True,
 ) -> dict:
     user = await user_service.get_user(db, invite_id)
     if user.organization_id != ctx.organization_id:
@@ -661,10 +669,28 @@ async def reject_invite(
     if not ctx.sees_all_students and user.department_id != ctx.department_id:
         raise StudentPortalError("Outside your department.", status_code=403)
     try:
-        user = await user_service.reject_user(db, user_id=invite_id, approver=ctx.user)
+        user, email_sent = await user_service.reject_user(
+            db,
+            user_id=invite_id,
+            approver=ctx.user,
+            send_email=send_email,
+        )
     except user_service.UserServiceError as exc:
         raise StudentPortalError(exc.message, status_code=exc.status_code) from exc
-    return to_invite_row(user)
+
+    message = (
+        "Denied. Notification email sent."
+        if email_sent
+        else "Denied. Notification email could not be sent."
+        if send_email
+        else "Denied."
+    )
+    return {
+        "invitation": to_invite_row(user),
+        "email_sent": email_sent,
+        "emailed": email_sent,
+        "message": message,
+    }
 
 
 async def resend_setup_link(
@@ -730,7 +756,17 @@ async def patch_student(
     student_id: int,
     fields: dict,
 ) -> dict:
-    user = await user_service.get_user(db, student_id)
+    from sqlalchemy import select
+    from sqlalchemy.exc import IntegrityError
+
+    from app.departments import service as dept_service
+    from app.models.user import User as UserModel
+
+    try:
+        user = await user_service.get_user(db, student_id)
+    except user_service.UserServiceError as exc:
+        raise StudentPortalError(exc.message, status_code=exc.status_code) from exc
+
     if user.organization_id != ctx.organization_id:
         raise StudentPortalError("Student not in your organization.", status_code=403)
     if user.role.role_code != RoleCode.STUDENT.value:
@@ -738,29 +774,93 @@ async def patch_student(
     if not ctx.sees_all_students and user.department_id != ctx.department_id:
         raise StudentPortalError("Outside your department.", status_code=403)
 
-    updates = dict(fields)
+    updates: dict = {}
 
-    if "name" in updates and updates["name"] is not None:
-        first_name, last_name = _split_name(str(updates.pop("name")), user.email)
-        updates.setdefault("first_name", first_name)
-        updates.setdefault("last_name", last_name)
+    if "name" in fields and fields["name"] is not None:
+        first_name, last_name = _split_name(str(fields["name"]), user.email)
+        updates["first_name"] = first_name
+        updates["last_name"] = last_name
+    if "first_name" in fields and fields["first_name"] is not None:
+        updates["first_name"] = str(fields["first_name"]).strip()
+    if "last_name" in fields and fields["last_name"] is not None:
+        updates["last_name"] = str(fields["last_name"]).strip()
 
-    if "department_id" in updates and updates["department_id"] is not None:
+    if "email" in fields and fields["email"] is not None:
+        email_norm = str(fields["email"]).lower().strip()
+        if email_norm != user.email.lower():
+            clash = await db.execute(
+                select(UserModel.id)
+                .where(UserModel.organization_id == ctx.organization_id)
+                .where(UserModel.email == email_norm)
+                .where(UserModel.deleted_at.is_(None))
+                .where(UserModel.id != user.id)
+            )
+            if clash.scalar_one_or_none() is not None:
+                raise StudentPortalError(
+                    "Another student already uses this email.",
+                    status_code=409,
+                )
+            updates["email"] = email_norm
+
+    phone_raw = None
+    for key in ("phone", "contact", "mobile"):
+        if key in fields:
+            phone_raw = fields[key]
+            break
+    if phone_raw is not None:
+        digits = re.sub(r"\D+", "", str(phone_raw))
+        updates["mobile"] = digits or None
+
+    if "roll_number" in fields:
+        roll = str(fields["roll_number"]).strip() if fields["roll_number"] else None
+        if roll:
+            clash = await db.execute(
+                select(UserModel.id)
+                .where(UserModel.organization_id == ctx.organization_id)
+                .where(UserModel.roll_number == roll)
+                .where(UserModel.deleted_at.is_(None))
+                .where(UserModel.id != user.id)
+            )
+            if clash.scalar_one_or_none() is not None:
+                raise StudentPortalError(
+                    "Another student already uses this roll number.",
+                    status_code=409,
+                )
+        updates["roll_number"] = roll
+
+    if "batch_year" in fields:
+        updates["batch_year"] = fields["batch_year"]
+
+    if "department_id" in fields and fields["department_id"] is not None:
         if ctx.role == RoleCode.DEPARTMENT_ADMIN.value:
             raise StudentPortalError("HOD cannot reassign department.", status_code=403)
-        updates["department_id"] = int(updates["department_id"])
+        dept_id = int(fields["department_id"])
+        try:
+            dept = await dept_service.get_department(db, dept_id)
+        except dept_service.DepartmentError as exc:
+            raise StudentPortalError(exc.message, status_code=exc.status_code) from exc
+        if dept.organization_id != ctx.organization_id:
+            raise StudentPortalError("Department not in your organization.", status_code=403)
+        updates["department_id"] = dept_id
 
-    if "status" in updates and updates["status"]:
-        status_raw = str(updates["status"]).strip().upper()
-        # FE "DISABLED" / Inactive → BLOCKED (cannot login)
+    if "status" in fields and fields["status"]:
+        status_raw = str(fields["status"]).strip().upper()
         if status_raw in {"DISABLED", "INACTIVE"}:
             status_raw = UserStatus.BLOCKED.value
         updates["status"] = status_raw
+
+    if not updates:
+        return to_student_row(user)
 
     try:
         user = await user_service.update_user(db, student_id, **updates)
     except user_service.UserServiceError as exc:
         raise StudentPortalError(exc.message, status_code=exc.status_code) from exc
+    except IntegrityError as exc:
+        raise StudentPortalError(
+            "Email or username already in use in this organization.",
+            status_code=409,
+        ) from exc
 
     await write_audit(
         db,
@@ -769,6 +869,49 @@ async def patch_student(
         action="student.update",
         entity_type="user",
         entity_id=user.id,
-        payload=updates,
+        payload={k: v for k, v in updates.items()},
     )
     return to_student_row(user)
+
+
+async def delete_student(
+    db: AsyncSession,
+    ctx: TenantContext,
+    *,
+    student_id: int,
+) -> None:
+    """Soft-delete roster student and free email/username for re-enrollment."""
+    try:
+        user = await user_service.get_user(db, student_id)
+    except user_service.UserServiceError as exc:
+        raise StudentPortalError(exc.message, status_code=exc.status_code) from exc
+
+    if user.organization_id != ctx.organization_id:
+        raise StudentPortalError("Student not in your organization.", status_code=403)
+    if user.role.role_code != RoleCode.STUDENT.value:
+        raise StudentPortalError("Not a student.", status_code=400)
+    if not ctx.sees_all_students and user.department_id != ctx.department_id:
+        raise StudentPortalError("Outside your department.", status_code=403)
+
+    # Free unique email/username so the student can re-enroll later.
+    stamp = f"#deleted-{user.id}"
+    if stamp not in user.email:
+        user.email = f"{user.email}{stamp}"[:255]
+    if stamp not in user.username:
+        user.username = f"{user.username}{stamp}"[:100]
+    await db.flush()
+
+    try:
+        await user_service.soft_delete_user(db, user_id=student_id, actor=ctx.user)
+    except user_service.UserServiceError as exc:
+        raise StudentPortalError(exc.message, status_code=exc.status_code) from exc
+
+    await write_audit(
+        db,
+        organization_id=ctx.organization_id,
+        actor_user_id=ctx.user_id,
+        action="student.delete",
+        entity_type="user",
+        entity_id=student_id,
+        payload={"soft_delete": True},
+    )

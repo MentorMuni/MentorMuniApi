@@ -23,6 +23,7 @@ from app.auth.schemas import (
     ActivateAccountResponse,
     ChangePasswordRequest,
     ForgotPasswordRequest,
+    ForgotPasswordResponse,
     LoginRequest,
     MeResponse,
     MessageResponse,
@@ -161,17 +162,24 @@ async def change_password(
     return MessageResponse(message="Password updated.")
 
 
-@router.post("/forgot-password", response_model=MessageResponse)
+@router.post("/forgot-password", response_model=ForgotPasswordResponse)
 async def forgot_password(
     body: ForgotPasswordRequest,
     db: AsyncSession = Depends(get_db),
-) -> MessageResponse:
-    message, _ = await auth_service.request_password_reset(
+) -> ForgotPasswordResponse:
+    message, emailed, reset_url = await auth_service.request_password_reset(
         db,
-        email=str(body.email),
+        email=str(body.email) if body.email else None,
+        username=body.username,
+        identifier=body.identifier,
         organization_code=body.organization_code,
+        portal=body.portal,
     )
-    return MessageResponse(message=message)
+    return ForgotPasswordResponse(
+        message=message,
+        emailed=emailed,
+        reset_url=reset_url,
+    )
 
 
 @router.post("/reset-password", response_model=MessageResponse)

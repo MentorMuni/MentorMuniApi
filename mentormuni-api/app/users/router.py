@@ -287,7 +287,9 @@ async def reject_user(
     ctx: TenantContext = Depends(require_permission("APPROVE_STUDENT")),
 ) -> UserResponse:
     try:
-        user = await user_service.reject_user(db, user_id=user_id, approver=ctx.user)
+        user, _email_sent = await user_service.reject_user(
+            db, user_id=user_id, approver=ctx.user
+        )
     except user_service.UserServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     return _to_response(user)
