@@ -89,6 +89,18 @@ class OrgAdminTitle(str, Enum):
     DIRECTOR = "DIRECTOR"
 
 
+class DeptAdminTitle(str, Enum):
+    """
+    Display title for DEPARTMENT_ADMIN users (same access, different label).
+
+    Max one ACTIVE/INVITED of each title per department.
+    HOD is the primary mentor; Placement Coordinator is an optional peer.
+    """
+
+    HOD = "HOD"
+    PLACEMENT_COORDINATOR = "PLACEMENT_COORDINATOR"
+
+
 class NotificationAudience(str, Enum):
     ORG = "ORG"  # all active students in org (FE: all)
     DEPARTMENT = "DEPARTMENT"  # students in one department

@@ -59,6 +59,11 @@ class OrgDepartmentResponse(BaseModel):
     hod_name: Optional[str] = None
     hod_email: Optional[str] = None
     hod_status: str = "unassigned"  # unassigned | invited | active | revoked
+    coordinator_name: Optional[str] = None
+    coordinator_email: Optional[str] = None
+    coordinator_status: str = "unassigned"
+    coordinator_invited_at: Optional[datetime] = None
+    coordinator_activated_at: Optional[datetime] = None
     student_count: int = 0
     invited_at: Optional[datetime] = None
     activated_at: Optional[datetime] = None

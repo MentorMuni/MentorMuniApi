@@ -20,7 +20,7 @@ from app.common.organization_access import (
 from app.common.security.passwords import hash_password, verify_password
 from app.common.tenant.deps import load_permissions_for_role
 from app.core.config import settings
-from app.models.enums import RoleCode, UserStatus
+from app.models.enums import DeptAdminTitle, RoleCode, UserStatus
 from app.models.organization import Organization
 from app.models.user import User
 
@@ -52,6 +52,26 @@ def fe_role_alias(role_code: str | None) -> str:
     if not role_code:
         return "VIEWER"
     return _FE_ROLE_ALIAS.get(role_code, role_code)
+
+
+def dept_admin_title_for(user: User) -> str | None:
+    role_code = user.role.role_code if user.role else None
+    if role_code != RoleCode.DEPARTMENT_ADMIN.value:
+        return None
+    raw = (getattr(user, "dept_admin_title", None) or DeptAdminTitle.HOD.value).strip().upper()
+    if raw == DeptAdminTitle.PLACEMENT_COORDINATOR.value:
+        return DeptAdminTitle.PLACEMENT_COORDINATOR.value
+    return DeptAdminTitle.HOD.value
+
+
+def role_display_label(user: User, role_code: str | None = None) -> str:
+    code = role_code or (user.role.role_code if user.role else None)
+    if code == RoleCode.DEPARTMENT_ADMIN.value:
+        title = dept_admin_title_for(user)
+        if title == DeptAdminTitle.PLACEMENT_COORDINATOR.value:
+            return "Placement Coordinator"
+        return "HOD"
+    return fe_role_alias(code)
 
 
 def user_display_name(user: User) -> str:
@@ -360,11 +380,23 @@ async def activate_invited_user(
 async def audit_hod_activate(db: AsyncSession, user: User) -> None:
     from app.common.audit import write_audit
 
+    title = dept_admin_title_for(user) or DeptAdminTitle.HOD.value
+    action = (
+        "coordinator.activate"
+        if title == DeptAdminTitle.PLACEMENT_COORDINATOR.value
+        else "hod.activate"
+    )
+    # Backfill title for legacy DEPARTMENT_ADMIN rows activated after migration.
+    if user.role and user.role.role_code == RoleCode.DEPARTMENT_ADMIN.value:
+        if not getattr(user, "dept_admin_title", None):
+            user.dept_admin_title = DeptAdminTitle.HOD.value
+            await db.flush()
+
     await write_audit(
         db,
         organization_id=user.organization_id,
         actor_user_id=user.id,
-        action="hod.activate",
+        action=action,
         entity_type="department",
         entity_id=user.department_id,
         payload={
@@ -372,6 +404,7 @@ async def audit_hod_activate(db: AsyncSession, user: User) -> None:
             "department_id": user.department_id,
             "email": user.email,
             "name": f"{user.first_name} {user.last_name}".strip(),
+            "dept_admin_title": title,
         },
     )
 

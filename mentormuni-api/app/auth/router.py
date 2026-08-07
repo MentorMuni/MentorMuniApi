@@ -69,6 +69,8 @@ async def _to_me(db: AsyncSession, user: User) -> MeResponse:
         role=auth_service.fe_role_alias(role_code),
         role_code=role_code,
         role_name=user.role.role_name if user.role else "",
+        dept_admin_title=auth_service.dept_admin_title_for(user),
+        role_label=auth_service.role_display_label(user, role_code),
         organization_id=user.organization_id,
         organization_code=user.organization.code if user.organization else "",
         organization_name=user.organization.name if user.organization else "",

@@ -22,6 +22,12 @@ from app.models.notification import Notification
 from app.models.notification_recipient import NotificationRecipient
 from app.models.workspace_item import WorkspaceItem
 from app.models.upcoming_drive import UpcomingDrive
+from app.student_roadmap.models import (
+    StudentAssessmentResult,
+    StudentGeneratedRoadmap,
+    StudentRoadmapStep,
+    StudentRoadmapWeek,
+)
 
 __all__ = [
     "Organization",
@@ -40,4 +46,8 @@ __all__ = [
     "NotificationRecipient",
     "WorkspaceItem",
     "UpcomingDrive",
+    "StudentRoadmapWeek",
+    "StudentRoadmapStep",
+    "StudentAssessmentResult",
+    "StudentGeneratedRoadmap",
 ]

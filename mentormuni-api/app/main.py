@@ -63,6 +63,8 @@ from app.students.router import router as students_router
 from app.notifications.router import router as notifications_router
 from app.dashboard.router import router as dashboard_router
 from app.platform.router import router as platform_router
+from app.student_roadmap.router import router as student_roadmap_router
+from app.student_company_prep.router import router as student_company_prep_router
 
 
 @asynccontextmanager
@@ -103,6 +105,8 @@ app.include_router(users_router)
 app.include_router(students_router)
 app.include_router(notifications_router)
 app.include_router(dashboard_router)
+app.include_router(student_roadmap_router)
+app.include_router(student_company_prep_router)
 # MentorMuni Platform Admin portal (tenant provisioning only)
 app.include_router(platform_router)
 

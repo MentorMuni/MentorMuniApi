@@ -1015,3 +1015,124 @@ If YES, respond with just: YES"""
             ]
         
         return fallback_questions
+
+    async def generate_placement_90day_roadmap(
+        self,
+        *,
+        analysis: dict,
+        target_companies: list[str],
+        batch_year: int | None = None,
+    ) -> tuple[dict, str, str]:
+        """
+        Generate a validated-ready JSON 90-day placement plan from Week-1 baseline analysis.
+        Returns (plan_dict, summary, model_name). Raises on LLM/parse failure.
+        """
+        from app.services.placement_90day_prompt import render_placement_90day_prompt
+        from app.student_roadmap.constants import (
+            MAX_TOKENS_PLACEMENT_90DAY,
+            PLACEMENT_90DAY_MODEL,
+        )
+
+        prompt = render_placement_90day_prompt(
+            analysis,
+            target_companies=target_companies,
+            batch_year=batch_year,
+        )
+        model_name = PLACEMENT_90DAY_MODEL
+
+        async def call_openai():
+            response = await self._client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are MentorMuni placement coach. Reply with a single JSON object only. "
+                            "No markdown fences. Every day 1–90 must appear exactly once."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                response_format={"type": "json_object"},
+                max_tokens=MAX_TOKENS_PLACEMENT_90DAY,
+                temperature=0.4,
+            )
+            return (response.choices[0].message.content or "").strip()
+
+        content = await self.guard_layer_interview.run_with_timeout(call_openai())
+        if not content:
+            raise RuntimeError("Empty response from placement roadmap model")
+
+        stripped = re.sub(r"^```(?:json)?\s*", "", content, flags=re.IGNORECASE | re.MULTILINE)
+        stripped = re.sub(r"\s*```\s*$", "", stripped, flags=re.MULTILINE).strip()
+        try:
+            plan_obj = json.loads(stripped)
+        except json.JSONDecodeError:
+            m = re.search(r"\{[\s\S]*\}", content)
+            if not m:
+                raise RuntimeError("Could not parse placement roadmap JSON")
+            plan_obj = json.loads(m.group())
+
+        if not isinstance(plan_obj, dict):
+            raise RuntimeError("Placement roadmap JSON must be an object")
+
+        summary = str(
+            plan_obj.get("baseline_summary")
+            or plan_obj.get("confidence_goal")
+            or plan_obj.get("summary")
+            or ""
+        ).strip()
+        return plan_obj, summary, model_name
+
+    async def generate_progress_learning_topics(
+        self,
+        *,
+        analysis: dict,
+        activity: dict | None = None,
+    ) -> tuple[dict, str]:
+        """Return (topics_payload, model_name) for Progress page learning topics."""
+        from app.services.progress_topics_prompt import render_progress_topics_prompt
+        from app.student_roadmap.constants import (
+            MAX_TOKENS_PROGRESS_TOPICS,
+            PROGRESS_TOPICS_MODEL,
+        )
+
+        prompt = render_progress_topics_prompt(analysis, activity=activity or {})
+        model_name = PROGRESS_TOPICS_MODEL
+
+        async def call_openai():
+            response = await self._client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are MentorMuni placement coach. Reply with a single JSON object only. "
+                            "No markdown fences. Cover aptitude, skills, and interview pillars."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                response_format={"type": "json_object"},
+                max_tokens=MAX_TOKENS_PROGRESS_TOPICS,
+                temperature=0.4,
+            )
+            return (response.choices[0].message.content or "").strip()
+
+        content = await self.guard_layer_interview.run_with_timeout(call_openai())
+        if not content:
+            raise RuntimeError("Empty response from progress topics model")
+
+        stripped = re.sub(r"^```(?:json)?\s*", "", content, flags=re.IGNORECASE | re.MULTILINE)
+        stripped = re.sub(r"\s*```\s*$", "", stripped, flags=re.MULTILINE).strip()
+        try:
+            payload = json.loads(stripped)
+        except json.JSONDecodeError:
+            m = re.search(r"\{[\s\S]*\}", content)
+            if not m:
+                raise RuntimeError("Could not parse progress topics JSON")
+            payload = json.loads(m.group())
+
+        if not isinstance(payload, dict):
+            raise RuntimeError("Progress topics JSON must be an object")
+        return payload, model_name

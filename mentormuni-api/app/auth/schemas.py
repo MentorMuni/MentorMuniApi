@@ -28,6 +28,9 @@ class MeResponse(BaseModel):
     # DB role_code: ORG_ADMIN | DEPARTMENT_ADMIN | STUDENT
     role_code: str
     role_name: str = ""
+    # DEPARTMENT_ADMIN only: HOD | PLACEMENT_COORDINATOR (display)
+    dept_admin_title: Optional[str] = None
+    role_label: str = ""
     organization_id: int
     organization_name: str
     organization_code: str

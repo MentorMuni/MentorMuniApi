@@ -286,3 +286,100 @@ async def replace_department_hod(
             ) from exc
         raise
     return _lifecycle_response(payload)
+
+
+@router.post(
+    "/{department_id}/coordinator",
+    response_model=HodLifecycleResponse,
+    status_code=201,
+)
+async def invite_department_coordinator(
+    department_id: int,
+    body: HodInviteRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(require_permission("CREATE_HOD")),
+) -> HodLifecycleResponse:
+    try:
+        payload, _ = await hod_service.invite_coordinator(
+            db,
+            department_id=department_id,
+            name=body.name,
+            email=str(body.email),
+            actor=ctx.user,
+        )
+    except dept_service.DepartmentError as exc:
+        raise _dept_http(exc) from exc
+    except Exception as exc:
+        from app.users.service import UserServiceError
+
+        if isinstance(exc, UserServiceError):
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail=auth_detail(code="HOD_EMAIL_CONFLICT", message=exc.message),
+            ) from exc
+        raise
+    return _lifecycle_response(payload)
+
+
+@router.post("/{department_id}/coordinator/reinvite", response_model=HodLifecycleResponse)
+async def reinvite_department_coordinator(
+    department_id: int,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(require_permission("CREATE_HOD")),
+) -> HodLifecycleResponse:
+    try:
+        payload = await hod_service.reinvite_coordinator(
+            db, department_id=department_id, actor=ctx.user
+        )
+    except dept_service.DepartmentError as exc:
+        raise _dept_http(exc) from exc
+    return _lifecycle_response(payload)
+
+
+@router.post("/{department_id}/coordinator/revoke", response_model=HodLifecycleResponse)
+async def revoke_department_coordinator(
+    department_id: int,
+    body: HodRevokeRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(require_permission("CREATE_HOD")),
+) -> HodLifecycleResponse:
+    try:
+        payload = await hod_service.revoke_coordinator(
+            db,
+            department_id=department_id,
+            actor=ctx.user,
+            reason=(body.reason if body else None),
+        )
+    except dept_service.DepartmentError as exc:
+        raise _dept_http(exc) from exc
+    return _lifecycle_response(payload)
+
+
+@router.post("/{department_id}/coordinator/replace", response_model=HodLifecycleResponse)
+async def replace_department_coordinator(
+    department_id: int,
+    body: HodReplaceRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(require_permission("CREATE_HOD")),
+) -> HodLifecycleResponse:
+    try:
+        payload = await hod_service.replace_coordinator(
+            db,
+            department_id=department_id,
+            name=body.name,
+            email=str(body.email),
+            actor=ctx.user,
+            reason=body.reason,
+        )
+    except dept_service.DepartmentError as exc:
+        raise _dept_http(exc) from exc
+    except Exception as exc:
+        from app.users.service import UserServiceError
+
+        if isinstance(exc, UserServiceError):
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail=auth_detail(code="HOD_EMAIL_CONFLICT", message=exc.message),
+            ) from exc
+        raise
+    return _lifecycle_response(payload)

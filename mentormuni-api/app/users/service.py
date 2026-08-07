@@ -112,6 +112,7 @@ async def create_user(
     batch_year: int | None = None,
     invite_without_password: bool = False,
     auto_enroll: bool = False,
+    dept_admin_title: str | None = None,
 ) -> tuple[User, str | None, datetime | None]:
     """
     Returns (user, raw_activation_token|None, expires|None).
@@ -281,6 +282,11 @@ async def create_user(
         must_change_password=False,
         roll_number=(roll_number.strip() if roll_number else None),
         batch_year=batch_year,
+        dept_admin_title=(
+            dept_admin_title
+            if role.role_code == RoleCode.DEPARTMENT_ADMIN.value
+            else None
+        ),
     )
     db.add(user)
     await db.flush()
@@ -823,7 +829,9 @@ async def send_hod_invite_email(
     user: User,
     raw_token: str,
     expires: datetime,
+    role_label: str | None = None,
 ) -> bool:
+    label = role_label or "HOD (Department Admin)"
     try:
         await send_staff_activation_email(
             to_email=user.email,
@@ -831,7 +839,7 @@ async def send_hod_invite_email(
             last_name=user.last_name,
             username=user.username,
             organization_name=user.organization.name,
-            role_label="HOD (Department Admin)",
+            role_label=label,
             raw_token=raw_token,
             expires_at=expires,
         )
