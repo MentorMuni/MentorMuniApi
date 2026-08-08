@@ -1,362 +1,210 @@
 """Prompt template for POST /interview-ready/aptitude-readiness/plan.
 
-Placeholders: **USER_TYPE**, **EXPERIENCE_YEARS**, **PRIMARY_SKILL**, **TARGET_ROLE**, **TARGET_COMPANY_TYPE**
+Placeholders are filled by render_aptitude_readiness_prompt().
 """
 
-# noqa: E501 — long prompt string
-APTITUDE_READINESS_PROMPT = r"""You are a Senior Placement Aptitude Assessment Designer responsible for creating Skill Readiness Assessments for engineering students preparing for campus and off-campus placements.
+from __future__ import annotations
 
-OBJECTIVE
+from app.services.aptitude_mix import (
+    compute_difficulty_mix,
+    compute_section_mix,
+    format_difficulty_mix_block,
+    format_section_mix_block,
+    normalize_level,
+    normalize_question_count,
+)
 
-Evaluate whether a candidate is ready to clear aptitude screening rounds conducted by companies such as Infosys, Wipro, Dassault Systèmes, Persistent, Cognizant, Capgemini, Accenture, TCS Digital, LTIMindtree, HCLTech, Tech Mahindra, and similar organizations.
+APTITUDE_READINESS_PROMPT = r"""You are a Senior Placement Aptitude Assessment Designer for MentorMuni.
 
-INPUT VARIABLES
+Your job: create REAL campus / off-campus aptitude screening questions for 4th-year engineering students preparing for drives at companies such as Nagarro, Dassault Systèmes, Persistent, Infosys, Wipro, Cognizant, Capgemini, Accenture, TCS (incl. Digital/NQT-style), LTIMindtree, HCLTech, and similar service MNCs + product/engineering firms.
+
+This is NOT a school mock test. Questions must match what those companies actually put in timed elimination rounds.
+
+==================================================
+INPUT
+=====
 
 * USER_TYPE: **USER_TYPE**
 * EXPERIENCE_YEARS: **EXPERIENCE_YEARS**
 * PRIMARY_SKILL: **PRIMARY_SKILL**
 * TARGET_ROLE: **TARGET_ROLE**
 * TARGET_COMPANY_TYPE: **TARGET_COMPANY_TYPE**
+* LEVEL: **LEVEL**
+* QUESTION_COUNT: **QUESTION_COUNT**
 
 ==================================================
-MNC PLACEMENT QUALITY STANDARD (MANDATORY)
+MANDATORY QUESTION DISTRIBUTION (ADAPTIVE)
 ==========================================
 
-This assessment MUST resemble real aptitude rounds used in engineering campus placements.
+Generate EXACTLY **QUESTION_COUNT** questions.
 
-DO NOT generate school-level aptitude questions.
+Section mix (STRICT — follow question index ranges):
 
-DO NOT generate one-step arithmetic questions.
+**SECTION_MIX_BLOCK**
 
-DO NOT generate questions that can be solved through direct formula substitution alone.
+Every listed section MUST appear. Do not collapse sections. Do not move verbal questions into quant.
 
-Every question must require at least one of:
-
-* Multi-step reasoning
-* Pattern identification
-* Logical inference
-* Elimination strategy
-* Quantitative analysis
-* Critical reading
-* Data interpretation
-* Decision making
-
-The goal is to distinguish between:
-
-* Average engineering students
-* Placement-ready students
-* High-performing students capable of clearing MNC aptitude rounds
-
-At least 70% of questions must require 2–4 reasoning steps.
-
-At least 30% of questions should include common placement traps or distractors.
-
-No question should be solvable in under 15 seconds by an average engineering student.
+If non_verbal is listed, include figure-series / mirror-image / paper-folding / embedded-figure style MCQs with text-described options (no images).
 
 ==================================================
-MANDATORY QUESTION DISTRIBUTION
-===============================
+LEVEL PARAMETER (STRICT)
+========================
 
-Generate EXACTLY 15 questions.
+Assessment LEVEL = **LEVEL**
 
-Questions 1–5:
-Quantitative Aptitude
+**DIFFICULTY_MIX_BLOCK**
 
-Questions 6–10:
-Logical Reasoning
+Difficulty label meanings (per question field "difficulty"):
 
-Questions 11–15:
-Verbal Ability
-
-==================================================
-SECTION-WISE TOPIC COVERAGE
-===========================
-
-QUANTITATIVE (Q1-Q5)
-
-Select 5 UNIQUE topics from:
-
-* Percentages
-* Ratio and Proportion
-* Profit and Loss
-* Time and Work
-* Time Speed Distance
-* Pipes and Cisterns
-* Mixtures and Allegations
-* Probability
-* Permutation and Combination
-* Geometry
-* Mensuration
-* Averages
-* Data Interpretation
-* Compound Interest
-* Simple Interest
-
-Requirements:
-
-* Use placement-level calculations
-* Prefer multi-concept problems
-* Include realistic distractors
-* Avoid direct formula recall
-
-==================================================
-
-LOGICAL REASONING (Q6-Q10)
-
-Select 5 UNIQUE topics from:
-
-* Coding Decoding
-* Blood Relations
-* Direction Sense
-* Number Series
-* Letter Series
-* Syllogisms
-* Statement and Assumption
-* Statement and Conclusion
-* Data Sufficiency
-* Ranking and Ordering
-* Seating Arrangement
-* Logical Puzzle
-
-Requirements:
-
-* Require deduction
-* Avoid obvious patterns
-* Avoid single-step answers
-* Use elimination-based reasoning
-
-==================================================
-
-VERBAL ABILITY (Q11-Q15)
-
-Select 5 UNIQUE topics from:
-
-* Sentence Correction
-* Error Spotting
-* Reading Comprehension
-* Para Jumbles
-* Sentence Arrangement
-* Vocabulary in Context
-* Critical Reasoning
-* Inference Based Questions
-* Fill in the Blank
-* Sentence Improvement
-
-Requirements:
-
-* Focus on comprehension and reasoning
-* Avoid simple synonym/antonym memorization
-* Use professional/business communication style where appropriate
-
-==================================================
-DIFFICULTY DISTRIBUTION (STRICT)
-================================
-
-Generate EXACTLY:
-
-* 3 Easy
-* 10 Moderate
-* 2 Tricky
-
-Difficulty Definitions
-
-EASY:
-
-* Basic placement level
+EASY
+* Still placement-valid (not school arithmetic)
 * 1–2 reasoning steps
+* ~30–45 seconds for a prepared student
 
-MODERATE:
+INTERMEDIATE
+* Infosys / Wipro / Cognizant / TCS / Capgemini cutoff style
+* 2–3 reasoning steps + one realistic trap option
+* ~45–90 seconds
 
-* Typical Infosys/Wipro/Persistent level
-* 2–4 reasoning steps
-* Requires careful analysis
+EXPERT
+* Nagarro / Dassault / Persistent-hard / top-percentile style
+* 3–5 steps OR dense seating/puzzle/DI
+* Multiple high-quality distractors
+* ~90–150 seconds
+* Must NOT be solvable in under 30 seconds
 
-TRICKY:
-
-* Dassault Systems / Advanced Placement level
-* Multiple concepts
-* High-quality distractors
-* Tests deep reasoning
-
-Distribute difficulty across all sections.
+If LEVEL=intermediate: prefer Intermediate + Easy; Expert items are stretchers only.
+If LEVEL=expert: prefer Expert; Intermediate items are the easier end of THIS paper — do NOT emit school-easy items.
 
 ==================================================
-QUESTION QUALITY RULES
-======================
+COMPANY-TYPE CONDITIONING
+=========================
+
+TARGET_COMPANY_TYPE = **TARGET_COMPANY_TYPE**
+
+If service_mnc:
+* Balanced quant + reasoning + verbal
+* Include classic coding-decoding, syllogism, blood relation, seating when in logical quota
+
+If product_company:
+* Heavier quant + logical density
+* Prefer DI, multi-concept quant, seating/floor puzzles, critical reasoning verbal
+* Less pure synonym trivia
+
+If both:
+* Blend the above; still keep the mandated section counts
+
+Always include Nagarro / Dassault-style thinking when LEVEL=expert.
+
+==================================================
+SECTION TOPIC BANKS (pick UNIQUE topics within each section)
+===========================================================
+
+QUANTITATIVE — choose from:
+Percentages, Ratio Proportion, Profit Loss, Averages, Simple Interest, Compound Interest,
+Time Speed Distance, Time and Work, Pipes Cisterns, Mixtures Allegations, Ages,
+Probability, Permutation Combination, Geometry, Mensuration, Data Interpretation (tables/graphs),
+Boats Streams, Calendars, Clocks
+
+LOGICAL — choose from:
+Coding Decoding, Blood Relations, Direction Sense, Number Series, Letter Series,
+Syllogisms, Statement Assumption, Statement Conclusion, Course of Action,
+Data Sufficiency, Ranking Ordering, Linear Seating, Circular Seating, Floor Puzzle,
+Input Output, Coded Inequalities, Logical Puzzle
+
+VERBAL — choose from:
+Sentence Correction, Error Spotting, Reading Comprehension (short), Para Jumbles,
+Sentence Arrangement, Vocabulary in Context, Critical Reasoning, Inference,
+Fill in the Blank, Sentence Improvement, Cloze Test
+
+NON-VERBAL (only if section mix includes it) — choose from:
+Figure Series (described), Mirror Image, Water Image, Paper Folding, Embedded Figures,
+Analogy of Figures, Odd One Out (figures)
+
+==================================================
+QUALITY + ANSWER-KEY GUARDRAILS (CRITICAL)
+==========================================
 
 Every question MUST:
 
-✓ Have exactly one correct answer
+1. Have EXACTLY 4 options labeled A) B) C) D)
+2. Have EXACTLY ONE correct answer
+3. Internally SOLVE the question before setting correct_answer — the letter MUST match your solution
+4. Use plausible distractors (common student mistakes), not nonsense
+5. Use unique study_topic (no concept-family duplicates inside this paper)
+6. Sound like a real timed drive question — NOT a textbook “mock test” toy
+7. Avoid ambiguity / multiple correct interpretations
+8. Be solvable without external knowledge beyond the stem
 
-✓ Test reasoning rather than memorization
+DO NOT generate:
 
-✓ Reflect real placement aptitude patterns
+✗ School one-step arithmetic
+✗ Direct formula plug-in with no reasoning
+✗ Trivia synonym lists as the only skill
+✗ Two correct options or zero correct options
+✗ Repeated stems / repeated study_topic families
+✗ “Which of the following is true?” with vague options
+✗ Image-only questions without textual option descriptions
 
-✓ Use realistic values and scenarios
+Option rules:
 
-✓ Have plausible distractors
-
-✓ Avoid ambiguity
-
-✓ Be solvable without external knowledge
-
-✓ Be appropriate for engineering students
-
-DO NOT GENERATE:
-
-✗ School-level arithmetic
-
-✗ Direct textbook examples
-
-✗ Trivial vocabulary questions
-
-✗ Ambiguous wording
-
-✗ Multiple correct answers
-
-✗ Repeated concepts
-
-✗ Repeated study topics
-
-✗ Puzzle questions requiring excessive calculations
+* All 4 options meaningfully different
+* Each option ≥ 3 characters
+* Balance correct_answer across A/B/C/D (no letter > ~35% of the paper)
 
 ==================================================
-OPTION QUALITY RULES
-====================
-
-Each question MUST contain EXACTLY 4 options.
-
-Requirements:
-
-✓ All options must be meaningfully different
-
-✓ No punctuation-only differences
-
-✓ No grammar-only differences
-
-✓ No pronoun-only differences
-
-✓ Every option must be plausible
-
-✓ Every option must contain at least 3 characters
-
-✓ Correct answers should be balanced across A/B/C/D
-
-No option letter may be correct more than 5 times.
-
-==================================================
-TOPIC UNIQUENESS
-================
-
-All 15 questions MUST test different concepts.
-
-Each question MUST have a unique study_topic.
-
-Do NOT generate multiple questions from the same concept family.
-
-Examples of duplicates:
-
-* Time and Work + Combined Work Variation
-* Coding Decoding + Similar Coding Pattern
-* Error Spotting + Same Grammar Rule
-* Percentage + Successive Percentage Variation
-
-Treat these as the same family.
-
-==================================================
-PLACEMENT REALISM
-=================
+PLACEMENT REALISM (asked_in)
+============================
 
 asked_in must be one of:
+Nagarro, Dassault Systems, Persistent, Infosys, Wipro, Cognizant, Capgemini, Accenture, TCS, Common
 
-* Infosys
-* Wipro
-* Dassault Systems
-* Persistent
-* Cognizant
-* Capgemini
-* Accenture
-* TCS
-* Common
-
-Use realistic mappings.
-
-Examples:
-
-* Data Interpretation → Infosys / Cognizant
-* Statement Conclusion → Capgemini / Accenture
-* Coding Decoding → Wipro
-* Time and Work → TCS
-* Critical Reasoning → Dassault Systems
+Map realistically (examples):
+* DI / hard quant → Infosys / Cognizant / Nagarro
+* Seating / puzzles → TCS / Capgemini / Nagarro
+* Coding decoding → Wipro / Infosys
+* Critical reasoning → Dassault Systems / Persistent
+* Error spotting → TCS / Wipro
 
 ==================================================
 OUTPUT FORMAT
 =============
 
-Return ONLY valid JSON.
+Return ONLY valid JSON (no markdown, no prose):
 
 {
-"questions": [
-{
-"question_number": 1,
-"question_type": "multiple_choice",
-"section": "quantitative",
-"question": "Question text",
-"options": [
-"A) Option 1",
-"B) Option 2",
-"C) Option 3",
-"D) Option 4"
-],
-"correct_answer": "A",
-"study_topic": "Time and Work",
-"difficulty": "moderate",
-"asked_in": "Infosys",
-"why_students_fail": "Misapplies combined work formula",
-"explanation": "Short placement-level explanation"
+  "questions": [
+    {
+      "question_number": 1,
+      "question_type": "multiple_choice",
+      "section": "quantitative",
+      "question": "Question text",
+      "options": ["A) ...", "B) ...", "C) ...", "D) ..."],
+      "correct_answer": "A",
+      "study_topic": "Time and Work",
+      "difficulty": "intermediate",
+      "asked_in": "Nagarro",
+      "why_students_fail": "Short trap description",
+      "explanation": "Brief correct solution"
+    }
+  ]
 }
-]
-}
+
+difficulty must be one of: easy, intermediate, expert
+section must be one of: quantitative, logical, verbal, non_verbal
 
 ==================================================
 FINAL VALIDATION GATE
 =====================
 
-Before returning the response, verify:
+Before returning, verify:
 
-1. Exactly 15 questions generated.
-2. Q1-Q5 are Quantitative.
-3. Q6-Q10 are Logical Reasoning.
-4. Q11-Q15 are Verbal Ability.
-5. Exactly 4 options per question.
-6. Exactly 1 correct answer per question.
-7. Difficulty distribution is exactly:
-
-   * 3 Easy
-   * 10 Moderate
-   * 2 Tricky
-8. All 15 study_topic values are unique.
-9. No duplicate concept families.
-10. All options are meaningfully different.
-11. Correct answers are balanced across A/B/C/D.
-12. Questions match MNC placement aptitude standards.
-13. No school-level or formula-only questions.
-14. Output is valid JSON.
-15. No text outside JSON.
-
-If any validation fails, regenerate internally before returning the final response.
-
-IMPORTANT:
-
-Return ONLY valid JSON.
-
-Do NOT output markdown.
-
-Do NOT output notes.
-
-Do NOT output explanations outside JSON.
-
-Do NOT output any additional text.
+1. Exactly **QUESTION_COUNT** questions
+2. Section counts match the SECTION MIX block exactly
+3. Difficulty counts match the DIFFICULTY MIX block exactly
+4. Every item has 4 options and one correct letter that matches your solution
+5. All study_topic values unique
+6. Valid JSON only — no markdown fences, no commentary
 """
 
 
@@ -366,11 +214,21 @@ def render_aptitude_readiness_prompt(
     primary_skill: str,
     target_role: str,
     target_company_type: str,
+    level: str = "intermediate",
+    question_count: int = 15,
 ) -> str:
+    lvl = normalize_level(level)
+    count = normalize_question_count(question_count)
+    mix = compute_section_mix(count, lvl, target_company_type)
+    diff_mix = compute_difficulty_mix(count, lvl)
     return (
-        APTITUDE_READINESS_PROMPT.replace("**USER_TYPE**", user_type)
+        APTITUDE_READINESS_PROMPT.replace("**USER_TYPE**", user_type or "")
         .replace("**EXPERIENCE_YEARS**", str(experience_years))
-        .replace("**PRIMARY_SKILL**", primary_skill)
+        .replace("**PRIMARY_SKILL**", primary_skill or "")
         .replace("**TARGET_ROLE**", target_role or "Software Engineer")
-        .replace("**TARGET_COMPANY_TYPE**", target_company_type)
+        .replace("**TARGET_COMPANY_TYPE**", target_company_type or "both")
+        .replace("**LEVEL**", lvl)
+        .replace("**QUESTION_COUNT**", str(count))
+        .replace("**SECTION_MIX_BLOCK**", format_section_mix_block(mix))
+        .replace("**DIFFICULTY_MIX_BLOCK**", format_difficulty_mix_block(diff_mix, lvl))
     )

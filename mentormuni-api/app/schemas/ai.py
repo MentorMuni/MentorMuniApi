@@ -250,6 +250,17 @@ class AptitudeReadinessPlanRequest(BaseModel):
         default="both",
         description='One of: "service_mnc", "product_company", "both". Defaults to "both".',
     )
+    level: str = Field(
+        default="intermediate",
+        description='Aptitude difficulty band: "intermediate" or "expert".',
+    )
+    question_count: int = Field(
+        default=15,
+        description=(
+            "Number of MCQs: any multiple of 5 from 5 to 50 (e.g. 5, 10, 15, …, 50). "
+            "Section mix adapts automatically."
+        ),
+    )
     email: Optional[str] = Field(default=None, max_length=255)
     phone: Optional[str] = Field(default=None, max_length=20)
 
@@ -285,6 +296,20 @@ class AptitudeReadinessPlanRequest(BaseModel):
         if key not in allowed:
             raise ValueError('target_company_type must be one of: service_mnc, product_company, both')
         return key
+
+    @field_validator("level", mode="before")
+    @classmethod
+    def validate_level(cls, v) -> str:
+        from app.services.aptitude_mix import normalize_level
+
+        return normalize_level(v)
+
+    @field_validator("question_count", mode="before")
+    @classmethod
+    def validate_question_count(cls, v) -> int:
+        from app.services.aptitude_mix import normalize_question_count
+
+        return normalize_question_count(v)
 
     @model_validator(mode="after")
     def set_target_role_default(self):
@@ -332,10 +357,10 @@ class SkillReadinessCodeMcqItem(SkillReadinessMcBase):
 
 class AptitudeReadinessMultipleChoiceItem(SkillReadinessMcBase):
     question_type: Literal["multiple_choice"] = "multiple_choice"
-    section: Literal["quantitative", "logical", "verbal"]
-    difficulty: Literal["easy", "moderate", "tricky"] = Field(
-        default="moderate",
-        description="Placement-style difficulty: easy / moderate / tricky",
+    section: Literal["quantitative", "logical", "verbal", "non_verbal"]
+    difficulty: Literal["easy", "intermediate", "expert"] = Field(
+        default="intermediate",
+        description="Placement-style difficulty: easy / intermediate / expert",
     )
     asked_in: str = Field(
         default="Common pattern",
@@ -372,7 +397,7 @@ class InterviewReadinessPlanResponse(BaseModel):
 
 
 class AptitudeReadinessPlanResponse(BaseModel):
-    """Aptitude readiness: 15 placement-style MCQs with strict section distribution."""
+    """Aptitude readiness: adaptive MCQs (15/20/30/40) with section mix by count/level."""
 
     evaluation_plan: List[AptitudeReadinessMultipleChoiceItem]
 

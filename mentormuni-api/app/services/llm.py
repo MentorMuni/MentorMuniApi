@@ -25,6 +25,19 @@ PLAN_QUESTION_COUNT = 15
 APTITUDE_SECTION_ORDER: list[str] = (
     ["quantitative"] * 5 + ["logical"] * 5 + ["verbal"] * 5
 )
+APTITUDE_DIFFICULTY_ALIASES = {
+    "easy": "easy",
+    "basic": "easy",
+    "intermediate": "intermediate",
+    "moderate": "intermediate",
+    "medium": "intermediate",
+    "expert": "expert",
+    "tricky": "expert",
+    "hard": "expert",
+    "difficult": "expert",
+    "slightly tricky": "expert",
+    "challenge": "expert",
+}
 
 
 class LLMService:
@@ -522,13 +535,30 @@ If YES, respond with just: YES"""
         return kept
 
     async def generate_aptitude_readiness_plan(self, request) -> list[dict]:
-        """Aptitude readiness: single LLM call using Senior Placement SME prompt (15 MCQ)."""
+        """Aptitude readiness: placement MCQs with adaptive count + section mix."""
+        from app.services.aptitude_mix import (
+            compute_section_mix,
+            max_tokens_for_count,
+            normalize_level,
+            normalize_question_count,
+            section_order_from_mix,
+        )
+
+        level = normalize_level(getattr(request, "level", None))
+        question_count = normalize_question_count(getattr(request, "question_count", None))
+        company_type = getattr(request, "target_company_type", "both") or "both"
+        section_mix = compute_section_mix(question_count, level, company_type)
+        section_order = section_order_from_mix(section_mix)
+        max_tokens = max_tokens_for_count(question_count)
+
         prompt = render_aptitude_readiness_prompt(
             user_type=getattr(request, "user_type", "") or "",
             experience_years=int(getattr(request, "experience_years", 0) or 0),
             primary_skill=getattr(request, "primary_skill", "") or "",
             target_role=getattr(request, "target_role", "") or "",
-            target_company_type=getattr(request, "target_company_type", "both") or "both",
+            target_company_type=company_type,
+            level=level,
+            question_count=question_count,
         )
 
         async def call_openai(user_prompt: str):
@@ -538,32 +568,45 @@ If YES, respond with just: YES"""
                     {
                         "role": "system",
                         "content": (
-                            "You output ONLY valid JSON with a questions array of exactly 15 "
-                            "placement-level MCQs. No markdown. No school-level arithmetic."
+                            f"You output ONLY valid JSON with a questions array of exactly {question_count} "
+                            "placement-level MCQs. Difficulty labels: easy|intermediate|expert. "
+                            "No markdown. Solve each item before setting correct_answer."
                         ),
                     },
                     {"role": "user", "content": user_prompt},
                 ],
-                max_tokens=MAX_TOKENS_APTITUDE_READINESS_PLAN,
+                response_format={"type": "json_object"},
+                max_tokens=max_tokens,
                 temperature=0.15,
             )
             content = response.choices[0].message.content or ""
             usage = getattr(response, "usage", None)
             if usage:
                 logger.info(
-                    "LLM tokens used: %d (aptitude readiness plan)",
+                    "LLM tokens used: %d (aptitude readiness plan n=%d level=%s)",
                     getattr(usage, "total_tokens", 0) or 0,
+                    question_count,
+                    level,
                 )
             return content
 
-        logger.info("Generating aptitude readiness plan (15 MNC placement MCQs)...")
+        logger.info(
+            "Generating aptitude readiness plan (%d MCQs, level=%s, mix=%s)...",
+            question_count,
+            level,
+            dict(section_mix),
+        )
         all_questions: list[dict] = []
         for attempt in range(2):
             try:
                 content = await self.guard_layer_aptitude.run_with_timeout(call_openai(prompt))
-                parsed = self._parse_aptitude_readiness_plan(content)
+                parsed = self._parse_aptitude_readiness_plan(
+                    content,
+                    question_count=question_count,
+                    section_order=section_order,
+                )
                 all_questions = self._dedupe_aptitude_questions(parsed)
-                if len(all_questions) >= PLAN_QUESTION_COUNT:
+                if len(all_questions) >= question_count:
                     break
                 if attempt == 0:
                     used = [q.get("study_topic", "") for q in all_questions]
@@ -571,33 +614,130 @@ If YES, respond with just: YES"""
                         prompt
                         + "\n\nREGENERATE: Previous output had only "
                         + str(len(all_questions))
-                        + " valid unique questions. Generate a fresh set of exactly 15. "
-                        "Difficulty must be exactly 3 easy, 10 moderate, 2 tricky. "
+                        + f" valid unique questions. Generate a fresh set of exactly {question_count}. "
+                        "Obey the SECTION MIX and DIFFICULTY MIX blocks exactly. "
                         "Do NOT repeat these study_topic values:\n"
-                        + "\n".join(f"- {t}" for t in used[:20])
+                        + "\n".join(f"- {t}" for t in used[:40])
                     )
             except Exception as e:
                 logger.error("Aptitude readiness attempt %d failed: %s", attempt + 1, e)
 
         logger.info("Parsed %d aptitude questions from LLM", len(all_questions))
 
+        def _normalize_fallback_row(fb: dict) -> dict:
+            d = dict(fb)
+            d["difficulty"] = self._normalize_aptitude_difficulty(d.get("difficulty"))
+            return d
+
         if len(all_questions) == 0:
             logger.warning("Aptitude LLM failed, using fallback")
-            return self._generate_minimal_fallback_questions()
-        if len(all_questions) < PLAN_QUESTION_COUNT:
+            return [
+                _normalize_fallback_row(q)
+                for q in self._generate_minimal_fallback_questions()[:question_count]
+            ]
+        if len(all_questions) < question_count:
             logger.warning(
-                "Got %d aptitude questions, padding with fallback.",
+                "Got %d aptitude questions, padding with fallback (target %d).",
                 len(all_questions),
+                question_count,
             )
             fallback = self._generate_minimal_fallback_questions()
             for fb in fallback:
-                if len(all_questions) >= PLAN_QUESTION_COUNT:
+                if len(all_questions) >= question_count:
                     break
+                fb = _normalize_fallback_row(fb)
                 merged = self._dedupe_aptitude_questions(all_questions + [fb])
                 if len(merged) > len(all_questions):
                     all_questions = merged
 
-        return all_questions[:PLAN_QUESTION_COUNT]
+        return all_questions[:question_count]
+
+    def _normalize_aptitude_difficulty(self, raw: str | None) -> str:
+        key = str(raw or "").strip().lower()
+        return APTITUDE_DIFFICULTY_ALIASES.get(key, "intermediate")
+
+    def _parse_aptitude_readiness_plan(
+        self,
+        content: str,
+        *,
+        question_count: int = PLAN_QUESTION_COUNT,
+        section_order: list[str] | None = None,
+    ) -> list[dict]:
+        """Parse aptitude plan JSON into MCQs with adaptive section order."""
+        items = self._extract_aptitude_questions_from_llm(content)
+        if not items:
+            logger.warning("Aptitude plan: no JSON questions list found in model output.")
+            return []
+
+        order = section_order or APTITUDE_SECTION_ORDER
+        allowed_sections = {"quantitative", "logical", "verbal", "non_verbal"}
+        out: List[dict] = []
+        try:
+            for x in items:
+                if len(out) >= question_count:
+                    break
+                if not isinstance(x, dict) or "question" not in x:
+                    continue
+                q = str(x["question"]).strip()
+                if not q:
+                    continue
+                opts = self._normalize_mc_options(x.get("options"))
+                if opts is None:
+                    logger.debug("Skipping aptitude MCQ with invalid option format: %s", q[:60])
+                    continue
+
+                fixed_opts = self._fix_similar_options(q, opts, allow_concept_based=False)
+                if fixed_opts is None:
+                    logger.debug("Skipping aptitude MCQ with unfixable similar options: %s", q[:60])
+                    continue
+
+                letter = self._normalize_mc_letter(x.get("correct_answer"), fixed_opts)
+                if letter is None:
+                    logger.debug("Skipping aptitude MCQ with invalid correct_answer: %s", q[:60])
+                    continue
+                topic = str(x.get("study_topic", "")).strip()
+                if not topic:
+                    topic = q[:60] + ("..." if len(q) > 60 else "")
+                expl = self._explanation_or_default(x.get("explanation"))
+                section_raw = str(x.get("section", "")).strip().lower().replace("-", "_").replace(" ", "_")
+                if section_raw in ("nonverbal", "abstract", "non_verbal_reasoning"):
+                    section_raw = "non_verbal"
+                if section_raw in allowed_sections:
+                    section = section_raw
+                else:
+                    section = order[len(out)] if len(out) < len(order) else "quantitative"
+                difficulty = self._normalize_aptitude_difficulty(x.get("difficulty"))
+                asked_in = str(x.get("asked_in", "")).strip() or "Common"
+                if len(asked_in) > 200:
+                    asked_in = asked_in[:200]
+                why_fail = str(x.get("why_students_fail", "")).strip() or (
+                    "Misread options or rushed under time pressure."
+                )
+                if len(why_fail) > 500:
+                    why_fail = why_fail[:500]
+                out.append({
+                    "question_type": "multiple_choice",
+                    "section": section,
+                    "question": q,
+                    "options": fixed_opts,
+                    "correct_answer": letter,
+                    "study_topic": topic,
+                    "difficulty": difficulty,
+                    "asked_in": asked_in,
+                    "why_students_fail": why_fail,
+                    "explanation": expl,
+                })
+        except (TypeError, ValueError) as e:
+            logger.error("Error parsing aptitude questions: %s", e)
+            return []
+
+        if len(out) < question_count:
+            logger.warning(
+                "Aptitude plan parsed %d/%d questions after validation filters.",
+                len(out),
+                question_count,
+            )
+        return out
 
     @staticmethod
     def _coerce_questions_list(obj) -> Optional[list]:
@@ -644,86 +784,6 @@ If YES, respond with just: YES"""
             return lst if lst is not None else (obj if isinstance(obj, list) else None)
         except json.JSONDecodeError:
             return None
-
-    def _parse_aptitude_readiness_plan(self, content: str) -> list[dict]:
-        """Parse aptitude plan JSON into up to 15 multiple_choice questions with strict 5/5/5 sections."""
-        items = self._extract_aptitude_questions_from_llm(content)
-        if not items:
-            logger.warning("Aptitude plan: no JSON questions list found in model output.")
-            return []
-
-        out: List[dict] = []
-        try:
-            for x in items:
-                if len(out) >= PLAN_QUESTION_COUNT:
-                    break
-                if not isinstance(x, dict) or "question" not in x:
-                    continue
-                q = str(x["question"]).strip()
-                if not q:
-                    continue
-                opts = self._normalize_mc_options(x.get("options"))
-                if opts is None:
-                    logger.debug("Skipping aptitude MCQ with invalid option format: %s", q[:60])
-                    continue
-                
-                # TRY FIX: Attempt to auto-fix similar options before rejecting
-                fixed_opts = self._fix_similar_options(q, opts, allow_concept_based=False)
-                if fixed_opts is None:
-                    logger.debug("Skipping aptitude MCQ with unfixable similar options: %s", q[:60])
-                    continue
-                
-                letter = self._normalize_mc_letter(x.get("correct_answer"), fixed_opts)
-                if letter is None:
-                    logger.debug("Skipping aptitude MCQ with invalid correct_answer: %s", q[:60])
-                    continue
-                topic = str(x.get("study_topic", "")).strip()
-                if not topic:
-                    topic = q[:60] + ("..." if len(q) > 60 else "")
-                expl = self._explanation_or_default(x.get("explanation"))
-                section_raw = str(x.get("section", "")).strip().lower()
-                if section_raw in ("quantitative", "logical", "verbal"):
-                    section = section_raw
-                else:
-                    section = APTITUDE_SECTION_ORDER[len(out)]
-                diff_raw = str(x.get("difficulty", "")).strip().lower()
-                if diff_raw in ("easy", "moderate", "tricky"):
-                    difficulty = diff_raw
-                elif diff_raw in ("slightly tricky", "hard", "difficult"):
-                    difficulty = "tricky"
-                else:
-                    difficulty = "moderate"
-                asked_in = str(x.get("asked_in", "")).strip() or "Common pattern"
-                if len(asked_in) > 200:
-                    asked_in = asked_in[:200]
-                why_fail = str(x.get("why_students_fail", "")).strip() or (
-                    "Misread options or rushed under time pressure."
-                )
-                if len(why_fail) > 500:
-                    why_fail = why_fail[:500]
-                out.append({
-                    "question_type": "multiple_choice",
-                    "section": section,
-                    "question": q,
-                    "options": fixed_opts,
-                    "correct_answer": letter,
-                    "study_topic": topic,
-                    "difficulty": difficulty,
-                    "asked_in": asked_in,
-                    "why_students_fail": why_fail,
-                    "explanation": expl,
-                })
-        except (TypeError, ValueError) as e:
-            logger.error("Error parsing aptitude questions: %s", e)
-            return []
-
-        if len(out) < PLAN_QUESTION_COUNT:
-            logger.warning(
-                "Parsed only %d/%d aptitude questions (dropped invalid rows or truncated JSON).",
-                len(out),
-                PLAN_QUESTION_COUNT,
-            )
-        return out
 
     def _normalize_mc_options(self, raw_opts) -> Optional[List[str]]:
         if not isinstance(raw_opts, list):

@@ -231,7 +231,7 @@ async def interview_readiness_plan(request: Request, body: InterviewReadinessPla
     "/interview-ready/aptitude-readiness/plan",
     response_model=AptitudeReadinessPlanResponse,
     responses={429: {"description": "Rate limit exceeded"}},
-    summary="Aptitude readiness plan (placement-style quant/logical/verbal medium-level quiz)",
+    summary="Aptitude readiness plan (adaptive count/level; quant/logical/verbal + non-verbal mix)",
 )
 @limiter.limit("20/minute")
 async def aptitude_readiness_plan(request: Request, body: AptitudeReadinessPlanRequest):
