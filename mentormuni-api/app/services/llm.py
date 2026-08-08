@@ -1136,3 +1136,62 @@ If YES, respond with just: YES"""
         if not isinstance(payload, dict):
             raise RuntimeError("Progress topics JSON must be an object")
         return payload, model_name
+
+    async def generate_company_intelligence(
+        self,
+        *,
+        company: str,
+        role: str,
+        country: str,
+    ) -> tuple[dict, str]:
+        """Return (intelligence_payload, model_name) for shared company hiring intel."""
+        from app.company_intelligence.constants import (
+            COMPANY_INTEL_MODEL,
+            MAX_TOKENS_COMPANY_INTEL,
+        )
+        from app.services.company_intelligence_prompt import render_company_intelligence_prompt
+
+        prompt = render_company_intelligence_prompt(
+            company=company,
+            role=role,
+            country=country,
+        )
+        model_name = COMPANY_INTEL_MODEL
+
+        async def call_openai():
+            response = await self._client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are MentorMuni Recruitment Intelligence Analyst. "
+                            "Reply with a single JSON object only. No markdown fences. "
+                            "No interview questions. No study plans. Use Unknown/null when evidence is weak."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                response_format={"type": "json_object"},
+                max_tokens=MAX_TOKENS_COMPANY_INTEL,
+                temperature=0.3,
+            )
+            return (response.choices[0].message.content or "").strip()
+
+        content = await self.guard_layer_interview.run_with_timeout(call_openai())
+        if not content:
+            raise RuntimeError("Empty response from company intelligence model")
+
+        stripped = re.sub(r"^```(?:json)?\s*", "", content, flags=re.IGNORECASE | re.MULTILINE)
+        stripped = re.sub(r"\s*```\s*$", "", stripped, flags=re.MULTILINE).strip()
+        try:
+            payload = json.loads(stripped)
+        except json.JSONDecodeError:
+            m = re.search(r"\{[\s\S]*\}", content)
+            if not m:
+                raise RuntimeError("Could not parse company intelligence JSON")
+            payload = json.loads(m.group())
+
+        if not isinstance(payload, dict):
+            raise RuntimeError("Company intelligence JSON must be an object")
+        return payload, model_name

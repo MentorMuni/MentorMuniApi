@@ -28,6 +28,7 @@ from app.student_roadmap.models import (
     StudentRoadmapStep,
     StudentRoadmapWeek,
 )
+from app.company_intelligence.models import CompanyIntelligence
 
 __all__ = [
     "Organization",
@@ -50,4 +51,5 @@ __all__ = [
     "StudentRoadmapStep",
     "StudentAssessmentResult",
     "StudentGeneratedRoadmap",
+    "CompanyIntelligence",
 ]
