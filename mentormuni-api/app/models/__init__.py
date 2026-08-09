@@ -12,6 +12,12 @@ from app.models.organization_subscription import OrganizationSubscription
 from app.models.role import Role
 from app.models.department import Department
 from app.models.user import User
+from app.models.private_checkin import (
+    PrivateStudentCheckIn,
+    PrivateStudentResponse,
+    PrivateStudentInsight,
+    PrivateStudentProgress,
+)
 from app.models.feature_catalog import FeatureCatalog
 from app.models.organization_feature import OrganizationFeature
 from app.models.platform_user import PlatformUser
@@ -29,6 +35,27 @@ from app.student_roadmap.models import (
     StudentRoadmapWeek,
 )
 from app.company_intelligence.models import CompanyIntelligence
+from app.coding.models import (
+    CodingAiAnalysis,
+    CodingAssessment,
+    CodingAssessmentProblem,
+    CodingAttempt,
+    CodingAttemptProblem,
+    CodingAttemptSnapshot,
+    CodingDraft,
+    CodingGenerationRun,
+    CodingJob,
+    CodingLanguage,
+    CodingProblem,
+    CodingProblemRelevance,
+    CodingProblemVersion,
+    CodingReferenceSolution,
+    CodingRun,
+    CodingSubmission,
+    CodingTestCase,
+    CodingTestResult,
+    CodingValidationResult,
+)
 
 __all__ = [
     "Organization",
@@ -52,4 +79,23 @@ __all__ = [
     "StudentAssessmentResult",
     "StudentGeneratedRoadmap",
     "CompanyIntelligence",
+    "CodingLanguage",
+    "CodingProblem",
+    "CodingProblemVersion",
+    "CodingReferenceSolution",
+    "CodingTestCase",
+    "CodingAssessment",
+    "CodingAssessmentProblem",
+    "CodingAttempt",
+    "CodingAttemptSnapshot",
+    "CodingAttemptProblem",
+    "CodingDraft",
+    "CodingRun",
+    "CodingSubmission",
+    "CodingTestResult",
+    "CodingAiAnalysis",
+    "CodingJob",
+    "CodingProblemRelevance",
+    "CodingGenerationRun",
+    "CodingValidationResult",
 ]

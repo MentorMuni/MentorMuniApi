@@ -268,9 +268,34 @@ async def list_results(
     ]
 
 
+def _recompute_week_progress(week: StudentRoadmapWeek) -> None:
+    """Ensure exactly one CURRENT step (first not-done) or mark week done."""
+    steps = sorted(week.steps or [], key=lambda x: x.step_order)
+    if not steps:
+        return
+    for s in steps:
+        if s.status == STEP_STATUS_CURRENT:
+            s.status = STEP_STATUS_LOCKED
+    first_open = next((s for s in steps if s.status != STEP_STATUS_DONE), None)
+    if first_open is None:
+        week.status = WEEK_STATUS_DONE
+        if week.completed_at is None:
+            week.completed_at = datetime.now(timezone.utc)
+        return
+    first_open.status = STEP_STATUS_CURRENT
+    week.status = WEEK_STATUS_IN_PROGRESS
+    week.completed_at = None
+
+
 async def complete_step(
     db: AsyncSession, user: User, tool_code: str, body: CompleteStepRequest
 ) -> RoadmapOut:
+    """Persist a tool result for HOD/TPO analytics.
+
+    Product rule: always accept a completed attempt (including previously locked
+    steps) so org dashboards are not blocked by sequential UI state. Week
+    progress is recomputed afterward.
+    """
     _ensure_student(user)
     if tool_code not in TOOL_CODES:
         raise HTTPException(status_code=404, detail=f"Unknown tool_code: {tool_code}")
@@ -280,10 +305,6 @@ async def complete_step(
     if step is None:
         raise HTTPException(status_code=404, detail="Step not found")
 
-    if step.status == STEP_STATUS_LOCKED:
-        raise HTTPException(status_code=409, detail="Step is locked. Complete the current step first.")
-
-    was_current = step.status == STEP_STATUS_CURRENT
     normalized = normalize_complete_payload(body.model_dump())
 
     attempt_q = await db.execute(
@@ -327,16 +348,7 @@ async def complete_step(
     step.completed_at = now
     step.status = STEP_STATUS_DONE
 
-    if was_current:
-        nxt = next(
-            (s for s in sorted(week.steps, key=lambda x: x.step_order) if s.step_order == step.step_order + 1),
-            None,
-        )
-        if nxt is not None:
-            nxt.status = STEP_STATUS_CURRENT
-        else:
-            week.status = WEEK_STATUS_DONE
-            week.completed_at = now
+    _recompute_week_progress(week)
 
     await db.commit()
     week = await _load_week(db, user.id)  # type: ignore[assignment]

@@ -64,8 +64,13 @@ from app.notifications.router import router as notifications_router
 from app.dashboard.router import router as dashboard_router
 from app.platform.router import router as platform_router
 from app.student_roadmap.router import router as student_roadmap_router
+from app.personal_mentor.router import router as personal_mentor_router
+from app.know_my_fear.router_v2 import router as know_my_fear_router
+from app.org_performance.router import router as org_performance_router
+from app.org_performance.router import ai_router as org_performance_ai_router
 from app.student_company_prep.router import router as student_company_prep_router
 from app.company_intelligence.router import router as company_intelligence_router
+from app.coding.router import router as coding_router
 
 
 @asynccontextmanager
@@ -107,8 +112,13 @@ app.include_router(students_router)
 app.include_router(notifications_router)
 app.include_router(dashboard_router)
 app.include_router(student_roadmap_router)
+app.include_router(personal_mentor_router)
+app.include_router(know_my_fear_router)
+app.include_router(org_performance_router)
+app.include_router(org_performance_ai_router)
 app.include_router(student_company_prep_router)
 app.include_router(company_intelligence_router)
+app.include_router(coding_router)
 # MentorMuni Platform Admin portal (tenant provisioning only)
 app.include_router(platform_router)
 

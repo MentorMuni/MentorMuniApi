@@ -30,6 +30,7 @@ from app.common.security.auth_errors import (
     raise_forbidden,
     raise_unauthorized,
 )
+from app.common.security.demo_student import is_dev_demo_bearer, resolve_dev_demo_student
 from app.common.security.jwt import decode_access_token
 from app.models.enums import UserStatus
 from app.models.user import User
@@ -47,7 +48,19 @@ async def get_current_user(
             message="Missing Authorization Bearer token.",
         )
 
-    payload = decode_access_token(credentials.credentials, expected_scope="tenant")
+    raw = credentials.credentials or ""
+
+    # Local frontend demo/local sessions use fake JWTs — map to a real STUDENT in dev only.
+    if is_dev_demo_bearer(raw):
+        demo = await resolve_dev_demo_student(db)
+        if demo is None:
+            raise_unauthorized(
+                code=TOKEN_INVALID,
+                message="Demo student unavailable. Check STUDENT role / PUBLIC org seed.",
+            )
+        return demo
+
+    payload = decode_access_token(raw, expected_scope="tenant")
     try:
         user_id = int(payload["sub"])
     except (KeyError, TypeError, ValueError):

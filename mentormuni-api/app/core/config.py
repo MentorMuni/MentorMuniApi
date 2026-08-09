@@ -34,6 +34,30 @@ class Settings(BaseSettings):
     realtime_client_secret_ttl_seconds: int = Field(default=600, ge=10, le=7200)
     # Post-interview structured scoring (chat/completions JSON). Override via env if needed.
     voice_interview_analysis_model: str = Field(default="gpt-4.1")
+    # 24/7 personal mentor chat (placement prep). Override via PERSONAL_MENTOR_MODEL.
+    personal_mentor_model: str = Field(default="gpt-4.1")
+    # TPO/HOD deep performance brief. Override via ORG_PERFORMANCE_INSIGHT_MODEL.
+    org_performance_insight_model: str = Field(default="gpt-4.1-mini")
+    # Student-private fear coach (never org-visible). Override via KNOW_MY_FEAR_MODEL.
+    know_my_fear_model: str = Field(default="gpt-4.1")
+
+    # --- Coding assessment (Judge0 + worker) ---
+    judge0_base_url: str = Field(default="")
+    judge0_api_key: str = Field(default="")
+    coding_max_source_bytes: int = Field(default=64_000, ge=1024, le=512_000)
+    coding_max_stdout_bytes: int = Field(default=16_384, ge=1024, le=256_000)
+    coding_run_rate_per_student: int = Field(default=30, ge=1, le=1000)
+    coding_run_rate_window_seconds: int = Field(default=60, ge=10, le=3600)
+    coding_submit_rate_per_student: int = Field(default=10, ge=1, le=500)
+    coding_submit_rate_window_seconds: int = Field(default=60, ge=10, le=3600)
+    coding_execution_timeout_ms: int = Field(default=2000, ge=100, le=30_000)
+    coding_compile_timeout_ms: int = Field(default=10_000, ge=1000, le=60_000)
+    coding_memory_limit_kb: int = Field(default=128_000, ge=16_000, le=512_000)
+    coding_max_concurrent_jobs: int = Field(default=4, ge=1, le=64)
+    coding_job_max_attempts: int = Field(default=5, ge=1, le=20)
+    coding_job_poll_interval_ms: int = Field(default=1500, ge=200, le=10_000)
+    coding_job_stale_seconds: int = Field(default=300, ge=30, le=3600)
+    coding_execution_provider: str = Field(default="judge0")
 
     # --- Phase 1: Database ---
     # Railway injects this. Locally set in .env.
