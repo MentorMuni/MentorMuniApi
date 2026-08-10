@@ -34,6 +34,13 @@ from app.models.user import User
 logger = logging.getLogger(__name__)
 
 
+def _require_student(user: User, action: str = "use Fear → Fearless") -> None:
+    """user.role is a Role relationship, not a string — compare role_code."""
+    code = user.role.role_code if user.role else None
+    if code != RoleCode.STUDENT.value:
+        raise PermissionError(f"Only students can {action}.")
+
+
 class PrivateKnowMeService:
     """Multi-step Know Me flow. Private to student; never org-visible."""
 
@@ -41,9 +48,8 @@ class PrivateKnowMeService:
         self, db: AsyncSession, user: User
     ) -> PrivateCheckInStartOut:
         """Create a new check-in session."""
-        if user.role != RoleCode.STUDENT.value:
-            raise PermissionError("Only students can use Know Me.")
-        
+        _require_student(user, "use Fear → Fearless")
+
         org_id = user.organization_id
         checkin = PrivateStudentCheckIn(
             student_id=user.id,
@@ -66,8 +72,7 @@ class PrivateKnowMeService:
         step: PrivateCheckInStepIn,
     ) -> dict:
         """Save one question response. Strict ownership check."""
-        if user.role != RoleCode.STUDENT.value:
-            raise PermissionError("Only students can save Know Me responses.")
+        _require_student(user, "save Fear → Fearless responses")
 
         checkin = await db.get(PrivateStudentCheckIn, checkin_id)
         if not checkin or checkin.student_id != user.id:
@@ -98,8 +103,7 @@ class PrivateKnowMeService:
         checkin_id: int,
     ) -> PrivateInsightOut:
         """Generate elder-brother insight from completed check-in."""
-        if user.role != RoleCode.STUDENT.value:
-            raise PermissionError("Only students can generate insights.")
+        _require_student(user, "generate Fear → Fearless insights")
 
         checkin = await db.get(PrivateStudentCheckIn, checkin_id)
         if not checkin or checkin.student_id != user.id:
@@ -175,8 +179,7 @@ class PrivateKnowMeService:
         user: User,
     ) -> PrivateProgressOut:
         """Compare first check-in with latest (for 30–45 day follow-up)."""
-        if user.role != RoleCode.STUDENT.value:
-            raise PermissionError("Only students can view progress.")
+        _require_student(user, "view Fear → Fearless progress")
 
         stmt = select(PrivateStudentCheckIn).where(
             PrivateStudentCheckIn.student_id == user.id,
