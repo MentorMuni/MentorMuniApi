@@ -66,6 +66,13 @@ from app.platform.router import router as platform_router
 from app.student_roadmap.router import router as student_roadmap_router
 from app.personal_mentor.router import router as personal_mentor_router
 from app.know_my_fear.router_v2 import router as know_my_fear_router
+from app.know_my_fear.router_v2 import legacy_router as know_my_fear_legacy_router
+from app.know_my_fear.intervention_router import router as intervention_router
+from app.know_my_fear.intervention_router import legacy_router as intervention_legacy_router
+from app.know_my_fear.notification_dispatcher import (
+    start_notification_dispatcher,
+    stop_notification_dispatcher,
+)
 from app.org_performance.router import router as org_performance_router
 from app.org_performance.router import ai_router as org_performance_ai_router
 from app.student_company_prep.router import router as student_company_prep_router
@@ -75,9 +82,11 @@ from app.coding.router import router as coding_router
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """Warm DB engine on startup (no-op if DATABASE_URL missing); dispose on shutdown."""
+    """Warm DB engine on startup; run Fear → Fearless notification dispatcher; dispose on shutdown."""
     await init_db()
+    start_notification_dispatcher()
     yield
+    await stop_notification_dispatcher()
     await close_db()
 
 
@@ -114,6 +123,9 @@ app.include_router(dashboard_router)
 app.include_router(student_roadmap_router)
 app.include_router(personal_mentor_router)
 app.include_router(know_my_fear_router)
+app.include_router(know_my_fear_legacy_router)
+app.include_router(intervention_router)
+app.include_router(intervention_legacy_router)
 app.include_router(org_performance_router)
 app.include_router(org_performance_ai_router)
 app.include_router(student_company_prep_router)

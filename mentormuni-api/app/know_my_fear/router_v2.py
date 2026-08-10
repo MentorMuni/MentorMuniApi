@@ -1,12 +1,14 @@
-"""Multi-step Know Me router. Strict student-only auth (no TPO/HOD access)."""
+"""Multi-step Fear → Fearless check-in router. Strict student-only auth."""
 
 from __future__ import annotations
 
 import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.deps import get_db, require_api_key, require_roles
+from app.know_my_fear.intervention_service import InterventionService
 from app.know_my_fear.schemas_v2 import (
     PrivateCheckInStartOut,
     PrivateCheckInStepIn,
@@ -19,82 +21,91 @@ from app.models.user import User
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(
-    prefix="/student/know-me",
-    tags=["Student Know Me (private, student-only)"],
-    dependencies=[Depends(require_api_key)],
-)
-
 _service = PrivateKnowMeService()
+_intervention = InterventionService()
+
+TAGS = ["Fear → Fearless (private check-in)"]
 
 
-@router.post("/start", response_model=PrivateCheckInStartOut)
-async def start_checkin(
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_roles(RoleCode.STUDENT.value)),
-) -> PrivateCheckInStartOut:
-    """
-    Start a new Know Me check-in session.
-    
-    Only students can use this. No TPO/HOD access (auth will reject).
-    """
-    logger.info(f"start_checkin called for user_id={user.id}, role={user.role}")
-    try:
-        result = await _service.start_checkin(db, user)
-        logger.info(f"✓ Check-in started: {result.checkin_id}")
-        return result
-    except PermissionError as e:
-        logger.warning(f"Permission denied: {e}")
-        raise HTTPException(status_code=403, detail=str(e))
-    except Exception as e:
-        logger.error(f"Unexpected error in start_checkin: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
+def _build_router(prefix: str) -> APIRouter:
+    return APIRouter(
+        prefix=prefix,
+        tags=TAGS,
+        dependencies=[Depends(require_api_key)],
+    )
 
 
-@router.post("/step/{checkin_id}", response_model=dict)
-async def save_step(
-    checkin_id: int,
-    body: PrivateCheckInStepIn,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_roles(RoleCode.STUDENT.value)),
-) -> dict:
-    """
-    Save one step response to the check-in.
-    
-    Strict ownership: checkin must belong to this student.
-    """
-    try:
-        return await _service.save_step_response(db, user, checkin_id, body)
-    except PermissionError as e:
-        raise HTTPException(status_code=403, detail=str(e))
+router = _build_router("/student/fear-to-fearless")
+legacy_router = _build_router("/student/know-me")
 
 
-@router.post("/insight/{checkin_id}", response_model=PrivateInsightOut)
-async def generate_insight(
-    checkin_id: int,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_roles(RoleCode.STUDENT.value)),
-) -> PrivateInsightOut:
-    """
-    Generate elder-brother insight after check-in completion.
-    
-    Calls OpenAI (with heuristic fallback); stores result in private table.
-    """
-    try:
-        return await _service.generate_insight(db, user, checkin_id)
-    except PermissionError as e:
-        raise HTTPException(status_code=403, detail=str(e))
+def _register_routes(r: APIRouter) -> None:
+    @r.post("/start", response_model=PrivateCheckInStartOut)
+    async def start_checkin(
+        db: AsyncSession = Depends(get_db),
+        user: User = Depends(require_roles(RoleCode.STUDENT.value)),
+    ) -> PrivateCheckInStartOut:
+        logger.info("start_checkin user_id=%s role=%s", user.id, user.role)
+        try:
+            result = await _service.start_checkin(db, user)
+            logger.info("Check-in started: %s", result.checkin_id)
+            return result
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+        except Exception as e:
+            logger.error("start_checkin failed: %s", e, exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Server error: {e}")
+
+    @r.post("/step/{checkin_id}", response_model=dict)
+    async def save_step(
+        checkin_id: int,
+        body: PrivateCheckInStepIn,
+        db: AsyncSession = Depends(get_db),
+        user: User = Depends(require_roles(RoleCode.STUDENT.value)),
+    ) -> dict:
+        try:
+            return await _service.save_step_response(db, user, checkin_id, body)
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+
+    @r.post("/insight/{checkin_id}", response_model=PrivateInsightOut)
+    async def generate_insight(
+        checkin_id: int,
+        db: AsyncSession = Depends(get_db),
+        user: User = Depends(require_roles(RoleCode.STUDENT.value)),
+    ) -> PrivateInsightOut:
+        """Generate insight, then auto-create 6-week solutions + schedule notifications."""
+        try:
+            insight = await _service.generate_insight(db, user, checkin_id)
+            # Persist solutions so weekly journey can start immediately
+            try:
+                blockers = [b.model_dump() for b in (insight.blockers or [])]
+                await _intervention.ensure_solutions_for_checkin(
+                    db=db,
+                    student=user,
+                    checkin_id=checkin_id,
+                    blockers=blockers,
+                )
+                await db.commit()
+            except Exception:
+                logger.exception(
+                    "Auto solution generation failed for checkin=%s (insight still returned)",
+                    checkin_id,
+                )
+            return insight
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+
+    @r.get("/progress", response_model=PrivateProgressOut)
+    async def get_progress(
+        db: AsyncSession = Depends(get_db),
+        user: User = Depends(require_roles(RoleCode.STUDENT.value)),
+    ) -> PrivateProgressOut:
+        try:
+            return await _service.get_progress(db, user)
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
 
 
-@router.get("/progress", response_model=PrivateProgressOut)
-async def get_progress(
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_roles(RoleCode.STUDENT.value)),
-) -> PrivateProgressOut:
-    """
-    Compare first and latest check-ins for 30–45 day growth.
-    """
-    try:
-        return await _service.get_progress(db, user)
-    except PermissionError as e:
-        raise HTTPException(status_code=403, detail=str(e))
+_register_routes(router)
+_register_routes(legacy_router)

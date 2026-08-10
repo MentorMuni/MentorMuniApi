@@ -18,6 +18,14 @@ from app.models.private_checkin import (
     PrivateStudentInsight,
     PrivateStudentProgress,
 )
+from app.models.private_intervention import (
+    PrivateStudentFearSolution,
+    PrivateStudentWeeklyProgress,
+    PrivateStudentWeeklyCheckin,
+    PrivateStudentNotification,
+    PrivateStudentMilestone,
+    PrivateStudentInterventionStats,
+)
 from app.models.feature_catalog import FeatureCatalog
 from app.models.organization_feature import OrganizationFeature
 from app.models.platform_user import PlatformUser
@@ -79,6 +87,16 @@ __all__ = [
     "StudentAssessmentResult",
     "StudentGeneratedRoadmap",
     "CompanyIntelligence",
+    "PrivateStudentCheckIn",
+    "PrivateStudentResponse",
+    "PrivateStudentInsight",
+    "PrivateStudentProgress",
+    "PrivateStudentFearSolution",
+    "PrivateStudentWeeklyProgress",
+    "PrivateStudentWeeklyCheckin",
+    "PrivateStudentNotification",
+    "PrivateStudentMilestone",
+    "PrivateStudentInterventionStats",
     "CodingLanguage",
     "CodingProblem",
     "CodingProblemVersion",
