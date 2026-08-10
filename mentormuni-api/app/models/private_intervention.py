@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import JSON, DateTime, Float, Integer, String, Text, Boolean
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.common.database.base import Base
+from app.know_my_fear.timeutil import utc_now
 
 
 class PrivateStudentFearSolution(Base):
@@ -45,13 +46,13 @@ class PrivateStudentFearSolution(Base):
     resources: Mapped[list] = mapped_column(JSON, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
+        DateTime, nullable=False, default=utc_now
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=utc_now,
+        onupdate=utc_now,
     )
 
 
@@ -93,7 +94,7 @@ class PrivateStudentWeeklyProgress(Base):
     next_week_commitment: Mapped[str] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
+        DateTime, nullable=False, default=utc_now
     )
 
 
@@ -124,7 +125,7 @@ class PrivateStudentWeeklyCheckin(Base):
     next_week_commitment: Mapped[str] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
+        DateTime, nullable=False, default=utc_now
     )
 
 
@@ -164,7 +165,7 @@ class PrivateStudentNotification(Base):
     cta_text: Mapped[str] = mapped_column(String(64), nullable=False)  # "View Plan", etc.
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
+        DateTime, nullable=False, default=utc_now
     )
 
 
@@ -199,7 +200,7 @@ class PrivateStudentMilestone(Base):
     extra_data: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
     achieved_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
+        DateTime, nullable=False, default=utc_now
     )
 
 
@@ -240,6 +241,6 @@ class PrivateStudentInterventionStats(Base):
     final_celebration: Mapped[str] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
+        DateTime, nullable=False, default=utc_now
     )
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

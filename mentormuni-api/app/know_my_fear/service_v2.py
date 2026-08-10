@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Optional
 
 from openai import AsyncOpenAI
@@ -22,6 +22,7 @@ from app.know_my_fear.schemas_v2 import (
     PrivateInsightOut,
     PrivateProgressOut,
 )
+from app.know_my_fear.timeutil import utc_now
 from app.models.enums import RoleCode
 from app.models.private_checkin import (
     PrivateStudentCheckIn,
@@ -160,7 +161,7 @@ class PrivateKnowMeService:
                 full_insight_json=payload.model_dump(),
             )
             db.add(insight)
-            checkin.completed_at = datetime.now(timezone.utc)
+            checkin.completed_at = utc_now()
             await db.flush()
             
             return payload

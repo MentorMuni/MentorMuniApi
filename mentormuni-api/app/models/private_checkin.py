@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import ForeignKey, Integer, String, Text, DateTime, JSON, Boolean, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.common.database.base import Base
+from app.know_my_fear.timeutil import utc_now
 
 if TYPE_CHECKING:
     from app.models.user import User
@@ -30,9 +31,9 @@ class PrivateStudentCheckIn(Base):
         ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
     )
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+        DateTime, default=utc_now, onupdate=utc_now
     )
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
@@ -62,7 +63,7 @@ class PrivateStudentResponse(Base):
     response_type: Mapped[str] = mapped_column(String(32), nullable=False)
     response_value: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     checkin: Mapped[PrivateStudentCheckIn] = relationship(
         "PrivateStudentCheckIn", back_populates="responses"
@@ -95,7 +96,7 @@ class PrivateStudentInsight(Base):
     action_plan: Mapped[list[dict]] = mapped_column(JSON, default=list)
     full_insight_json: Mapped[dict] = mapped_column(JSON, default=dict)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     checkin: Mapped[PrivateStudentCheckIn] = relationship(
         "PrivateStudentCheckIn", back_populates="insights"
@@ -123,4 +124,4 @@ class PrivateStudentProgress(Base):
     value_before: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     value_after: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)

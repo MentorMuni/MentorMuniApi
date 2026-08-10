@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from openai import AsyncOpenAI
@@ -24,6 +24,7 @@ from app.know_my_fear.fear_to_widget_mapping import (
     get_widget_for_fear,
     build_fear_widget_context,
 )
+from app.know_my_fear.timeutil import utc_now
 from app.models.private_intervention import (
     PrivateStudentFearSolution,
     PrivateStudentWeeklyProgress,
@@ -337,7 +338,7 @@ class InterventionService:
             logger.info(f"Notifications already scheduled for checkin {checkin_id}")
             return
         
-        start_date = datetime.now(timezone.utc)
+        start_date = utc_now()
         
         for notif in notifications:
             scheduled_date = start_date + timedelta(days=notif["days"])
@@ -902,7 +903,7 @@ class InterventionService:
             )
         ).scalar_one_or_none()
 
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         payload = dict(
             total_fears=stats["total_fears"],
             fears_conquered=stats["fears_conquered"],
@@ -945,7 +946,7 @@ class InterventionService:
 
     async def dispatch_due_notifications(self, db: AsyncSession) -> int:
         """Mark due private notifications as sent. Returns count dispatched."""
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         due = list(
             (
                 await db.execute(
@@ -1004,7 +1005,7 @@ class InterventionService:
         if not n or n.student_id != student_id:
             raise PermissionError("Notification not found.")
         n.clicked = True
-        n.clicked_at = datetime.now(timezone.utc)
+        n.clicked_at = utc_now()
         await db.flush()
         return {"id": n.id, "clicked": True}
 
