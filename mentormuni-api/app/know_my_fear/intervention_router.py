@@ -59,6 +59,13 @@ class WeeklyProgressRequest(BaseModel):
     next_week_commitment: Optional[str] = None
 
 
+class PlanActionCompleteRequest(BaseModel):
+    fear_id: str = ""
+    tool_code: str = Field(..., min_length=1, max_length=64)
+    action_key: Optional[str] = None
+    source: str = "tool"
+
+
 def _register_routes(r: APIRouter) -> None:
     @r.post("/generate-solutions")
     async def generate_fear_solutions(
@@ -131,6 +138,33 @@ def _register_routes(r: APIRouter) -> None:
         except Exception as e:
             logger.error("Failed to save weekly progress: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail=f"Failed to save progress: {e}")
+
+    @r.post("/plan-actions/{checkin_id}/complete")
+    async def complete_plan_action(
+        checkin_id: int,
+        req: PlanActionCompleteRequest,
+        db: AsyncSession = Depends(get_db),
+        user: User = Depends(require_roles(RoleCode.STUDENT.value)),
+    ) -> dict:
+        try:
+            result = await _service.apply_tool_completion(
+                db=db,
+                student_id=user.id,
+                checkin_id=checkin_id,
+                fear_id=(req.fear_id or "").strip(),
+                tool_code=req.tool_code,
+                action_key=req.action_key,
+                source=req.source or "tool",
+            )
+            await db.commit()
+            return result
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            logger.error("Failed to record plan action: %s", e, exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Failed to record plan action: {e}")
 
     @r.get("/intervention-status/{checkin_id}")
     async def get_intervention_status(

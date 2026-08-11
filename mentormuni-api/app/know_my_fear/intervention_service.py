@@ -20,17 +20,25 @@ from app.know_my_fear.intervention_prompt import (
     build_weekly_feedback_prompt,
     build_final_celebration_prompt,
 )
+from app.know_my_fear.constants import (
+    PLAN_LOCK_DAYS,
+    SCOREABLE_TOOLS,
+    is_scoreable_tool,
+    normalize_tool_code,
+)
 from app.know_my_fear.fear_to_widget_mapping import (
     get_widget_for_fear,
     build_fear_widget_context,
 )
 from app.know_my_fear.timeutil import utc_now
+from app.models.private_checkin import PrivateStudentResponse
 from app.models.private_intervention import (
     PrivateStudentFearSolution,
     PrivateStudentWeeklyProgress,
     PrivateStudentNotification,
     PrivateStudentMilestone,
     PrivateStudentInterventionStats,
+    PrivateStudentPlanAction,
 )
 from app.models.user import User
 
@@ -124,12 +132,14 @@ class InterventionService:
                 solution_data = json.loads(solution_text)
                 
                 # Store in database
+                initial = int(fear["severity"])
                 solution = PrivateStudentFearSolution(
                     checkin_id=checkin_id,
                     student_id=student.id,
                     fear_id=fear.get("id", fear["name"].lower().replace(" ", "_")),
                     fear_name=fear["name"],
-                    fear_severity=fear["severity"],
+                    fear_severity=initial,
+                    current_severity=initial,
                     solution_plan=solution_data,
                     weekly_actions=extract_weekly_actions(solution_data),
                     resources=solution_data.get("resources", []),
@@ -150,12 +160,14 @@ class InterventionService:
                 logger.error(f"Failed to generate solution for {fear['name']}: {e}")
                 # Persist heuristic solution so status/weekly tracking still work
                 heuristic = await self._heuristic_solution(fear)
+                initial = int(fear["severity"])
                 solution = PrivateStudentFearSolution(
                     checkin_id=checkin_id,
                     student_id=student.id,
                     fear_id=fear.get("id", fear["name"].lower().replace(" ", "_")),
                     fear_name=fear["name"],
-                    fear_severity=fear["severity"],
+                    fear_severity=initial,
+                    current_severity=initial,
                     solution_plan=heuristic["solution_data"],
                     weekly_actions=extract_weekly_actions(heuristic["solution_data"]),
                     resources=heuristic["solution_data"].get("resources", []),
@@ -235,11 +247,13 @@ class InterventionService:
         ai_feedback: dict,
         challenges: Optional[str] = None,
         commitment: Optional[str] = None,
+        checkin_id: Optional[int] = None,
     ) -> None:
         """Save weekly progress to database."""
         
         progress = PrivateStudentWeeklyProgress(
             student_id=student_id,
+            checkin_id=checkin_id,
             fear_id=fear_id,
             week_number=week_num,
             actions_completed=actions_completed,
@@ -451,24 +465,80 @@ class InterventionService:
 
     # Heuristic fallbacks
     async def _heuristic_solution(self, fear: dict) -> dict:
-        """Fallback heuristic solution if OpenAI fails."""
-        
+        """Fallback plan if OpenAI fails — still student-actionable."""
+
         fear_name = fear.get("name", "Unknown")
-        
-        base_plan = {
-            "week1": {"theme": "Foundation", "day1": "Start with basics"},
-            "week2": {"theme": "Build", "day1": "Increase difficulty"},
-            "week3": {"theme": "Progress", "day1": "Refine approach"},
-            "week4": {"theme": "Strengthen", "day1": "Practice harder"},
-            "week5": {"theme": "Master", "day1": "Near mastery"},
-            "week6": {"theme": "Confidence", "day1": "Ready for interviews"},
-            "resources": ["Practice guide", "Video tutorials", "Mentor support"],
-        }
-        
+        key = str(fear_name).lower()
+
+        if any(w in key for w in ("cod", "dsa", "leetcode")):
+            week1 = {
+                "theme": "Make coding feel smaller",
+                "introduction": "One honest problem a day beats binge-watching solutions.",
+                "weekly_metric": "You can explain one problem you solved yourself",
+                "day1": {"action": "Try 1 easy Coding Round problem without opening a solution first.", "tool": "coding", "metric": "You attempted it yourself"},
+                "day2": {"action": "Re-solve yesterday’s problem out loud.", "tool": "coding", "metric": "60-second approach"},
+                "day3": {"action": "15-minute Practice drill on the topic that blocked you.", "tool": "practice", "metric": "One concept clearer"},
+                "day4": {"action": "Write 4 lines: problem, approach, bug, next step.", "tool": "home", "metric": "A note you can reuse"},
+                "day5": {"action": "Ask AI Mentor to grill you on that same problem.", "tool": "mentor", "metric": "You survive a follow-up"},
+            }
+        elif any(w in key for w in ("project", "explain")):
+            week1 = {
+                "theme": "Own your project story",
+                "introduction": "They want one decision you owned — not a demo dump.",
+                "weekly_metric": "A 90-second project story without notes",
+                "day1": {"action": "Write problem → what you built → one hard decision → result.", "tool": "home", "metric": "Story fits one page"},
+                "day2": {"action": "Run a Project mock and tell only that story.", "tool": "project_mock", "metric": "Under 2 minutes"},
+                "day3": {"action": "Answer “why this approach?” with AI Mentor.", "tool": "mentor", "metric": "You have a real why"},
+                "day4": {"action": "Record once, cut filler, do a shorter take.", "tool": "project_mock", "metric": "Second take is cleaner"},
+                "day5": {"action": "Map the story to one company role.", "tool": "company_prep", "metric": "One company-specific sentence"},
+            }
+        elif any(w in key for w in ("english", "speak", "hr", "introduc", "communicat")):
+            week1 = {
+                "theme": "Warm up your voice",
+                "introduction": "Speaking fear shrinks when the first 30 seconds feel familiar.",
+                "weekly_metric": "A calm 30-second introduction",
+                "day1": {"action": "Write a 4-line intro and say it without reading.", "tool": "home", "metric": "No script in hand"},
+                "day2": {"action": "One AI HR mock — introduction only.", "tool": "hr_mock", "metric": "You finish without freezing"},
+                "day3": {"action": "Repeat slower. Cut one filler word.", "tool": "hr_mock", "metric": "Fewer ums"},
+                "day4": {"action": "AI Mentor asks “Tell me about yourself.” Answer again.", "tool": "mentor", "metric": "You recover if interrupted"},
+                "day5": {"action": "Say the intro once as if a human is listening.", "tool": "home", "metric": "You did it"},
+            }
+        elif any(w in key for w in ("solution", "copy", "own")):
+            week1 = {
+                "theme": "Solve one thing yourself",
+                "introduction": "One self-solved problem rebuilds trust in you.",
+                "weekly_metric": "One problem you can teach without notes",
+                "day1": {"action": "Hide solutions. Stay with one easy problem for 20 minutes.", "tool": "coding", "metric": "You stayed with it"},
+                "day2": {"action": "Write the approach in plain English before code.", "tool": "home", "metric": "A 5-line plan"},
+                "day3": {"action": "Code only from that plan.", "tool": "coding", "metric": "You know where you needed help"},
+                "day4": {"action": "Teach the solution to AI Mentor.", "tool": "mentor", "metric": "They can follow you"},
+                "day5": {"action": "Re-solve from scratch. No notes for 5 minutes.", "tool": "coding", "metric": "You remember the shape"},
+            }
+        else:
+            week1 = {
+                "theme": "One small proof you can move",
+                "introduction": "Fear shrinks when you finish one visible thing.",
+                "weekly_metric": "Three finished sessions you can point to",
+                "day1": {"action": "Do the next 20-minute Home session. Stop when the timer ends.", "tool": "home", "metric": "You showed up"},
+                "day2": {"action": "Tell AI Mentor what felt heavy. Ask for one drill only.", "tool": "mentor", "metric": "You named it"},
+                "day3": {"action": "Do that one Practice drill. No second topic.", "tool": "practice", "metric": "You finished it"},
+                "day4": {"action": "Write 3 lines: what you did, what was hard, what you’ll repeat.", "tool": "home", "metric": "A note exists"},
+                "day5": {"action": "Repeat the same drill. Familiar is the point.", "tool": "practice", "metric": "It feels slightly less scary"},
+            }
+
         return {
             "solution_id": None,
             "fear_name": fear_name,
-            "solution_data": base_plan,
+            "solution_data": {
+                "empathy_section": {
+                    "what_i_hear": f"“{fear_name}” is a real placement weight — not a character flaw.",
+                    "reframe": "We shrink it with one finished action at a time, not a 6-week fantasy.",
+                    "reassurance": "You do not need to feel ready. You need a first proof.",
+                },
+                "action_plan_section": {"week1": week1},
+                "week1": week1,
+                "resources": [],
+            },
         }
 
     def _heuristic_feedback(self, week_num: int, severity_after: int) -> dict:
@@ -514,8 +584,40 @@ class InterventionService:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def fears_from_blockers(blockers: list) -> list[dict]:
+    def compute_initial_fear_factor(responses: Optional[dict] = None) -> int:
+        """0–10 starting fear factor from the check-in answers (never below 5)."""
+        data = responses or {}
+        score = 6
+        pressure = list((data.get("placement_pressure") or {}).get("selected_ids") or [])
+        comm = list((data.get("communication_fear") or {}).get("selected_ids") or [])
+        tech = ((data.get("technical_confidence") or {}).get("selected_ids") or [None])[0]
+        proj = ((data.get("project_confidence") or {}).get("selected_ids") or [None])[0]
+        compare = ((data.get("friend_comparison") or {}).get("selected_ids") or [None])[0]
+        if "fear_not_placed" in pressure:
+            score += 2
+        elif len(pressure) >= 3:
+            score += 1
+        if len(comm) >= 3:
+            score += 1
+        if tech in ("dont_know", "unprepared", "follow_solutions"):
+            score += 1
+        if proj in ("followed_tutorials", "know_not_depth", "afraid_questions"):
+            score += 1
+        if compare in ("falling_behind", "feel_anxious", "start_comparing"):
+            score += 1
+        return max(5, min(10, score))
+
+    @staticmethod
+    def fears_from_blockers(
+        blockers: list,
+        initial_severity: Optional[int] = None,
+    ) -> list[dict]:
         """Map insight blockers → fear list for solution generation."""
+        base = (
+            max(5, min(10, int(initial_severity)))
+            if initial_severity is not None
+            else None
+        )
         fears: list[dict] = []
         for i, blocker in enumerate(blockers[:3]):
             if isinstance(blocker, dict):
@@ -530,15 +632,17 @@ class InterventionService:
                 .replace("-", " ")
             )
             fear_id = "_".join(p for p in fear_id.split() if p)[:120] or f"fear_{i + 1}"
-            # Highest severity for first blocker
-            severity = max(5, min(10, 10 - i))
+            if base is not None:
+                severity = max(5, min(10, base - i))
+            else:
+                severity = max(5, min(10, 10 - i))
             fears.append({"id": fear_id, "name": title, "severity": severity})
         if not fears:
             fears.append(
                 {
                     "id": "placement_confidence",
                     "name": "Placement confidence",
-                    "severity": 8,
+                    "severity": base if base is not None else 8,
                 }
             )
         return fears
@@ -549,6 +653,7 @@ class InterventionService:
         student: User,
         checkin_id: int,
         blockers: list,
+        responses: Optional[dict] = None,
     ) -> list[dict]:
         """Generate solutions once per check-in (idempotent)."""
         existing = await db.execute(
@@ -568,7 +673,26 @@ class InterventionService:
                 for r in rows
             ]
 
-        fears = self.fears_from_blockers(blockers)
+        answer_map = dict(responses or {})
+        if not any(
+            k in answer_map
+            for k in ("placement_pressure", "technical_confidence", "communication_fear")
+        ):
+            rows = list(
+                (
+                    await db.execute(
+                        select(PrivateStudentResponse).where(
+                            PrivateStudentResponse.checkin_id == checkin_id
+                        )
+                    )
+                ).scalars().all()
+            )
+            answer_map = {}
+            for row in rows:
+                if isinstance(row.response_value, dict):
+                    answer_map[row.question_key] = row.response_value
+        initial = self.compute_initial_fear_factor(answer_map)
+        fears = self.fears_from_blockers(blockers, initial_severity=initial)
         solutions = await self.generate_fear_solutions(db, checkin_id, student, fears)
         await self.schedule_6_week_notifications(db, student.id, checkin_id)
         return solutions
@@ -593,16 +717,19 @@ class InterventionService:
         sol_q = sol_q.order_by(PrivateStudentFearSolution.id.desc()).limit(1)
         sol = (await db.execute(sol_q)).scalar_one_or_none()
         initial = int(sol.fear_severity) if sol else 8
+        if sol is not None and sol.current_severity is not None:
+            return int(sol.current_severity), initial
 
-        prog_q = (
-            select(PrivateStudentWeeklyProgress)
-            .where(
-                PrivateStudentWeeklyProgress.student_id == student_id,
-                PrivateStudentWeeklyProgress.fear_id == fear_id,
-            )
-            .order_by(PrivateStudentWeeklyProgress.week_number.desc())
-            .limit(1)
+        prog_q = select(PrivateStudentWeeklyProgress).where(
+            PrivateStudentWeeklyProgress.student_id == student_id,
+            PrivateStudentWeeklyProgress.fear_id == fear_id,
         )
+        if checkin_id is not None:
+            prog_q = prog_q.where(
+                (PrivateStudentWeeklyProgress.checkin_id == checkin_id)
+                | (PrivateStudentWeeklyProgress.checkin_id.is_(None))
+            )
+        prog_q = prog_q.order_by(PrivateStudentWeeklyProgress.week_number.desc()).limit(1)
         latest = (await db.execute(prog_q)).scalar_one_or_none()
         if latest is not None:
             return int(latest.severity_after), initial
@@ -655,15 +782,17 @@ class InterventionService:
             db, student_id, fear_id, checkin_id=checkin_id
         )
         # If student already logged this week, use that week's before
-        existing_week = (
-            await db.execute(
-                select(PrivateStudentWeeklyProgress).where(
-                    PrivateStudentWeeklyProgress.student_id == student_id,
-                    PrivateStudentWeeklyProgress.fear_id == fear_id,
-                    PrivateStudentWeeklyProgress.week_number == week_number,
-                )
+        existing_week_q = select(PrivateStudentWeeklyProgress).where(
+            PrivateStudentWeeklyProgress.student_id == student_id,
+            PrivateStudentWeeklyProgress.fear_id == fear_id,
+            PrivateStudentWeeklyProgress.week_number == week_number,
+        )
+        if checkin_id is not None:
+            existing_week_q = existing_week_q.where(
+                (PrivateStudentWeeklyProgress.checkin_id == checkin_id)
+                | (PrivateStudentWeeklyProgress.checkin_id.is_(None))
             )
-        ).scalar_one_or_none()
+        existing_week = (await db.execute(existing_week_q)).scalar_one_or_none()
         if existing_week:
             severity_before = int(existing_week.severity_before)
 
@@ -693,6 +822,8 @@ class InterventionService:
             existing_week.severity_after = severity_after
             existing_week.challenges = challenges
             existing_week.next_week_commitment = commitment
+            if checkin_id is not None:
+                existing_week.checkin_id = checkin_id
             await db.flush()
             await self._check_and_create_milestones(
                 db, student_id, fear_id, week_number, severity_after
@@ -711,15 +842,21 @@ class InterventionService:
                 ai_feedback=feedback,
                 challenges=challenges,
                 commitment=commitment,
+                checkin_id=checkin_id,
             )
+
+        # Honesty can lower the live score further, never raise it after tools.
+        live = int(sol.current_severity) if sol.current_severity is not None else severity_before
+        sol.current_severity = min(live, severity_after)
+        await db.flush()
 
         return {
             "week": week_number,
             "fear_id": fear_id,
             "feedback": feedback,
             "severity_before": severity_before,
-            "severity_after": severity_after,
-            "milestone_reached": severity_after == 0,
+            "severity_after": int(sol.current_severity),
+            "milestone_reached": int(sol.current_severity) == 0,
         }
 
     async def get_intervention_status(
@@ -746,6 +883,9 @@ class InterventionService:
                 "status": "awaiting_solutions",
                 "week_current": 0,
                 "weeks_remaining": 6,
+                "fear_factor": None,
+                "fear_factor_initial": None,
+                "lock_days": PLAN_LOCK_DAYS,
                 "fears": [],
                 "overall_progress_percent": 0,
                 "milestones_achieved": 0,
@@ -757,21 +897,42 @@ class InterventionService:
         total_reduction = 0
         total_initial = 0
 
+        actions = list(
+            (
+                await db.execute(
+                    select(PrivateStudentPlanAction).where(
+                        PrivateStudentPlanAction.student_id == student_id,
+                        PrivateStudentPlanAction.checkin_id == checkin_id,
+                    )
+                )
+            ).scalars().all()
+        )
+        done_by_fear: dict[str, list[str]] = {}
+        for act in actions:
+            done_by_fear.setdefault(act.fear_id, []).append(act.tool_code)
+
         for sol in sols:
+            latest_q = select(PrivateStudentWeeklyProgress).where(
+                PrivateStudentWeeklyProgress.student_id == student_id,
+                PrivateStudentWeeklyProgress.fear_id == sol.fear_id,
+            )
+            latest_q = latest_q.where(
+                (PrivateStudentWeeklyProgress.checkin_id == checkin_id)
+                | (PrivateStudentWeeklyProgress.checkin_id.is_(None))
+            )
             latest = (
                 await db.execute(
-                    select(PrivateStudentWeeklyProgress)
-                    .where(
-                        PrivateStudentWeeklyProgress.student_id == student_id,
-                        PrivateStudentWeeklyProgress.fear_id == sol.fear_id,
-                    )
-                    .order_by(PrivateStudentWeeklyProgress.week_number.desc())
-                    .limit(1)
+                    latest_q.order_by(PrivateStudentWeeklyProgress.week_number.desc()).limit(1)
                 )
             ).scalar_one_or_none()
 
             initial = int(sol.fear_severity)
-            current = int(latest.severity_after) if latest else initial
+            if sol.current_severity is not None:
+                current = int(sol.current_severity)
+            elif latest is not None:
+                current = int(latest.severity_after)
+            else:
+                current = initial
             week_num = int(latest.week_number) if latest else 0
             max_week = max(max_week, week_num)
             total_initial += initial
@@ -779,6 +940,11 @@ class InterventionService:
             progress_pct = 0
             if initial > 0:
                 progress_pct = int(round(100 * (initial - current) / initial))
+
+            suggested = list_suggested_tools(sol.solution_plan, sol.fear_name)
+            completed_tools = [
+                t for t in (done_by_fear.get(sol.fear_id) or []) if t in suggested or is_scoreable_tool(t)
+            ]
 
             fears_out.append(
                 {
@@ -789,6 +955,10 @@ class InterventionService:
                     "week_number": week_num,
                     "progress_percent": max(0, min(100, progress_pct)),
                     "solution_id": sol.id,
+                    "suggested_tools": suggested,
+                    "completed_tools": completed_tools,
+                    "actions_done": len(set(completed_tools)),
+                    "actions_total": len(suggested) or 1,
                 }
             )
 
@@ -806,7 +976,14 @@ class InterventionService:
             overall = int(round(100 * total_reduction / total_initial))
 
         all_zero = all(f["severity_current"] == 0 for f in fears_out)
-        status = "completed" if all_zero else ("in_progress" if max_week > 0 else "ready")
+        any_action = any(f["actions_done"] > 0 for f in fears_out)
+        status = (
+            "completed"
+            if all_zero
+            else ("in_progress" if max_week > 0 or any_action else "ready")
+        )
+        fear_factor = max((f["severity_current"] for f in fears_out), default=0)
+        fear_factor_initial = max((f["severity_initial"] for f in fears_out), default=0)
 
         return {
             "checkin_id": checkin_id,
@@ -814,6 +991,9 @@ class InterventionService:
             "status": status,
             "week_current": max_week,
             "weeks_remaining": max(0, 6 - max_week),
+            "fear_factor": fear_factor,
+            "fear_factor_initial": fear_factor_initial,
+            "lock_days": PLAN_LOCK_DAYS,
             "fears": fears_out,
             "overall_progress_percent": max(0, min(100, overall)),
             "milestones_achieved": len(list(milestones)),
@@ -1008,6 +1188,195 @@ class InterventionService:
         n.clicked_at = utc_now()
         await db.flush()
         return {"id": n.id, "clicked": True}
+
+    async def apply_tool_completion(
+        self,
+        db: AsyncSession,
+        student_id: int,
+        checkin_id: int,
+        fear_id: str,
+        tool_code: str,
+        *,
+        action_key: Optional[str] = None,
+        source: str = "tool",
+    ) -> dict:
+        """Record a suggested mock/test and lower the fear factor toward 0."""
+        sol = (
+            await db.execute(
+                select(PrivateStudentFearSolution).where(
+                    PrivateStudentFearSolution.student_id == student_id,
+                    PrivateStudentFearSolution.checkin_id == checkin_id,
+                    PrivateStudentFearSolution.fear_id == fear_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if not sol:
+            # If the client omitted fear_id, apply to the heaviest remaining fear
+            # that lists this tool — or the first fear on the check-in.
+            sols = list(
+                (
+                    await db.execute(
+                        select(PrivateStudentFearSolution).where(
+                            PrivateStudentFearSolution.student_id == student_id,
+                            PrivateStudentFearSolution.checkin_id == checkin_id,
+                        )
+                    )
+                ).scalars().all()
+            )
+            if not sols:
+                raise PermissionError("Fear plan not found for this check-in.")
+            code = normalize_tool_code(tool_code)
+            match = None
+            for row in sols:
+                suggested = list_suggested_tools(row.solution_plan, row.fear_name)
+                if code in suggested:
+                    match = row
+                    break
+            sol = match or max(
+                sols,
+                key=lambda r: int(
+                    r.current_severity if r.current_severity is not None else r.fear_severity
+                ),
+            )
+            fear_id = sol.fear_id
+
+        code = normalize_tool_code(tool_code)
+        if not code:
+            raise ValueError("Missing tool code.")
+        if not is_scoreable_tool(code):
+            # Still record soft actions (mentor / practice / home) but they
+            # only count if they appear on the suggested list.
+            pass
+
+        suggested = list_suggested_tools(sol.solution_plan, sol.fear_name)
+        counts_for_score = code in suggested or is_scoreable_tool(code)
+
+        existing = (
+            await db.execute(
+                select(PrivateStudentPlanAction).where(
+                    PrivateStudentPlanAction.checkin_id == checkin_id,
+                    PrivateStudentPlanAction.fear_id == sol.fear_id,
+                    PrivateStudentPlanAction.tool_code == code,
+                )
+            )
+        ).scalar_one_or_none()
+
+        already = existing is not None
+        if not existing:
+            db.add(
+                PrivateStudentPlanAction(
+                    checkin_id=checkin_id,
+                    student_id=student_id,
+                    fear_id=sol.fear_id,
+                    tool_code=code,
+                    action_key=(action_key or "")[:64] or None,
+                    source=(source or "tool")[:32],
+                    completed_at=utc_now(),
+                )
+            )
+            await db.flush()
+
+        done_rows = list(
+            (
+                await db.execute(
+                    select(PrivateStudentPlanAction).where(
+                        PrivateStudentPlanAction.checkin_id == checkin_id,
+                        PrivateStudentPlanAction.fear_id == sol.fear_id,
+                    )
+                )
+            ).scalars().all()
+        )
+        done_codes = {r.tool_code for r in done_rows}
+        done_for_score = [t for t in suggested if t in done_codes]
+        if not suggested:
+            done_for_score = [t for t in done_codes if is_scoreable_tool(t)]
+            suggested = list(SCOREABLE_TOOLS)[:4]
+
+        initial = int(sol.fear_severity)
+        before = (
+            int(sol.current_severity)
+            if sol.current_severity is not None
+            else initial
+        )
+        after = severity_from_tool_progress(initial, len(done_for_score), len(suggested))
+        if counts_for_score:
+            sol.current_severity = after
+        else:
+            after = before
+        await db.flush()
+
+        if after == 0 and before > 0:
+            days = max(1, (utc_now() - (sol.created_at or utc_now())).days)
+            week_num = min(6, max(1, (days // 7) + 1))
+            await self._check_and_create_milestones(
+                db, student_id, sol.fear_id, week_num, after
+            )
+
+        status = await self.get_intervention_status(db, student_id, checkin_id)
+        return {
+            "already_recorded": already,
+            "fear_id": sol.fear_id,
+            "tool_code": code,
+            "severity_before": before,
+            "severity_after": after,
+            "fear_factor": status.get("fear_factor"),
+            "fear_factor_initial": status.get("fear_factor_initial"),
+            "actions_done": len(done_for_score),
+            "actions_total": len(suggested) or 1,
+            "suggested_tools": suggested,
+            "completed_tools": sorted(done_codes),
+            "intervention": status,
+        }
+
+
+def default_suggested_tools(fear_name: str) -> list[str]:
+    """Scoreable mocks that match this fear when the stored plan has none."""
+    key = str(fear_name or "").lower()
+    if any(w in key for w in ("aptitude", "quant", "lr", "reasoning")):
+        return ["aptitude", "skill_readiness"]
+    if any(w in key for w in ("english", "speak", "hr", "introduc", "communicat")):
+        return ["hr_mock", "interview_mock"]
+    if any(w in key for w in ("project", "explain")):
+        return ["project_mock", "interview_mock"]
+    if any(w in key for w in ("cod", "dsa", "leetcode", "solution", "copy")):
+        return ["coding", "skill_mock"]
+    if any(w in key for w in ("skill", "technical", "foundation")):
+        return ["skill_readiness", "skill_mock", "interview_mock"]
+    return ["skill_readiness", "aptitude", "interview_mock", "hr_mock"]
+
+
+def list_suggested_tools(solution_plan: Optional[dict], fear_name: str = "") -> list[str]:
+    """Unique scoreable tools mentioned in the 6-week plan."""
+    found: list[str] = []
+    seen: set[str] = set()
+
+    def _walk(node: Any) -> None:
+        if isinstance(node, dict):
+            for key, val in node.items():
+                if key in ("tool", "tool_code", "widget") and isinstance(val, str):
+                    code = normalize_tool_code(val)
+                    if is_scoreable_tool(code) and code not in seen:
+                        seen.add(code)
+                        found.append(code)
+                else:
+                    _walk(val)
+        elif isinstance(node, list):
+            for item in node:
+                _walk(item)
+
+    _walk(solution_plan or {})
+    if not found:
+        return default_suggested_tools(fear_name)
+    return found
+
+
+def severity_from_tool_progress(initial: int, done: int, total: int) -> int:
+    """Drop the 0–10 score in even steps; all suggested tools done → 0."""
+    start = max(0, min(10, int(initial)))
+    if total <= 0:
+        return start
+    done = max(0, min(int(done), int(total)))
+    return max(0, int(round(start * (1 - (done / float(total))))))
 
 
 def extract_weekly_actions(solution_data: dict) -> list:

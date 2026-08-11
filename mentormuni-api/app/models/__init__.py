@@ -25,6 +25,7 @@ from app.models.private_intervention import (
     PrivateStudentNotification,
     PrivateStudentMilestone,
     PrivateStudentInterventionStats,
+    PrivateStudentPlanAction,
 )
 from app.models.feature_catalog import FeatureCatalog
 from app.models.organization_feature import OrganizationFeature
@@ -36,6 +37,8 @@ from app.models.notification import Notification
 from app.models.notification_recipient import NotificationRecipient
 from app.models.workspace_item import WorkspaceItem
 from app.models.upcoming_drive import UpcomingDrive
+from app.models.platform_support import PlatformSupportTicket, PlatformSupportReply
+from app.models.whiteboard import WhiteboardMentorship, WhiteboardNote
 from app.student_roadmap.models import (
     StudentAssessmentResult,
     StudentGeneratedRoadmap,
@@ -82,6 +85,10 @@ __all__ = [
     "NotificationRecipient",
     "WorkspaceItem",
     "UpcomingDrive",
+    "PlatformSupportTicket",
+    "PlatformSupportReply",
+    "WhiteboardNote",
+    "WhiteboardMentorship",
     "StudentRoadmapWeek",
     "StudentRoadmapStep",
     "StudentAssessmentResult",
@@ -97,6 +104,7 @@ __all__ = [
     "PrivateStudentNotification",
     "PrivateStudentMilestone",
     "PrivateStudentInterventionStats",
+    "PrivateStudentPlanAction",
     "CodingLanguage",
     "CodingProblem",
     "CodingProblemVersion",

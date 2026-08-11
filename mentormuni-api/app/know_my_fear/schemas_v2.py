@@ -14,6 +14,9 @@ class PrivateCheckInStartOut(BaseModel):
     checkin_id: int
     questions: list[dict]
     total_steps: int
+    resumed: bool = False
+    step_index: int = 0
+    saved_responses: list[dict] = Field(default_factory=list)
 
 
 class PrivateCheckInStepIn(BaseModel):

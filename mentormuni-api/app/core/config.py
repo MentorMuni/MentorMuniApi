@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     org_performance_insight_model: str = Field(default="gpt-4.1-mini")
     # Student-private fear coach (never org-visible). Override via KNOW_MY_FEAR_MODEL.
     know_my_fear_model: str = Field(default="gpt-4.1")
+    # White Board morning mentorship (one call per student per IST day). Override via WHITEBOARD_MODEL.
+    whiteboard_model: str = Field(default="gpt-4.1")
 
     # --- Coding assessment (Judge0 + worker) ---
     judge0_base_url: str = Field(default="")

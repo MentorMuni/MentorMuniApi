@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import JSON, DateTime, Float, Integer, String, Text, Boolean
+from sqlalchemy import JSON, DateTime, Float, Integer, String, Text, Boolean, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.common.database.base import Base
@@ -26,6 +26,8 @@ class PrivateStudentFearSolution(Base):
     fear_id: Mapped[str] = mapped_column(String(128), nullable=False)
     fear_name: Mapped[str] = mapped_column(String(256), nullable=False)
     fear_severity: Mapped[int] = mapped_column(Integer, nullable=False)  # 1-10
+    # Live 0–10 score. Null on older rows → derive from weekly progress / initial.
+    current_severity: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     # Complete solution plan in JSON
     # {
@@ -66,6 +68,7 @@ class PrivateStudentWeeklyProgress(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     student_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    checkin_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     fear_id: Mapped[str] = mapped_column(String(128), nullable=False)
     week_number: Mapped[int] = mapped_column(Integer, nullable=False)  # 1-6
 
@@ -244,3 +247,32 @@ class PrivateStudentInterventionStats(Base):
         DateTime, nullable=False, default=utc_now
     )
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class PrivateStudentPlanAction(Base):
+    """One completed suggested tool/mock for a Fear → Fearless plan.
+
+    First completion of a tool for a fear on a check-in lowers the fear factor.
+    Retakes are idempotent.
+    """
+
+    __tablename__ = "private_student_plan_actions"
+    __table_args__ = (
+        UniqueConstraint(
+            "checkin_id",
+            "fear_id",
+            "tool_code",
+            name="uq_private_plan_action_checkin_fear_tool",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    checkin_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    student_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    fear_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    tool_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    action_key: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="tool")
+    completed_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=utc_now
+    )

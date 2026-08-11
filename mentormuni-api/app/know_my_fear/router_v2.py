@@ -15,7 +15,7 @@ from app.know_my_fear.schemas_v2 import (
     PrivateInsightOut,
     PrivateProgressOut,
 )
-from app.know_my_fear.service_v2 import PrivateKnowMeService
+from app.know_my_fear.service_v2 import FearToFearlessGateError, PrivateKnowMeService
 from app.models.enums import RoleCode
 from app.models.user import User
 
@@ -48,8 +48,13 @@ def _register_routes(r: APIRouter) -> None:
         logger.info("start_checkin user_id=%s role=%s", user.id, user.role)
         try:
             result = await _service.start_checkin(db, user)
-            logger.info("Check-in started: %s", result.checkin_id)
+            logger.info("Check-in started: %s resumed=%s", result.checkin_id, result.resumed)
             return result
+        except FearToFearlessGateError as e:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": e.code, "message": e.message, **e.payload},
+            )
         except PermissionError as e:
             raise HTTPException(status_code=403, detail=str(e))
         except Exception as e:
@@ -85,13 +90,14 @@ def _register_routes(r: APIRouter) -> None:
                     student=user,
                     checkin_id=checkin_id,
                     blockers=blockers,
+                    responses=insight.model_dump(),
                 )
-                await db.commit()
             except Exception:
                 logger.exception(
                     "Auto solution generation failed for checkin=%s (insight still returned)",
                     checkin_id,
                 )
+            await db.commit()
             return insight
         except PermissionError as e:
             raise HTTPException(status_code=403, detail=str(e))
@@ -103,6 +109,28 @@ def _register_routes(r: APIRouter) -> None:
     ) -> PrivateProgressOut:
         try:
             return await _service.get_progress(db, user)
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+
+    @r.get("/active")
+    async def get_active_journey(
+        checkin_id: int | None = None,
+        db: AsyncSession = Depends(get_db),
+        user: User = Depends(require_roles(RoleCode.STUDENT.value)),
+    ) -> dict:
+        try:
+            return await _service.get_active_journey(db, user, checkin_id=checkin_id)
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+
+    @r.get("/history")
+    async def get_history(
+        db: AsyncSession = Depends(get_db),
+        user: User = Depends(require_roles(RoleCode.STUDENT.value)),
+    ) -> dict:
+        try:
+            active = await _service.get_active_journey(db, user)
+            return {"count": len(active.get("history") or []), "history": active.get("history") or []}
         except PermissionError as e:
             raise HTTPException(status_code=403, detail=str(e))
 

@@ -131,3 +131,22 @@ class NotificationStatus(str, Enum):
 class NotificationRecipientStatus(str, Enum):
     UNREAD = "UNREAD"
     READ = "READ"
+
+
+class SupportTicketStatus(str, Enum):
+    OPEN = "OPEN"
+    WAITING_PLATFORM = "WAITING_PLATFORM"
+    WAITING_REPORTER = "WAITING_REPORTER"
+    CLOSED = "CLOSED"
+
+
+class SupportSourcePortal(str, Enum):
+    STUDENT = "student"
+    ORGANIZATION = "organization"
+
+
+class SupportCategory(str, Enum):
+    NOT_WORKING = "not_working"
+    FEATURE_BROKEN = "feature_broken"
+    FEEDBACK = "feedback"
+    OTHER = "other"
