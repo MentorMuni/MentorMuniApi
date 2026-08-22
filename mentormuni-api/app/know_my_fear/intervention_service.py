@@ -802,19 +802,14 @@ class InterventionService:
         if not sol:
             raise PermissionError("Fear plan not found for this check-in.")
 
-        # Cap self-reported actions to verified plan-action rows (M5).
-        verified_actions = (
-            await db.execute(
-                select(PrivateStudentPlanAction).where(
-                    PrivateStudentPlanAction.student_id == student_id,
-                    PrivateStudentPlanAction.checkin_id == checkin_id,
-                    PrivateStudentPlanAction.fear_id == fear_id,
-                )
-            )
-        ).scalars().all()
-        verified_count = len(list(verified_actions))
-        actions_completed = max(0, min(int(actions_completed), verified_count))
-        actions_total = max(int(actions_total), verified_count, 1)
+        # Cap self-report to planned actions (solution tools), not tool-completion
+        # receipts — those rows are only created after tools run, so using them
+        # as the ceiling zeroes progress before first tool credit.
+        planned = len(list_suggested_tools(sol.solution_plan, sol.fear_name)) or int(
+            actions_total
+        ) or 1
+        actions_total = max(int(actions_total), planned, 1)
+        actions_completed = max(0, min(int(actions_completed), actions_total))
 
         severity_before, _initial = await self.get_current_severity(
             db, student_id, fear_id, checkin_id=checkin_id

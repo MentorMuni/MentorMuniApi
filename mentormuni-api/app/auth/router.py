@@ -183,9 +183,11 @@ async def forgot_password(
         organization_code=body.organization_code,
         portal=body.portal,
     )
+    # Never reveal whether the account exists or mail was delivered.
+    _ = emailed
     return ForgotPasswordResponse(
         message=message,
-        emailed=emailed,
+        emailed=False,
         # Never return reset_url on this public endpoint (account-takeover vector).
         reset_url=None,
     )

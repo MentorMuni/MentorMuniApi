@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     # OpenAI Realtime voice interview (GA). Override via REALTIME_MODEL if needed.
     realtime_model: str = Field(default="gpt-realtime")
     # Ephemeral client_secret TTL for browser WebRTC (10–7200s). Default 10 minutes.
-    realtime_client_secret_ttl_seconds: int = Field(default=600, ge=10, le=7200)
+    realtime_client_secret_ttl_seconds: int = Field(default=1800, ge=10, le=7200)
     # Post-interview structured scoring (chat/completions JSON). Override via env if needed.
     voice_interview_analysis_model: str = Field(default="gpt-4.1")
     # 24/7 personal mentor chat (placement prep). Override via PERSONAL_MENTOR_MODEL.
