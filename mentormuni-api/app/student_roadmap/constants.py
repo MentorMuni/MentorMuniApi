@@ -63,14 +63,14 @@ WEEK1_STEPS: list[dict[str, Any]] = [
         "tool_code": "skill_mock",
         "order": 4,
         "title": "Skill AI mock interview",
-        "minutes": 45,
+        "minutes": 20,
         "href": "/studentportal/tools/skill_mock?from=roadmap",
     },
     {
         "tool_code": "project_mock",
         "order": 5,
         "title": "Project AI mock interview",
-        "minutes": 45,
+        "minutes": 20,
         "href": "/studentportal/tools/project_mock?from=roadmap",
     },
     {
@@ -84,14 +84,14 @@ WEEK1_STEPS: list[dict[str, Any]] = [
         "tool_code": "interview_mock",
         "order": 7,
         "title": "Interview AI mock",
-        "minutes": 45,
+        "minutes": 20,
         "href": "/studentportal/tools/interview_mock?from=roadmap",
     },
     {
         "tool_code": "hr_mock",
         "order": 8,
         "title": "HR AI mock interview",
-        "minutes": 30,
+        "minutes": 20,
         "href": "/studentportal/tools/hr_mock?from=roadmap",
     },
 ]

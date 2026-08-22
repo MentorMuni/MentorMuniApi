@@ -50,7 +50,8 @@ async def get_current_user(
 
     raw = credentials.credentials or ""
 
-    # Local frontend demo/local sessions use fake JWTs — map to a real STUDENT in dev only.
+    # Local frontend demo/local sessions use fake JWTs — only when
+    # ENABLE_DEMO_STUDENT_AUTH=true and APP_ENV is development-like.
     if is_dev_demo_bearer(raw):
         demo = await resolve_dev_demo_student(db)
         if demo is None:

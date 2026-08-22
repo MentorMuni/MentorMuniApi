@@ -65,6 +65,11 @@ class Settings(BaseSettings):
     # Railway injects this. Locally set in .env.
     # Accepted forms: postgresql://... or postgres://... (we normalize for asyncpg).
     database_url: str = Field(default="")
+    # Concurrent campus traffic (500–1000 students): raise via env on Railway.
+    # Default ~15 connections (5+10) is too small for simultaneous portal + mocks.
+    db_pool_size: int = Field(default=20, ge=5, le=100)
+    db_max_overflow: int = Field(default=40, ge=0, le=200)
+    db_pool_timeout_seconds: int = Field(default=30, ge=5, le=120)
 
     # --- Phase 1: Platform API key (frontend ↔ backend) ---
     # Long random secret. Frontend sends it on every request via X-API-Key.
@@ -72,10 +77,14 @@ class Settings(BaseSettings):
     api_key: str = Field(default="")
 
     # --- Phase 1: JWT for logged-in users (Authorization: Bearer <token>) ---
-    # If empty, falls back to API_KEY (fine for early Phase 1; set separately in prod).
+    # REQUIRED and must differ from API_KEY (API_KEY is embedded in the frontend).
     jwt_secret: str = Field(default="")
     jwt_algorithm: str = Field(default="HS256")
     jwt_expire_minutes: int = Field(default=60 * 24, ge=5)  # 24h default
+
+    # Dev-only: map Bearer demo.student.* / local.student.* to a real STUDENT.
+    # Fail closed — must be explicitly enabled; APP_ENV alone is not enough.
+    enable_demo_student_auth: bool = Field(default=False)
 
     # --- Email ---
     # Production on Railway: use Resend (HTTPS). Gmail SMTP times out from Railway.
@@ -163,12 +172,26 @@ class Settings(BaseSettings):
 
     @property
     def effective_jwt_secret(self) -> str:
-        secret = self.jwt_secret or self.api_key
+        secret = (self.jwt_secret or "").strip()
         if not secret:
             raise RuntimeError(
-                "JWT_SECRET (or API_KEY) must be set to issue login tokens."
+                "JWT_SECRET must be set to issue login tokens. "
+                "Do not reuse API_KEY — that value is shipped to browsers."
+            )
+        api = (self.api_key or "").strip()
+        if api and secret == api:
+            raise RuntimeError(
+                "JWT_SECRET must not equal API_KEY. Use a separate secret "
+                "(API_KEY is embedded in the frontend)."
             )
         return secret
+
+    @property
+    def demo_student_auth_allowed(self) -> bool:
+        """True only when explicitly enabled and env is development-like."""
+        if not self.enable_demo_student_auth:
+            return False
+        return (self.app_env or "").lower() in {"development", "dev", "local", "test"}
 
 
 @lru_cache

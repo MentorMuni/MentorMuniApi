@@ -14,7 +14,7 @@ POST /auth/activate-student
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import service as auth_service
@@ -31,6 +31,7 @@ from app.auth.schemas import (
     TokenResponse,
 )
 from app.common.deps import get_current_active_user, get_db, require_api_key
+from app.common.rate_limit import limiter
 from app.common.security.auth_errors import auth_detail
 from app.common.security.jwt import create_access_token
 from app.common.tenant.deps import build_tenant_context
@@ -92,7 +93,10 @@ async def _to_me(db: AsyncSession, user: User) -> MeResponse:
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)) -> TokenResponse:
+@limiter.limit("500/minute")
+async def login(
+    request: Request, body: LoginRequest, db: AsyncSession = Depends(get_db)
+) -> TokenResponse:
     try:
         user = await auth_service.authenticate_user(
             db,
@@ -165,11 +169,13 @@ async def change_password(
 
 
 @router.post("/forgot-password", response_model=ForgotPasswordResponse)
+@limiter.limit("20/minute")
 async def forgot_password(
+    request: Request,
     body: ForgotPasswordRequest,
     db: AsyncSession = Depends(get_db),
 ) -> ForgotPasswordResponse:
-    message, emailed, reset_url = await auth_service.request_password_reset(
+    message, emailed, _reset_url = await auth_service.request_password_reset(
         db,
         email=str(body.email) if body.email else None,
         username=body.username,
@@ -180,12 +186,15 @@ async def forgot_password(
     return ForgotPasswordResponse(
         message=message,
         emailed=emailed,
-        reset_url=reset_url,
+        # Never return reset_url on this public endpoint (account-takeover vector).
+        reset_url=None,
     )
 
 
 @router.post("/reset-password", response_model=MessageResponse)
+@limiter.limit("100/minute")
 async def reset_password(
+    request: Request,
     body: ResetPasswordRequest,
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
@@ -199,7 +208,9 @@ async def reset_password(
 
 
 @router.post("/activate", response_model=ActivateAccountResponse)
+@limiter.limit("100/minute")
 async def activate_account(
+    request: Request,
     body: ActivateAccountRequest,
     db: AsyncSession = Depends(get_db),
 ) -> ActivateAccountResponse:
@@ -218,7 +229,9 @@ async def activate_account(
 
 
 @router.post("/activate-hod", response_model=ActivateAccountResponse)
+@limiter.limit("100/minute")
 async def activate_hod(
+    request: Request,
     body: ActivateAccountRequest,
     db: AsyncSession = Depends(get_db),
 ) -> ActivateAccountResponse:
@@ -238,7 +251,9 @@ async def activate_hod(
 
 
 @router.post("/activate-student", response_model=ActivateAccountResponse)
+@limiter.limit("100/minute")
 async def activate_student(
+    request: Request,
     body: ActivateAccountRequest,
     db: AsyncSession = Depends(get_db),
 ) -> ActivateAccountResponse:

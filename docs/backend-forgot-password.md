@@ -32,7 +32,9 @@ Response:
 }
 ```
 
-If mail fails: `emailed: false` and `reset_url` is returned so staff can share the link.
+If mail fails: `emailed: false` and `reset_url` is **always null** on this public endpoint
+(never return a usable reset link to unauthenticated callers). Staff must use email or a
+separate authenticated ops path to share links.
 Always returns 200 with a generic message (does not leak whether the account exists).
 
 Only **ACTIVE** accounts with a password can reset.

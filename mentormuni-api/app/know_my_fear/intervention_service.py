@@ -31,7 +31,7 @@ from app.know_my_fear.fear_to_widget_mapping import (
     build_fear_widget_context,
 )
 from app.know_my_fear.timeutil import utc_now
-from app.models.private_checkin import PrivateStudentResponse
+from app.models.private_checkin import PrivateStudentCheckIn, PrivateStudentResponse
 from app.models.private_intervention import (
     PrivateStudentFearSolution,
     PrivateStudentWeeklyProgress,
@@ -41,6 +41,7 @@ from app.models.private_intervention import (
     PrivateStudentPlanAction,
 )
 from app.models.user import User
+from app.student_roadmap.models import StudentAssessmentResult
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,15 @@ class InterventionService:
         api_key = (settings.openai_api_key or "").strip() or None
         self.client = AsyncOpenAI(api_key=api_key) if api_key else None
         self.model = settings.know_my_fear_model
+
+    async def _require_owned_checkin(
+        self, db: AsyncSession, student: User, checkin_id: int
+    ) -> PrivateStudentCheckIn:
+        """Strict ownership — private fear data must never cross students."""
+        checkin = await db.get(PrivateStudentCheckIn, checkin_id)
+        if not checkin or checkin.student_id != student.id:
+            raise PermissionError("This check-in does not belong to you.")
+        return checkin
 
     async def generate_fear_solutions(
         self,
@@ -73,6 +83,7 @@ class InterventionService:
         Returns:
             List of complete solution plans with widget references
         """
+        await self._require_owned_checkin(db, student, checkin_id)
         solutions = []
         
         for fear in fears:
@@ -656,6 +667,8 @@ class InterventionService:
         responses: Optional[dict] = None,
     ) -> list[dict]:
         """Generate solutions once per check-in (idempotent)."""
+        await self._require_owned_checkin(db, student, checkin_id)
+
         existing = await db.execute(
             select(PrivateStudentFearSolution).where(
                 PrivateStudentFearSolution.checkin_id == checkin_id,
@@ -681,8 +694,14 @@ class InterventionService:
             rows = list(
                 (
                     await db.execute(
-                        select(PrivateStudentResponse).where(
-                            PrivateStudentResponse.checkin_id == checkin_id
+                        select(PrivateStudentResponse)
+                        .join(
+                            PrivateStudentCheckIn,
+                            PrivateStudentResponse.checkin_id == PrivateStudentCheckIn.id,
+                        )
+                        .where(
+                            PrivateStudentResponse.checkin_id == checkin_id,
+                            PrivateStudentCheckIn.student_id == student.id,
                         )
                     )
                 ).scalars().all()
@@ -765,6 +784,11 @@ class InterventionService:
         commitment: Optional[str] = None,
     ) -> dict:
         """Full weekly progress flow with severity read from DB."""
+        student = await db.get(User, student_id)
+        if student is None:
+            raise PermissionError("Student not found.")
+        await self._require_owned_checkin(db, student, checkin_id)
+
         # Ownership: solution must belong to student/checkin
         sol = (
             await db.execute(
@@ -777,6 +801,20 @@ class InterventionService:
         ).scalar_one_or_none()
         if not sol:
             raise PermissionError("Fear plan not found for this check-in.")
+
+        # Cap self-reported actions to verified plan-action rows (M5).
+        verified_actions = (
+            await db.execute(
+                select(PrivateStudentPlanAction).where(
+                    PrivateStudentPlanAction.student_id == student_id,
+                    PrivateStudentPlanAction.checkin_id == checkin_id,
+                    PrivateStudentPlanAction.fear_id == fear_id,
+                )
+            )
+        ).scalars().all()
+        verified_count = len(list(verified_actions))
+        actions_completed = max(0, min(int(actions_completed), verified_count))
+        actions_total = max(int(actions_total), verified_count, 1)
 
         severity_before, _initial = await self.get_current_severity(
             db, student_id, fear_id, checkin_id=checkin_id
@@ -1201,6 +1239,11 @@ class InterventionService:
         source: str = "tool",
     ) -> dict:
         """Record a suggested mock/test and lower the fear factor toward 0."""
+        student = await db.get(User, student_id)
+        if student is None:
+            raise PermissionError("Student not found.")
+        await self._require_owned_checkin(db, student, checkin_id)
+
         sol = (
             await db.execute(
                 select(PrivateStudentFearSolution).where(
@@ -1243,10 +1286,23 @@ class InterventionService:
         code = normalize_tool_code(tool_code)
         if not code:
             raise ValueError("Missing tool code.")
-        if not is_scoreable_tool(code):
-            # Still record soft actions (mentor / practice / home) but they
-            # only count if they appear on the suggested list.
-            pass
+
+        # Scoreable tools require a verified Week-1 / practice result on this student.
+        if is_scoreable_tool(code):
+            verified = (
+                await db.execute(
+                    select(StudentAssessmentResult.id)
+                    .where(
+                        StudentAssessmentResult.user_id == student_id,
+                        StudentAssessmentResult.tool_code == code,
+                    )
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if verified is None:
+                raise PermissionError(
+                    f"Complete {code} in Practice or Week-1 before crediting this fear action."
+                )
 
         suggested = list_suggested_tools(sol.solution_plan, sol.fear_name)
         counts_for_score = code in suggested or is_scoreable_tool(code)

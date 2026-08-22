@@ -101,9 +101,11 @@ def _register_routes(r: APIRouter) -> None:
                 )
             await db.commit()
             return [FearSolutionOut(**sol) for sol in solutions]
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e)) from e
         except Exception as e:
             logger.error("Failed to generate solutions: %s", e, exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Failed to generate solutions: {e}")
+            raise HTTPException(status_code=500, detail="Failed to generate solutions.")
 
     @r.post("/weekly-progress/{checkin_id}")
     async def submit_weekly_progress(

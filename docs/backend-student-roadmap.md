@@ -46,6 +46,8 @@ Week `status=done` only when all 8 are `done`. Completing a step does **not** ca
 
 Hard calendar in generated JSON: **Days 1–42 prep** (6 weeks) + **Days 43–90 AI mocks only**. Mock-phase days must reference an AI mock tool via week/day `focus_tools` or a `tool_href` containing `voice-interview`.
 
+Week-1 AI voice mocks (`skill_mock`, `project_mock`, `interview_mock`, `hr_mock`) are each **20 minutes** in `WEEK1_STEPS`.
+
 ## Migration
 
 `alembic upgrade head` → `0013_student_roadmap`

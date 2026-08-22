@@ -515,6 +515,15 @@ class VoiceInterviewSessionRequest(BaseModel):
         max_length=2000,
         description="Optional free text: resume summary, project names, weak areas to probe.",
     )
+    duration_minutes: int = Field(
+        default=20,
+        ge=8,
+        le=60,
+        description=(
+            "Wall-clock length of this mock. Questions, wrap-up, and close are paced "
+            "to fit this window (skill / live / project / HR). Default 20."
+        ),
+    )
     voice: VoiceInterviewVoice = Field(
         default="ash",
         description=(
@@ -526,7 +535,10 @@ class VoiceInterviewSessionRequest(BaseModel):
     model: Optional[str] = Field(
         default=None,
         max_length=80,
-        description="Optional Realtime model override. Defaults to server config (gpt-realtime).",
+        description=(
+            "Ignored. Realtime model is always the server config (realtime_model). "
+            "Kept for backward-compatible request bodies."
+        ),
     )
 
     @field_validator("interview_focus")
@@ -546,6 +558,15 @@ class VoiceInterviewSessionRequest(BaseModel):
         return None if not s else s
 
 
+class VoiceInterviewTimebox(BaseModel):
+    """Browser-side clock: wrap-up, silence nudge, and no-answer close."""
+
+    wrap_up_remaining_seconds: int
+    no_answer_nudge_seconds: int
+    no_answer_close_seconds: int
+    target_question_count: int
+
+
 class VoiceInterviewSessionResponse(BaseModel):
     """Ephemeral OpenAI Realtime credentials for the React WebRTC client."""
 
@@ -554,6 +575,11 @@ class VoiceInterviewSessionResponse(BaseModel):
     model: str
     voice: str
     interview_focus: str
+    duration_minutes: int = Field(
+        default=20,
+        description="Wall-clock length used to pace and close this mock.",
+    )
+    timebox: VoiceInterviewTimebox
     instructions_preview: str = Field(
         ...,
         description="First ~280 chars of the rendered interviewer instructions (for UI debug).",

@@ -136,35 +136,95 @@ def extract_scores_from_raw(raw: Any) -> dict[str, Any]:
     return out
 
 
+def raw_has_score_evidence(raw: Any) -> bool:
+    """True when raw looks like a tool/analyze/evaluate payload — not a bare client score."""
+    if not isinstance(raw, dict) or not raw:
+        return False
+    for key in (
+        "analysis",
+        "result",
+        "evaluate",
+        "evaluation",
+        "voice",
+        "data",
+        "payload",
+        "transcript",
+        "questions",
+        "plan",
+        "evaluation_plan",
+    ):
+        if raw.get(key) is not None:
+            return True
+    # Flat evaluate-shaped keys without nesting
+    for key in (
+        "overall_score",
+        "readiness_percentage",
+        "technical_score",
+        "communication_score",
+        "readiness_label",
+        "gaps",
+        "study_plan",
+        "learning_recommendations",
+    ):
+        if raw.get(key) is not None:
+            return True
+    return False
+
+
 def normalize_complete_payload(body: dict[str, Any]) -> dict[str, Any]:
-    raw = body.get("raw") if isinstance(body.get("raw"), dict) else body
-    hydrated = extract_scores_from_raw(raw if isinstance(raw, dict) else {})
+    explicit_raw = body.get("raw")
+    if isinstance(explicit_raw, dict):
+        raw = explicit_raw
+    elif isinstance(body, dict) and any(
+        isinstance(body.get(k), dict)
+        for k in ("analysis", "result", "evaluate", "evaluation", "voice", "data", "payload")
+    ):
+        # Flat evaluate/analyze shape at top level (no nested raw wrapper)
+        raw = body
+    else:
+        # Bare {score: 100} — no evidence; do not treat body as raw
+        raw = {}
 
-    score = _clamp_score(body.get("score"))
-    if score is None:
-        score = hydrated.get("score")
+    hydrated = extract_scores_from_raw(raw)
+    has_evidence = raw_has_score_evidence(raw)
 
-    tech = _clamp_int_score(body.get("technical_score"))
-    if tech is None:
-        tech = hydrated.get("technical_score")
-
-    comm = _clamp_int_score(body.get("communication_score"))
-    if comm is None:
-        comm = hydrated.get("communication_score")
+    # Prefer nested/server-shaped scores. Never accept naked top-level client scores
+    # without evidence (C9 — spoofing TPO dashboards).
+    score = hydrated.get("score")
+    tech = hydrated.get("technical_score")
+    comm = hydrated.get("communication_score")
+    if has_evidence:
+        if score is None:
+            score = _clamp_score(body.get("score"))
+        if tech is None:
+            tech = _clamp_int_score(body.get("technical_score"))
+        if comm is None:
+            comm = _clamp_int_score(body.get("communication_score"))
 
     label = body.get("label")
     if label is not None:
         label = str(label).strip()[:255] or None
     if not label:
         label = hydrated.get("label")
+    if not label and not has_evidence and body.get("score") is not None:
+        label = "Completed (unverified score ignored)"
+    elif not label:
+        label = "Completed" if score is None else None
 
-    strengths = _as_str_list(body.get("strengths")) or hydrated.get("strengths") or []
-    weaknesses = _as_str_list(body.get("weaknesses")) or hydrated.get("weaknesses") or []
+    strengths = _as_str_list(body.get("strengths")) if has_evidence else []
+    if not strengths:
+        strengths = hydrated.get("strengths") or []
+    weaknesses = _as_str_list(body.get("weaknesses")) if has_evidence else []
+    if not weaknesses:
+        weaknesses = hydrated.get("weaknesses") or []
     recommendations = (
-        flatten_recommendations(body.get("recommendations"))
-        or hydrated.get("recommendations")
-        or []
-    )
+        flatten_recommendations(body.get("recommendations")) if has_evidence else []
+    ) or hydrated.get("recommendations") or []
+
+    raw_out = dict(raw)
+    raw_out["score_trust"] = "evidence" if has_evidence and score is not None else "unverified"
+    if not has_evidence and body.get("score") is not None:
+        raw_out["client_score_ignored"] = _clamp_score(body.get("score"))
 
     return {
         "score": score,
@@ -174,5 +234,5 @@ def normalize_complete_payload(body: dict[str, Any]) -> dict[str, Any]:
         "strengths": strengths,
         "weaknesses": weaknesses,
         "recommendations": recommendations,
-        "raw": raw if isinstance(raw, dict) else body,
+        "raw": raw_out,
     }

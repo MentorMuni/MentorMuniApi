@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.deps import get_db, require_api_key, require_roles
+from app.common.rate_limit import limiter
 from app.models.enums import RoleCode
 from app.models.user import User
 from app.personal_mentor.schemas import (
@@ -34,7 +35,9 @@ async def get_mentor_context(
 
 
 @router.post("/voice/session", response_model=MentorVoiceSessionResponse)
+@limiter.limit("100/minute")
 async def create_mentor_voice_session(
+    request: Request,
     body: MentorVoiceSessionRequest | None = None,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_roles(RoleCode.STUDENT.value)),

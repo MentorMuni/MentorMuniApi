@@ -325,10 +325,15 @@ async def register_student(
     """
     Public self-enroll → PENDING.
 
-    Returns (user, created). created=False when idempotent re-submit of same PENDING email.
+    Password is ignored: college enroll never sets credentials. HOD/TPO approve
+    always issues a set-password link (INVITED). Returns (user, created).
+    created=False when idempotent re-submit of same PENDING email.
     """
     import re
     import secrets as _secrets
+
+    # C4: never accept a password on public self-enroll (prevents post-approve hijack).
+    password = None
 
     email_norm = email.lower().strip()
     contact = (phone or mobile or "").strip() or None
@@ -416,7 +421,7 @@ async def register_student(
             last_name=last_name,
             email=email_norm,
             username=username_norm,
-            password=password,
+            password=None,
             role_code=RoleCode.STUDENT.value,
             organization_id=org.id,
             department_id=department_id,
@@ -425,7 +430,7 @@ async def register_student(
             created_by=None,
             roll_number=roll_number,
             batch_year=batch_year,
-            invite_without_password=not bool(password),
+            invite_without_password=True,
         )
     except UserServiceError as exc:
         if exc.status_code == 409 and not username:
@@ -435,7 +440,7 @@ async def register_student(
                 last_name=last_name,
                 email=email_norm,
                 username=f"{username_norm}.{_secrets.token_hex(2)}",
-                password=password,
+                password=None,
                 role_code=RoleCode.STUDENT.value,
                 organization_id=org.id,
                 department_id=department_id,
@@ -444,7 +449,7 @@ async def register_student(
                 created_by=None,
                 roll_number=roll_number,
                 batch_year=batch_year,
-                invite_without_password=not bool(password),
+                invite_without_password=True,
             )
         else:
             raise
@@ -581,21 +586,18 @@ async def approve_user(
     setup_url: str | None = None
     email_sent = False
 
-    if user.password_hash:
-        user.status = UserStatus.ACTIVE.value
-        user.activation_token_hash = None
-        user.activation_expires_at = None
-    else:
-        raw_token = secrets.token_urlsafe(32)
-        expires = datetime.now(timezone.utc) + timedelta(hours=activation_hours)
-        user.status = UserStatus.INVITED.value
-        user.activation_token_hash = _hash_token(raw_token)
-        user.activation_expires_at = expires
-        setup_url = build_student_activation_url(raw_token)
-        if send_password_email:
-            email_sent = await send_student_set_password_email(
-                user=user, raw_token=raw_token, expires=expires
-            )
+    # Always INVITED + set-password — never activate from a pre-set enroll password.
+    user.password_hash = None
+    raw_token = secrets.token_urlsafe(32)
+    expires = datetime.now(timezone.utc) + timedelta(hours=activation_hours)
+    user.status = UserStatus.INVITED.value
+    user.activation_token_hash = _hash_token(raw_token)
+    user.activation_expires_at = expires
+    setup_url = build_student_activation_url(raw_token)
+    if send_password_email:
+        email_sent = await send_student_set_password_email(
+            user=user, raw_token=raw_token, expires=expires
+        )
 
     await write_audit(
         db,
@@ -604,11 +606,13 @@ async def approve_user(
         action="student.approve",
         entity_type="user",
         entity_id=user.id,
-        payload={"email_sent": email_sent, "needs_password": not bool(user.password_hash)},
+        payload={"email_sent": email_sent, "needs_password": True},
     )
     await db.flush()
     user = await get_user(db, user.id)
-    # Always return token + setup_url so FE can copy when mail fails.
+    # Return token only when email failed (ops fallback).
+    if email_sent:
+        return user, None, None, email_sent
     return user, raw_token, setup_url, email_sent
 
 
@@ -718,9 +722,19 @@ async def issue_student_activation(
     activation_hours: int = 72,
     send_email: bool = True,
 ) -> tuple[User, str | None, str | None, bool]:
-    """Rotate set-password token for INVITED student (or force INVITED if ACTIVE without needing)."""
+    """Rotate set-password token for INVITED/ACTIVE student (not BLOCKED/REJECTED)."""
     if user.role.role_code != RoleCode.STUDENT.value:
         raise UserServiceError("Only students can receive set-password links.", status_code=400)
+    if user.status == UserStatus.BLOCKED.value:
+        raise UserServiceError(
+            "Student is blocked. Unblock before sending a set-password link.",
+            status_code=400,
+        )
+    if user.status == UserStatus.REJECTED.value:
+        raise UserServiceError(
+            "Student was rejected. Re-invite or ask them to enroll again.",
+            status_code=400,
+        )
 
     raw_token = secrets.token_urlsafe(32)
     expires = datetime.now(timezone.utc) + timedelta(hours=activation_hours)
@@ -749,7 +763,12 @@ async def issue_student_activation(
             payload={"email_sent": email_sent},
         )
 
-    return user, raw_token, setup_url, email_sent
+    return (
+        user,
+        (None if email_sent else raw_token),
+        (None if email_sent else setup_url),
+        email_sent,
+    )
 
 
 async def import_students_csv(

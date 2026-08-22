@@ -292,9 +292,8 @@ async def complete_step(
 ) -> RoadmapOut:
     """Persist a tool result for HOD/TPO analytics.
 
-    Product rule: always accept a completed attempt (including previously locked
-    steps) so org dashboards are not blocked by sequential UI state. Week
-    progress is recomputed afterward.
+    Product rule: only the current (unlocked) step or a retake of an already-done
+    step may be completed. Locked steps return 409 so sequential Week-1 unlock holds.
     """
     _ensure_student(user)
     if tool_code not in TOOL_CODES:
@@ -304,6 +303,12 @@ async def complete_step(
     step = next((s for s in week.steps if s.tool_code == tool_code), None)
     if step is None:
         raise HTTPException(status_code=404, detail="Step not found")
+
+    if step.status == STEP_STATUS_LOCKED:
+        raise HTTPException(
+            status_code=409,
+            detail="This step is locked. Complete earlier Week-1 tools first.",
+        )
 
     normalized = normalize_complete_payload(body.model_dump())
 
@@ -429,6 +434,7 @@ async def start_plan_generation(db: AsyncSession, user: User) -> tuple[Generated
         .where(StudentGeneratedRoadmap.user_id == user.id)
         .order_by(StudentGeneratedRoadmap.created_at.desc())
         .limit(1)
+        .with_for_update()
     )
     latest = latest_q.scalar_one_or_none()
 

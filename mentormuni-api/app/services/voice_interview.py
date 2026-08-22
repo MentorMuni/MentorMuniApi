@@ -23,6 +23,7 @@ from app.schemas.ai import (
     VoiceInterviewSessionResponse,
     VoiceInterviewTranscriptTurn,
 )
+from app.services.interview_timebox import timebox_spec
 from app.services.voice_interview_analysis_prompt import (
     SESSION_CLOSED_PHRASE,
     render_voice_interview_analysis_prompt,
@@ -61,13 +62,15 @@ class VoiceInterviewService:
     async def create_session(
         self, body: VoiceInterviewSessionRequest
     ) -> VoiceInterviewSessionResponse:
+        spec = timebox_spec(body.duration_minutes)
         instructions = render_voice_interview_prompt(
             body.interview_focus,
             target_role=body.target_role,
             target_companies=body.target_companies,
             extra_context=body.extra_context,
+            duration_minutes=spec["duration_minutes"],
         )
-        model = body.model or settings.realtime_model
+        model = settings.realtime_model
         # Always mint a male interviewer voice. Ignore client female/neutral overrides
         # (marin/coral/shimmer/etc). Clients must NOT change voice via session.update.
         requested = (body.voice or _DEFAULT_MALE_VOICE).strip().lower()
@@ -81,7 +84,13 @@ class VoiceInterviewService:
         payload: dict[str, Any] = {
             "expires_after": {
                 "anchor": "created_at",
-                "seconds": settings.realtime_client_secret_ttl_seconds,
+                "seconds": min(
+                    7200,
+                    max(
+                        settings.realtime_client_secret_ttl_seconds,
+                        spec["client_secret_ttl_seconds"],
+                    ),
+                ),
             },
             "session": {
                 "type": "realtime",
@@ -156,6 +165,13 @@ class VoiceInterviewService:
             model=model,
             voice=voice,
             interview_focus=body.interview_focus,
+            duration_minutes=spec["duration_minutes"],
+            timebox={
+                "wrap_up_remaining_seconds": spec["wrap_up_remaining_seconds"],
+                "no_answer_nudge_seconds": spec["no_answer_nudge_seconds"],
+                "no_answer_close_seconds": spec["no_answer_close_seconds"],
+                "target_question_count": spec["target_question_count"],
+            },
             instructions_preview=preview,
             realtime_calls_url=OPENAI_REALTIME_CALLS_URL,
             session_type="realtime",

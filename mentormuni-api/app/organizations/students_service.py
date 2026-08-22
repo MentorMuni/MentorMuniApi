@@ -24,6 +24,15 @@ class StudentPortalError(Exception):
         self.status_code = status_code
 
 
+def _activation_secrets_for_response(
+    email_sent: bool, token: str | None, setup_url: str | None
+) -> tuple[str | None, str | None]:
+    """Omit raw activation secrets when email already delivered them (M2)."""
+    if email_sent:
+        return None, None
+    return token, setup_url
+
+
 def _split_name(name: str | None, email: str) -> tuple[str, str]:
     raw = (name or "").strip()
     if not raw:
@@ -147,8 +156,8 @@ async def _email_setup_for_invited(
             entity_id=user.id,
             payload={"email_sent": email_sent, "source": "auto_enroll"},
         )
-        # Always surface token + url so FE can copy when SMTP fails or for ops.
-        return user, raw_token, setup_url, email_sent
+        # Surface token only when SMTP failed so staff can copy the link (M2).
+        return user, *_activation_secrets_for_response(email_sent, raw_token, setup_url), email_sent
     return await user_service.issue_student_activation(
         db, user=user, actor=actor, send_email=True
     )
@@ -447,6 +456,7 @@ async def create_manual(
     user, token, setup_url, email_sent = await _email_setup_for_invited(
         db, user=user, raw_token=raw_token, expires=expires, actor=ctx.user
     )
+    token, setup_url = _activation_secrets_for_response(email_sent, token, setup_url)
     message = (
         "Student added to roster. Set-password email sent."
         if email_sent
@@ -632,16 +642,17 @@ async def approve_invite(
     except user_service.UserServiceError as exc:
         raise StudentPortalError(exc.message, status_code=exc.status_code) from exc
 
-    if setup_url:
+    if setup_url or email_sent:
         message = (
             "Approved. Set-password email sent."
             if email_sent
             else "Approved. Share the set-password link with the student."
         )
     else:
-        message = "Approved. Student can log in."
-
+        message = "Approved."
+    token, setup_url = _activation_secrets_for_response(email_sent, token, setup_url)
     return {
+        "invitation": to_invite_row(user, source="approve"),
         "student": to_student_row(
             user,
             setup_url=setup_url,
@@ -703,7 +714,8 @@ async def resend_setup_link(
     Regenerate set-password token + email.
 
     PENDING → same as approve (first-time setup email).
-    INVITED / ACTIVE / BLOCKED student → rotate token and resend.
+    INVITED / ACTIVE → rotate token and resend.
+    BLOCKED / REJECTED → rejected (must unblock / re-enroll explicitly).
     """
     user = await user_service.get_user(db, student_id)
     if user.organization_id != ctx.organization_id:
@@ -715,6 +727,12 @@ async def resend_setup_link(
 
     if user.status == UserStatus.PENDING.value:
         return await approve_invite(db, ctx, invite_id=student_id)
+
+    if user.status == UserStatus.BLOCKED.value:
+        raise StudentPortalError(
+            "Student is blocked. Unblock before sending a set-password link.",
+            status_code=400,
+        )
 
     if user.status == UserStatus.REJECTED.value:
         raise StudentPortalError(
@@ -734,6 +752,7 @@ async def resend_setup_link(
         if email_sent
         else "Set-password link ready. Share it with the student."
     )
+    token, setup_url = _activation_secrets_for_response(email_sent, token, setup_url)
     return {
         "student": to_student_row(
             user,

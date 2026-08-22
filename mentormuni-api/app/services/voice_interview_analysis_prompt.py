@@ -16,6 +16,11 @@ Placeholders:
 
 from typing import Optional
 
+from app.services.voice_hr_interview_analysis_prompt import (
+    VOICE_HR_INTERVIEW_ANALYSIS_PROMPT,
+)
+from app.services.voice_interview_prompt import is_hr_interview_focus
+
 
 VOICE_INTERVIEW_ANALYSIS_PROMPT = r"""
 You are a STRICT, FAIR, EVIDENCE-BASED senior technical interview evaluator.
@@ -703,19 +708,24 @@ def render_voice_interview_analysis_prompt(
 ) -> str:
     focus = (interview_focus or "").strip() or "general technical interview"
     text = (transcript or "").strip() or "(No transcript captured.)"
+    hr = is_hr_interview_focus(focus)
+    template = (
+        VOICE_HR_INTERVIEW_ANALYSIS_PROMPT if hr else VOICE_INTERVIEW_ANALYSIS_PROMPT
+    )
+    companies = (target_companies or "").strip()
+    if not companies:
+        companies = (
+            "TCS, Infosys, Persistent, Impetus"
+            if hr
+            else "Infosys, Persistent, Nagarro, and product companies"
+        )
 
     return (
-        VOICE_INTERVIEW_ANALYSIS_PROMPT.replace("**INTERVIEW_FOCUS**", focus)
+        template.replace("**INTERVIEW_FOCUS**", focus)
         .replace(
             "**TARGET_ROLE**",
             (target_role or "Software Engineer / Graduate Trainee").strip(),
         )
-        .replace(
-            "**TARGET_COMPANIES**",
-            (
-                target_companies
-                or "Infosys, Persistent, Nagarro, and product companies"
-            ).strip(),
-        )
+        .replace("**TARGET_COMPANIES**", companies)
         .replace("<>", text)
     )

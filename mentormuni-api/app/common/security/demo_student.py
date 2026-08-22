@@ -22,8 +22,11 @@ DEMO_CODING_USERNAME = "coding_demo"
 
 
 def is_dev_demo_bearer(token: str) -> bool:
-    """Frontend demo/local sessions use fake tokens like demo.student.<ts>."""
-    if (settings.app_env or "").lower() not in {"development", "dev", "local", "test"}:
+    """Frontend demo/local sessions use fake tokens like demo.student.<ts>.
+
+    Fail closed: requires ENABLE_DEMO_STUDENT_AUTH=true AND a development-like APP_ENV.
+    """
+    if not settings.demo_student_auth_allowed:
         return False
     t = (token or "").strip()
     return t.startswith("demo.student.") or t.startswith("local.student.")
@@ -32,7 +35,7 @@ def is_dev_demo_bearer(token: str) -> bool:
 async def resolve_dev_demo_student(db: AsyncSession) -> User | None:
     """
     Ensure an ACTIVE PUBLIC-org student exists for local Coding Round smoke tests.
-    Only used when APP_ENV is development-like.
+    Only used when demo_student_auth_allowed is True.
     """
     existing = (
         await db.execute(

@@ -18,11 +18,13 @@ logging.basicConfig(
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+
+from app.common.deps import require_api_key
+from app.common.rate_limit import limiter
 
 from app.schemas.ai import (
     SkillReadinessPlanRequest,
@@ -95,8 +97,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="MentorMuni API", version="1.0.0", lifespan=lifespan)
 
-# Rate limiter: 10k users = ~20 req/min/IP for plan (LLM), 60/min for evaluate
-limiter = Limiter(key_func=get_remote_address)
+# Rate limiter: shared instance (routers import from app.common.rate_limit)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -164,7 +165,7 @@ async def health_check():
     responses={429: {"description": "Rate limit exceeded"}},
     summary="Skill readiness plan (stack-only quiz: MC, scenario, code MCQ + explanations)",
 )
-@limiter.limit("20/minute")
+@limiter.limit("100/minute")
 async def skill_readiness_plan(request: Request, body: SkillReadinessPlanRequest):
     try:
         if settings.skip_skill_validation:
@@ -216,7 +217,7 @@ async def skill_readiness_plan(request: Request, body: SkillReadinessPlanRequest
     responses={429: {"description": "Rate limit exceeded"}},
     summary="Interview readiness plan (Yes/No + multiple choice, holistic)",
 )
-@limiter.limit("20/minute")
+@limiter.limit("100/minute")
 async def interview_readiness_plan(request: Request, body: InterviewReadinessPlanRequest):
     try:
         if settings.skip_skill_validation:
@@ -261,7 +262,7 @@ async def interview_readiness_plan(request: Request, body: InterviewReadinessPla
     responses={429: {"description": "Rate limit exceeded"}},
     summary="Aptitude readiness plan (adaptive count/level; quant/logical/verbal + non-verbal mix)",
 )
-@limiter.limit("20/minute")
+@limiter.limit("100/minute")
 async def aptitude_readiness_plan(request: Request, body: AptitudeReadinessPlanRequest):
     try:
         # Timeout + retries are applied inside generate_aptitude_readiness_plan (avoid nested wait_for).
@@ -294,15 +295,15 @@ async def aptitude_readiness_plan(request: Request, body: AptitudeReadinessPlanR
         502: {"description": "OpenAI Realtime session creation failed"},
     },
     summary="Mint OpenAI Realtime ephemeral key for live MNC-style voice interview",
+    dependencies=[Depends(require_api_key)],
 )
-@limiter.limit("10/minute")
+@limiter.limit("100/minute")
 async def voice_interview_session(request: Request, body: VoiceInterviewSessionRequest):
     """
     Creates an OpenAI Realtime ephemeral client secret for browser WebRTC voice interviews.
 
-    Send `interview_focus` in the body (e.g. Java, C++, projects only) — one shared prompt
-    is rendered and attached to the Realtime session. React connects with the returned
-    `client_secret` to https://api.openai.com/v1/realtime/calls (do not expose OPENAI_API_KEY).
+    Requires X-API-Key. Send `interview_focus` in the body (e.g. Java, C++, projects only).
+    Model is server-fixed (client model override ignored).
     """
     try:
         return await voice_interview_service.create_session(body)
@@ -324,12 +325,13 @@ async def voice_interview_session(request: Request, body: VoiceInterviewSessionR
         502: {"description": "Analysis model failed"},
     },
     summary="Score a completed voice interview transcript (technical + communication + study plan)",
+    dependencies=[Depends(require_api_key)],
 )
-@limiter.limit("20/minute")
+@limiter.limit("100/minute")
 async def voice_interview_analyze(request: Request, body: VoiceInterviewAnalyzeRequest):
     """
     After the live Realtime interview ends, POST the captured transcript turns.
-    Uses a GPT analysis model (not Realtime) to return structured scores for the results UI.
+    Requires X-API-Key. Uses a GPT analysis model (not Realtime) for structured scores.
     """
     try:
         return await guard_layer.run_with_timeout(
@@ -355,7 +357,7 @@ async def voice_interview_analyze(request: Request, body: VoiceInterviewAnalyzeR
         429: {"description": "Rate limit exceeded"},
     },
 )
-@limiter.limit("30/minute")
+@limiter.limit("100/minute")
 async def resume_ats(
     request: Request,
     file: UploadFile = File(...),
@@ -420,7 +422,7 @@ async def resume_ats(
 
 
 @app.post("/api/inquiries")
-@limiter.limit("10/minute")
+@limiter.limit("100/minute")
 async def create_inquiry(request: Request, body: InquiryCreate):
     """Waitlist + contact submissions (intent-branched); stored as JSONL."""
     try:
@@ -435,7 +437,7 @@ async def create_inquiry(request: Request, body: InquiryCreate):
     response_model=EvaluateResponse,
     responses={429: {"description": "Rate limit exceeded"}},
 )
-@limiter.limit("60/minute")
+@limiter.limit("100/minute")
 async def evaluate_readiness(request: Request, body: EvaluateRequest):
     try:
         evaluation_result = await evaluator_service.evaluate_readiness(body)
@@ -473,7 +475,7 @@ async def admin_leads(
 
 
 @app.post("/admin/leads")
-@limiter.limit("60/minute")
+@limiter.limit("100/minute")
 async def admin_create_lead(request: Request, body: InterviewReadyLeadCreate):
     """Append a lead row from the client (same shape as server-side plan capture)."""
     stats_service.append_interview_ready_lead(body.to_storage_dict())
