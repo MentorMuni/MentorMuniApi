@@ -14,6 +14,7 @@ from app.common.email.sender import send_email
 from app.common.email.templates import (
     render_password_reset_email,
     render_staff_activation_email,
+    render_individual_activation_email,
     render_student_activation_email,
     render_student_enrollment_denied_email,
     render_tpo_activation_email,
@@ -151,6 +152,43 @@ async def send_student_activation_email(
         )
     except (EmailNotConfiguredError, EmailDeliveryError, EmailError) as exc:
         logger.warning("student_activation_email_failed to=%s err=%s", to_email, exc)
+        raise
+
+
+async def send_individual_activation_email(
+    *,
+    to_email: str,
+    first_name: str,
+    last_name: str,
+    username: str,
+    raw_token: str,
+    expires_at: datetime,
+    is_reinvite: bool = False,
+) -> EmailSendResult:
+    content = render_individual_activation_email(
+        first_name=first_name,
+        last_name=last_name,
+        username=username,
+        raw_token=raw_token,
+        expires_at=expires_at,
+        is_reinvite=is_reinvite,
+    )
+    try:
+        return await send_email(
+            OutgoingEmail(
+                to=[
+                    EmailAddress(
+                        email=to_email,
+                        name=f"{first_name} {last_name}".strip() or None,
+                    )
+                ],
+                subject=content.subject,
+                text_body=content.text_body,
+                html_body=content.html_body,
+            )
+        )
+    except (EmailNotConfiguredError, EmailDeliveryError, EmailError) as exc:
+        logger.warning("individual_activation_email_failed to=%s err=%s", to_email, exc)
         raise
 
 

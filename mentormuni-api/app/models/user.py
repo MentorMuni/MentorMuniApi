@@ -102,6 +102,9 @@ class User(Base):
     # College enrollment metadata (optional until import/manual/register fills them).
     roll_number: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     batch_year: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Individual (PUBLIC) students: free-text college profile (not a tenant org).
+    college_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    course_or_branch: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
 
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 

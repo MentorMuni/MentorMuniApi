@@ -35,6 +35,8 @@ class MeResponse(BaseModel):
     organization_name: str
     organization_code: str
     organization_type: str = "COLLEGE"
+    # Convenience flag for FE: True when organization_type == PUBLIC
+    is_individual: bool = False
     department_id: Optional[int] = None
     department_name: str = ""
     department_code: str = ""
@@ -47,6 +49,11 @@ class MeResponse(BaseModel):
     mobile: Optional[str] = None
     username: str = ""
     status: str = "ACTIVE"
+    # Individual profile (and optional college metadata for college students)
+    college_name: Optional[str] = None
+    course_or_branch: Optional[str] = None
+    batch_year: Optional[int] = None
+    roll_number: Optional[str] = None
     created_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}

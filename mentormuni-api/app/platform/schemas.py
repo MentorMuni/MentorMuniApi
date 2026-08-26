@@ -303,6 +303,64 @@ class ActivateTpoRequest(BaseModel):
     new_password: str = Field(min_length=8, max_length=128)
 
 
+# ----- Individuals (PUBLIC students — MentorMuni staff only) -----
+
+
+class CreateIndividualRequest(BaseModel):
+    first_name: str = Field(min_length=1, max_length=128)
+    last_name: str = Field(min_length=1, max_length=128)
+    email: EmailStr
+    mobile: Optional[str] = Field(default=None, max_length=32)
+    username: Optional[str] = Field(default=None, min_length=2, max_length=128)
+    # Personal / academic profile (not a college tenant).
+    college_name: Optional[str] = Field(default=None, max_length=255)
+    course_or_branch: Optional[str] = Field(default=None, max_length=128)
+    batch_year: Optional[int] = Field(default=None, ge=1990, le=2100)
+    roll_number: Optional[str] = Field(default=None, max_length=64)
+    activation_hours: int = Field(default=72, ge=1, le=168)
+
+
+class IndividualListItem(BaseModel):
+    id: int
+    first_name: str
+    last_name: str
+    email: str
+    username: str
+    mobile: Optional[str] = None
+    status: str
+    college_name: Optional[str] = None
+    course_or_branch: Optional[str] = None
+    batch_year: Optional[int] = None
+    roll_number: Optional[str] = None
+    created_at: datetime
+    activation_pending: bool = False
+
+
+class IndividualListResponse(BaseModel):
+    items: list[IndividualListItem]
+    total: int
+
+
+class CreateIndividualResponse(BaseModel):
+    id: int
+    first_name: str
+    last_name: str
+    email: str
+    username: str
+    status: str
+    college_name: Optional[str] = None
+    course_or_branch: Optional[str] = None
+    batch_year: Optional[int] = None
+    roll_number: Optional[str] = None
+    activation_token: str
+    activation_url: str
+    activation_expires_at: datetime
+    message: str
+    email_sent: bool = False
+    email_skipped: bool = False
+    email_detail: str = ""
+
+
 # ----- Platform users -----
 
 

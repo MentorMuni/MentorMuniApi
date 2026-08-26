@@ -13,8 +13,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.email import EmailError
-from app.common.email.flows import send_tpo_activation_email
-from app.common.email.templates import build_tpo_activation_url
+from app.common.email.flows import send_individual_activation_email, send_tpo_activation_email
+from app.common.email.templates import build_student_activation_url, build_tpo_activation_url
 from app.common.security.jwt import create_access_token
 from app.core.config import settings
 from app.models.enums import PlatformRole
@@ -24,10 +24,14 @@ from app.platform.deps import get_current_platform_user, get_db, require_api_key
 from app.platform.schemas import (
     ActivateTpoRequest,
     ActivateTpoResponse,
+    CreateIndividualRequest,
+    CreateIndividualResponse,
     CreateTpoRequest,
     CreateTpoResponse,
     DeactivateOrgAdminResponse,
     FeatureCatalogResponse,
+    IndividualListItem,
+    IndividualListResponse,
     MessageResponse,
     OrgFeaturesResponse,
     OrgFeaturesSaveRequest,
@@ -658,6 +662,218 @@ async def deactivate_org_admin(
         status=user.status,
         message=f"Org Admin ({title}) deactivated. Other admins are unchanged.",
     )
+
+
+# =============================================================================
+# Individuals (PUBLIC students — separate from college Organizations)
+# =============================================================================
+
+
+def _individual_list_item(user) -> IndividualListItem:
+    return IndividualListItem(
+        id=user.id,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        email=user.email,
+        username=user.username,
+        mobile=user.mobile,
+        status=user.status,
+        college_name=user.college_name,
+        course_or_branch=user.course_or_branch,
+        batch_year=user.batch_year,
+        roll_number=user.roll_number,
+        created_at=user.created_at,
+        activation_pending=user.status == "INVITED",
+    )
+
+
+def _create_individual_response(
+    *,
+    user,
+    raw_token: str,
+    expires,
+    message: str,
+    email_sent: bool = False,
+    email_skipped: bool = False,
+    email_detail: str = "",
+) -> CreateIndividualResponse:
+    return CreateIndividualResponse(
+        id=user.id,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        email=user.email,
+        username=user.username,
+        status=user.status,
+        college_name=user.college_name,
+        course_or_branch=user.course_or_branch,
+        batch_year=user.batch_year,
+        roll_number=user.roll_number,
+        activation_token=raw_token,
+        activation_url=build_student_activation_url(raw_token) if raw_token else "",
+        activation_expires_at=expires,
+        message=message,
+        email_sent=email_sent,
+        email_skipped=email_skipped,
+        email_detail=email_detail,
+    )
+
+
+async def _build_individual_invite_response(
+    *,
+    user,
+    raw_token: str,
+    expires,
+    is_reinvite: bool,
+) -> CreateIndividualResponse:
+    email_sent = False
+    email_skipped = False
+    email_detail = ""
+    email_budget = float(min(settings.smtp_timeout_seconds + 3, 20))
+    try:
+        result = await asyncio.wait_for(
+            send_individual_activation_email(
+                to_email=user.email,
+                first_name=user.first_name,
+                last_name=user.last_name,
+                username=user.username,
+                raw_token=raw_token,
+                expires_at=expires,
+                is_reinvite=is_reinvite,
+            ),
+            timeout=email_budget,
+        )
+        email_sent = result.sent
+        email_skipped = result.skipped
+        email_detail = result.detail
+    except asyncio.TimeoutError:
+        email_sent = False
+        email_skipped = False
+        email_detail = "Email send timed out. Share the activation link or token manually."
+    except EmailError as exc:
+        email_sent = False
+        email_skipped = False
+        email_detail = exc.message
+
+    if is_reinvite:
+        verb_ok = "Individual student re-invited and activation email sent."
+        verb_skip = "Individual student re-invited. Email is disabled; share activation_url manually."
+        verb_fail = "Individual student re-invited but activation email failed. Share activation_url manually."
+    else:
+        verb_ok = "Individual student invited and activation email sent."
+        verb_skip = "Individual student invited. Email is disabled; share activation_url manually."
+        verb_fail = "Individual student invited but activation email failed. Share activation_url manually."
+
+    if email_sent:
+        message = verb_ok
+    elif email_skipped:
+        message = f"{verb_skip} Set password via POST /auth/activate-student."
+    else:
+        message = f"{verb_fail} ({email_detail})"
+
+    return _create_individual_response(
+        user=user,
+        raw_token=raw_token,
+        expires=expires,
+        message=message,
+        email_sent=email_sent,
+        email_skipped=email_skipped,
+        email_detail=email_detail,
+    )
+
+
+@router.get("/individuals", response_model=IndividualListResponse)
+async def list_individuals(
+    q: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
+    _user: PlatformUser = Depends(get_current_platform_user),
+    db: AsyncSession = Depends(get_db),
+) -> IndividualListResponse:
+    """List individual (PUBLIC) students — separate from college Organizations."""
+    try:
+        items, total = await svc.list_individuals(
+            db, q=q, status=status, skip=skip, limit=limit
+        )
+    except svc.PlatformError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return IndividualListResponse(
+        items=[_individual_list_item(u) for u in items],
+        total=total,
+    )
+
+
+@router.post("/individuals", response_model=CreateIndividualResponse, status_code=201)
+async def create_individual(
+    body: CreateIndividualRequest,
+    _user: PlatformUser = Depends(get_current_platform_user),
+    db: AsyncSession = Depends(get_db),
+) -> CreateIndividualResponse:
+    """
+    Staff-provision an individual student under MentorMuni Public.
+    Sends set-password email (student portal). Payment/checkout is out of scope here.
+    """
+    try:
+        user, raw_token, expires = await svc.create_individual(
+            db,
+            first_name=body.first_name,
+            last_name=body.last_name,
+            email=str(body.email),
+            mobile=body.mobile,
+            username=body.username,
+            college_name=body.college_name,
+            course_or_branch=body.course_or_branch,
+            batch_year=body.batch_year,
+            roll_number=body.roll_number,
+            activation_hours=body.activation_hours,
+        )
+    except svc.PlatformError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    return await _build_individual_invite_response(
+        user=user,
+        raw_token=raw_token,
+        expires=expires,
+        is_reinvite=False,
+    )
+
+
+@router.post(
+    "/individuals/{user_id}/reinvite",
+    response_model=CreateIndividualResponse,
+)
+async def reinvite_individual(
+    user_id: int,
+    activation_hours: int = Query(default=72, ge=1, le=168),
+    _user: PlatformUser = Depends(get_current_platform_user),
+    db: AsyncSession = Depends(get_db),
+) -> CreateIndividualResponse:
+    try:
+        user, raw_token, expires = await svc.reinvite_individual(
+            db, user_id=user_id, activation_hours=activation_hours
+        )
+    except svc.PlatformError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    return await _build_individual_invite_response(
+        user=user,
+        raw_token=raw_token,
+        expires=expires,
+        is_reinvite=True,
+    )
+
+
+@router.post("/individuals/{user_id}/block", response_model=IndividualListItem)
+async def block_individual(
+    user_id: int,
+    _user: PlatformUser = Depends(get_current_platform_user),
+    db: AsyncSession = Depends(get_db),
+) -> IndividualListItem:
+    try:
+        user = await svc.block_individual(db, user_id=user_id)
+    except svc.PlatformError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return _individual_list_item(user)
 
 
 # =============================================================================

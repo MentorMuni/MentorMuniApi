@@ -240,6 +240,64 @@ Then log in at the Student Portal with your college and credentials.
     return RenderedEmailContent(subject=subject, text_body=text_body, html_body=html_body)
 
 
+def render_individual_activation_email(
+    *,
+    first_name: str,
+    last_name: str,
+    username: str,
+    raw_token: str,
+    expires_at: datetime,
+    is_reinvite: bool = False,
+) -> RenderedEmailContent:
+    """Individual (B2C) student invite — no college / HOD wording."""
+    display_name = f"{first_name} {last_name}".strip() or "there"
+    activate_url = build_student_activation_url(raw_token)
+    expires_label = expires_at.strftime("%d %b %Y %H:%M UTC")
+    action = "re-activate" if is_reinvite else "activate"
+
+    subject = (
+        "Re-activate your MentorMuni student account"
+        if is_reinvite
+        else "Activate your MentorMuni student account"
+    )
+    text_body = f"""Hi {display_name},
+
+You have been invited to MentorMuni as an individual student.
+
+Username: {username}
+
+Please {action} your account and set your password using this link:
+{activate_url}
+
+This link expires on {expires_label}.
+
+Then log in at the Student Portal as an Individual student (no college picker needed).
+
+{email_signature_text()}
+"""
+    html_body = f"""<!DOCTYPE html>
+<html>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.5; color: #111;">
+  <p>Hi {display_name},</p>
+  <p>You have been invited to <strong>MentorMuni</strong> as an individual student.</p>
+  <p><strong>Username:</strong> {username}</p>
+  <p>Please {action} your account and set your password:</p>
+  <p><a href="{activate_url}" style="display:inline-block;padding:10px 16px;background:#111;color:#fff;text-decoration:none;border-radius:6px;">
+    Set password &amp; activate
+  </a></p>
+  <p style="font-size:13px;color:#555;">Or open this link:<br/>
+    <a href="{activate_url}">{activate_url}</a>
+  </p>
+  <p style="font-size:13px;color:#555;">This link expires on <strong>{expires_label}</strong>.</p>
+  <p style="font-size:13px;color:#555;">Then log in at the Student Portal as an Individual student.</p>
+  <p style="font-size:13px;color:#777;">If you did not expect this email, you can ignore it or reply to this message.</p>
+  {email_signature_html()}
+</body>
+</html>
+"""
+    return RenderedEmailContent(subject=subject, text_body=text_body, html_body=html_body)
+
+
 def render_student_enrollment_denied_email(
     *,
     first_name: str,

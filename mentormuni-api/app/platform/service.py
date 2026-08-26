@@ -1035,3 +1035,227 @@ async def dashboard_metrics(db: AsyncSession) -> dict:
         "expiring_this_month": expiring,
         "feature_usage": feature_usage,
     }
+
+
+# =============================================================================
+# Individuals (PUBLIC students — staff-provisioned, no payment here)
+# =============================================================================
+
+
+async def _get_public_organization(db: AsyncSession) -> Organization:
+    result = await db.execute(
+        select(Organization).where(Organization.code == "PUBLIC")
+    )
+    org = result.scalar_one_or_none()
+    if org is None:
+        raise PlatformError(
+            "MentorMuni Public organization is missing. Run migrations/seed.",
+            status_code=500,
+        )
+    return org
+
+
+def _username_from_email(email: str) -> str:
+    import re
+
+    local = (email or "").split("@", 1)[0].lower().strip()
+    cleaned = re.sub(r"[^a-z0-9._-]", "", local)[:80]
+    return cleaned or "student"
+
+
+async def _unique_public_username(
+    db: AsyncSession, *, org_id: int, preferred: str
+) -> str:
+    base = preferred.strip()[:100] or "student"
+    candidate = base
+    suffix = 0
+    while True:
+        exists = await db.execute(
+            select(User.id).where(
+                User.organization_id == org_id,
+                User.username == candidate,
+            )
+        )
+        if exists.scalar_one_or_none() is None:
+            return candidate
+        suffix += 1
+        candidate = f"{base[:90]}{suffix}"
+
+
+async def list_individuals(
+    db: AsyncSession,
+    *,
+    q: str | None = None,
+    status: str | None = None,
+    skip: int = 0,
+    limit: int = 100,
+) -> tuple[list[User], int]:
+    public = await _get_public_organization(db)
+    filters = [
+        User.organization_id == public.id,
+        User.deleted_at.is_(None),
+    ]
+    role_result = await db.execute(
+        select(Role.id).where(Role.role_code == RoleCode.STUDENT.value)
+    )
+    student_role_id = role_result.scalar_one_or_none()
+    if student_role_id is None:
+        raise PlatformError("STUDENT role missing. Run migrations/seed.", status_code=500)
+    filters.append(User.role_id == student_role_id)
+
+    if status:
+        filters.append(User.status == status.upper().strip())
+    if q:
+        like = f"%{q.strip().lower()}%"
+        filters.append(
+            func.lower(User.email).like(like)
+            | func.lower(User.first_name).like(like)
+            | func.lower(User.last_name).like(like)
+            | func.lower(User.username).like(like)
+            | func.lower(func.coalesce(User.college_name, "")).like(like)
+        )
+
+    count_stmt = select(func.count()).select_from(User).where(*filters)
+    total = int((await db.execute(count_stmt)).scalar_one() or 0)
+    stmt = (
+        select(User)
+        .where(*filters)
+        .order_by(User.id.desc())
+        .offset(skip)
+        .limit(limit)
+    )
+    items = list((await db.execute(stmt)).scalars().all())
+    return items, total
+
+
+async def create_individual(
+    db: AsyncSession,
+    *,
+    first_name: str,
+    last_name: str,
+    email: str,
+    mobile: str | None = None,
+    username: str | None = None,
+    college_name: str | None = None,
+    course_or_branch: str | None = None,
+    batch_year: int | None = None,
+    roll_number: str | None = None,
+    activation_hours: int = 72,
+) -> tuple[User, str, datetime]:
+    org = await _get_public_organization(db)
+    try:
+        ensure_organization_accepts_activation(org)
+    except OrganizationAccessError as exc:
+        raise PlatformError(exc.message, status_code=exc.status_code) from exc
+
+    role_result = await db.execute(
+        select(Role).where(Role.role_code == RoleCode.STUDENT.value)
+    )
+    role = role_result.scalar_one_or_none()
+    if role is None:
+        raise PlatformError("STUDENT role missing. Run migrations/seed.", status_code=500)
+
+    email_norm = email.lower().strip()
+    preferred = (username or "").strip() or _username_from_email(email_norm)
+    username_norm = await _unique_public_username(db, org_id=org.id, preferred=preferred)
+
+    dup = await db.execute(
+        select(User).where(
+            User.organization_id == org.id,
+            User.email == email_norm,
+        )
+    )
+    if dup.scalar_one_or_none():
+        raise PlatformError(
+            "An individual student with this email already exists.",
+            status_code=409,
+        )
+
+    raw_token = secrets.token_urlsafe(32)
+    expires = datetime.now(timezone.utc) + timedelta(hours=activation_hours)
+
+    user = User(
+        organization_id=org.id,
+        department_id=None,
+        role_id=role.id,
+        first_name=first_name.strip(),
+        last_name=last_name.strip(),
+        email=email_norm,
+        mobile=(mobile or "").strip() or None,
+        username=username_norm,
+        password_hash=None,
+        status=UserStatus.INVITED.value,
+        activation_token_hash=_hash_token(raw_token),
+        activation_expires_at=expires,
+        college_name=(college_name or "").strip() or None,
+        course_or_branch=(course_or_branch or "").strip() or None,
+        batch_year=batch_year,
+        roll_number=(roll_number or "").strip() or None,
+    )
+    db.add(user)
+    await db.flush()
+    await db.refresh(user)
+    return user, raw_token, expires
+
+
+async def reinvite_individual(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    activation_hours: int = 72,
+) -> tuple[User, str, datetime]:
+    org = await _get_public_organization(db)
+    result = await db.execute(
+        select(User)
+        .join(Role, User.role_id == Role.id)
+        .where(
+            User.id == user_id,
+            User.organization_id == org.id,
+            Role.role_code == RoleCode.STUDENT.value,
+            User.deleted_at.is_(None),
+        )
+    )
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise PlatformError("Individual student not found.", status_code=404)
+    if user.status == UserStatus.BLOCKED.value:
+        raise PlatformError("This student is blocked. Unblock before re-inviting.", status_code=400)
+
+    try:
+        ensure_organization_accepts_activation(org)
+    except OrganizationAccessError as exc:
+        raise PlatformError(exc.message, status_code=exc.status_code) from exc
+
+    raw_token = secrets.token_urlsafe(32)
+    expires = datetime.now(timezone.utc) + timedelta(hours=activation_hours)
+    user.password_hash = None
+    user.status = UserStatus.INVITED.value
+    user.activation_token_hash = _hash_token(raw_token)
+    user.activation_expires_at = expires
+    await db.flush()
+    await db.refresh(user)
+    return user, raw_token, expires
+
+
+async def block_individual(db: AsyncSession, *, user_id: int) -> User:
+    org = await _get_public_organization(db)
+    result = await db.execute(
+        select(User)
+        .join(Role, User.role_id == Role.id)
+        .where(
+            User.id == user_id,
+            User.organization_id == org.id,
+            Role.role_code == RoleCode.STUDENT.value,
+            User.deleted_at.is_(None),
+        )
+    )
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise PlatformError("Individual student not found.", status_code=404)
+    user.status = UserStatus.BLOCKED.value
+    user.activation_token_hash = None
+    user.activation_expires_at = None
+    await db.flush()
+    await db.refresh(user)
+    return user
+

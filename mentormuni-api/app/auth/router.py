@@ -62,6 +62,10 @@ async def _to_me(db: AsyncSession, user: User) -> MeResponse:
     ctx = await build_tenant_context(db, user)
     role_code = ctx.role
     dept = user.department
+    org_type = (
+        user.organization.organization_type if user.organization else "COLLEGE"
+    )
+    is_individual = str(org_type).upper() == "PUBLIC"
     return MeResponse(
         id=user.id,
         user_id=user.id,
@@ -75,9 +79,8 @@ async def _to_me(db: AsyncSession, user: User) -> MeResponse:
         organization_id=user.organization_id,
         organization_code=user.organization.code if user.organization else "",
         organization_name=user.organization.name if user.organization else "",
-        organization_type=(
-            user.organization.organization_type if user.organization else "COLLEGE"
-        ),
+        organization_type=org_type,
+        is_individual=is_individual,
         department_id=user.department_id,
         department_name=dept.name if dept else "",
         department_code=dept.code if dept else "",
@@ -88,6 +91,10 @@ async def _to_me(db: AsyncSession, user: User) -> MeResponse:
         mobile=user.mobile,
         username=user.username,
         status=user.status,
+        college_name=getattr(user, "college_name", None),
+        course_or_branch=getattr(user, "course_or_branch", None),
+        batch_year=getattr(user, "batch_year", None),
+        roll_number=getattr(user, "roll_number", None),
         created_at=user.created_at,
     )
 

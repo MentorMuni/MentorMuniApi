@@ -6,6 +6,7 @@ from app.common.email.exceptions import (
     EmailNotConfiguredError,
 )
 from app.common.email.flows import (
+    send_individual_activation_email,
     send_password_reset_email,
     send_staff_activation_email,
     send_student_activation_email,
@@ -30,6 +31,7 @@ __all__ = [
     "is_email_configured",
     "is_email_enabled",
     "send_email",
+    "send_individual_activation_email",
     "send_password_reset_email",
     "send_simple_email",
     "send_staff_activation_email",
