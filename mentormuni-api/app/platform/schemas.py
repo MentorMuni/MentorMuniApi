@@ -102,6 +102,8 @@ class PlatformOrganizationResponse(BaseModel):
     city: Optional[str] = None
     state: Optional[str] = None
     country: Optional[str] = None
+    has_logo: bool = False
+    logo_updated_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 

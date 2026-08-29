@@ -147,6 +147,8 @@ async def get_college_by_portal_slug(
         portal_url=college_portal_base_url(org.portal_slug),
         status=org.status,
         organization_type=org.organization_type,
+        has_logo=bool(org.logo_content_type),
+        logo_updated_at=org.logo_updated_at,
     )
 
 

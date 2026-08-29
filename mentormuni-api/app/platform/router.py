@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.email import EmailError
@@ -174,6 +174,8 @@ def _org_response(org: Organization) -> PlatformOrganizationResponse:
     data = PlatformOrganizationResponse.model_validate(org)
     if org.portal_slug and str(org.organization_type).upper() != "PUBLIC":
         data.portal_url = college_portal_base_url(org.portal_slug)
+    data.has_logo = bool(org.logo_content_type)
+    data.logo_updated_at = org.logo_updated_at
     return data
 
 
@@ -248,6 +250,50 @@ async def delete_organization(
     """Soft-delete: set status=SUSPENDED and cancel ACTIVE subscriptions."""
     try:
         org = await svc.delete_organization(db, organization_id)
+    except svc.PlatformError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return _org_response(org)
+
+
+@router.post(
+    "/organizations/{organization_id}/logo",
+    response_model=PlatformOrganizationResponse,
+)
+async def upload_organization_logo(
+    organization_id: int,
+    file: UploadFile = File(...),
+    _user: PlatformUser = Depends(get_current_platform_user),
+    db: AsyncSession = Depends(get_db),
+) -> PlatformOrganizationResponse:
+    """Upload college crest/logo (PNG/JPEG/WebP/SVG, max 512 KB). Stored in Postgres."""
+    from app.platform import org_logo as logo_svc
+
+    raw = await file.read()
+    try:
+        org = await logo_svc.set_organization_logo(
+            db,
+            organization_id,
+            data=raw,
+            content_type=file.content_type or "",
+        )
+    except svc.PlatformError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return _org_response(org)
+
+
+@router.delete(
+    "/organizations/{organization_id}/logo",
+    response_model=PlatformOrganizationResponse,
+)
+async def delete_organization_logo(
+    organization_id: int,
+    _user: PlatformUser = Depends(get_current_platform_user),
+    db: AsyncSession = Depends(get_db),
+) -> PlatformOrganizationResponse:
+    from app.platform import org_logo as logo_svc
+
+    try:
+        org = await logo_svc.clear_organization_logo(db, organization_id)
     except svc.PlatformError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     return _org_response(org)

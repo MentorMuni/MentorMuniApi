@@ -89,6 +89,8 @@ class CollegeBySlugResponse(BaseModel):
     portal_url: str
     status: str
     organization_type: str = "COLLEGE"
+    has_logo: bool = False
+    logo_updated_at: Optional[datetime] = None
 
 
 class CollegeNamesResponse(BaseModel):

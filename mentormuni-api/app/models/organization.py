@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import BigInteger, DateTime, String, func
+from sqlalchemy import BigInteger, DateTime, LargeBinary, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.common.database.base import Base
@@ -54,6 +54,17 @@ class Organization(Base):
     city: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     state: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     country: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+
+    # College crest / logo (small image in Postgres — no external object store required)
+    # deferred: list/detail JSON never pulls the blob unless an endpoint reads it.
+    logo_bytes: Mapped[Optional[bytes]] = mapped_column(
+        LargeBinary, nullable=True, deferred=True
+    )
+    logo_content_type: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    logo_updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
