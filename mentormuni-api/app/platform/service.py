@@ -38,6 +38,19 @@ from app.models.subscription_plan import SubscriptionPlan
 from app.models.user import User
 from app.organizations.service import _add_months
 
+# Seed admin (migration 0002) plus production primary mailbox — neither may be
+# soft-deleted or deactivated via the platform users API.
+PROTECTED_PLATFORM_ADMIN_EMAILS = frozenset(
+    {
+        "admin@mentormuni.com",
+        "mentormuniteam@gmail.com",
+    }
+)
+
+
+def _is_protected_platform_admin(user: PlatformUser) -> bool:
+    return (user.email or "").lower().strip() in PROTECTED_PLATFORM_ADMIN_EMAILS
+
 
 class PlatformError(Exception):
     def __init__(self, message: str, *, status_code: int = 400) -> None:
@@ -944,6 +957,31 @@ async def update_platform_user(db: AsyncSession, user_id: int, **fields: object)
     if user is None:
         raise PlatformError("Platform user not found.", status_code=404)
 
+    if _is_protected_platform_admin(user):
+        if "email" in fields and fields["email"] is not None:
+            new_email = str(fields["email"]).lower().strip()
+            if new_email != (user.email or "").lower().strip():
+                raise PlatformError(
+                    "Primary platform admin email cannot be changed.",
+                    status_code=400,
+                )
+        if "status" in fields and fields["status"] is not None:
+            new_status = str(fields["status"]).upper().strip()
+            if new_status in (
+                PlatformUserStatus.INACTIVE.value,
+                "SUSPENDED",
+            ):
+                raise PlatformError(
+                    "Primary platform admin cannot be deactivated.",
+                    status_code=400,
+                )
+        if "role" in fields and fields["role"] is not None:
+            if str(fields["role"]).upper().strip() != PlatformRole.PLATFORM_ADMIN.value:
+                raise PlatformError(
+                    "Primary platform admin role cannot be changed.",
+                    status_code=400,
+                )
+
     if "password" in fields and fields["password"]:
         user.password_hash = hash_password(str(fields["password"]))
         user.must_change_password = True
@@ -972,7 +1010,7 @@ async def delete_platform_user(db: AsyncSession, user_id: int) -> PlatformUser:
     user = await db.get(PlatformUser, user_id)
     if user is None:
         raise PlatformError("Platform user not found.", status_code=404)
-    if user.email.lower() == "mentormuniteam@gmail.com":
+    if _is_protected_platform_admin(user):
         raise PlatformError("Primary platform admin cannot be deleted.", status_code=400)
     user.status = PlatformUserStatus.INACTIVE.value
     await db.flush()
