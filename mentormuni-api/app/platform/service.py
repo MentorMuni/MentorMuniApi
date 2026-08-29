@@ -92,6 +92,9 @@ async def change_platform_password(
 
 
 async def create_organization(db: AsyncSession, **fields: object) -> Organization:
+    from app.common.portal_slug import normalize_portal_slug, validate_portal_slug
+    from app.models.enums import OrganizationType
+
     code = str(fields["code"]).strip().upper()
     existing = await db.execute(select(Organization).where(Organization.code == code))
     if existing.scalar_one_or_none():
@@ -107,9 +110,31 @@ async def create_organization(db: AsyncSession, **fields: object) -> Organizatio
     except OrganizationAccessError as exc:
         raise PlatformError(exc.message, status_code=exc.status_code) from exc
 
+    portal_slug: str | None = None
+    if org_type == OrganizationType.PUBLIC.value:
+        portal_slug = None
+    else:
+        raw_slug = fields.get("portal_slug")
+        try:
+            if raw_slug:
+                portal_slug = validate_portal_slug(str(raw_slug), required=True)
+            else:
+                portal_slug = validate_portal_slug(normalize_portal_slug(code), required=True)
+        except ValueError as exc:
+            raise PlatformError(str(exc), status_code=422) from exc
+        clash = await db.execute(
+            select(Organization).where(Organization.portal_slug == portal_slug)
+        )
+        if clash.scalar_one_or_none():
+            raise PlatformError(
+                f"Portal slug '{portal_slug}' is already used by another college.",
+                status_code=409,
+            )
+
     org = Organization(
         name=str(fields["name"]).strip(),
         code=code,
+        portal_slug=portal_slug,
         organization_type=org_type,
         status=org_status,
         contact_person=fields.get("contact_person"),  # type: ignore[arg-type]
@@ -204,6 +229,29 @@ async def update_organization(db: AsyncSession, organization_id: int, **fields: 
                     status_code=409,
                 )
             fields["code"] = new_code
+
+    if "portal_slug" in fields:
+        from app.common.portal_slug import validate_portal_slug
+
+        if is_public_organization(org):
+            fields["portal_slug"] = None
+        elif fields["portal_slug"] is not None:
+            try:
+                new_slug = validate_portal_slug(str(fields["portal_slug"]), required=True)
+            except ValueError as exc:
+                raise PlatformError(str(exc), status_code=422) from exc
+            clash = await db.execute(
+                select(Organization).where(
+                    Organization.portal_slug == new_slug,
+                    Organization.id != organization_id,
+                )
+            )
+            if clash.scalar_one_or_none():
+                raise PlatformError(
+                    f"Portal slug '{new_slug}' is already used by another college.",
+                    status_code=409,
+                )
+            fields["portal_slug"] = new_slug
 
     if "organization_type" in fields and fields["organization_type"] is not None:
         if is_public_organization(org) and str(fields["organization_type"]) != org.organization_type:

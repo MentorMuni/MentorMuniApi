@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import Depends
+from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +11,7 @@ from app.common.security.api_key import require_api_key
 from app.common.security.auth_errors import (
     ACCOUNT_INACTIVE,
     FORBIDDEN_ROLE,
+    MUST_CHANGE_PASSWORD,
     TOKEN_INVALID,
     TOKEN_MISSING,
     raise_forbidden,
@@ -22,8 +23,15 @@ from app.models.platform_user import PlatformUser
 
 _bearer = HTTPBearer(auto_error=False)
 
+# Allowed while must_change_password is true (FE change-password flow).
+_MUST_CHANGE_ALLOWED_SUFFIXES = (
+    "/platform/auth/change-password",
+    "/platform/auth/me",
+)
+
 
 async def get_current_platform_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
     db: AsyncSession = Depends(get_db),
 ) -> PlatformUser:
@@ -47,6 +55,14 @@ async def get_current_platform_user(
             code=ACCOUNT_INACTIVE,
             message="Platform user is inactive.",
         )
+
+    if bool(getattr(user, "must_change_password", False)):
+        path = request.url.path.rstrip("/") or "/"
+        if not any(path.endswith(suffix.rstrip("/")) for suffix in _MUST_CHANGE_ALLOWED_SUFFIXES):
+            raise_forbidden(
+                code=MUST_CHANGE_PASSWORD,
+                message="You must change your password before continuing.",
+            )
     return user
 
 

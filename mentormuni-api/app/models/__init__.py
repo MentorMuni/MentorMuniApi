@@ -45,6 +45,17 @@ from app.student_roadmap.models import (
     StudentRoadmapStep,
     StudentRoadmapWeek,
 )
+from app.student_intelligence.models import (
+    StudentAttempt,
+    StudentCoverageLedger,
+    StudentDailyActivity,
+    StudentDailyTaskLedger,
+    StudentMemoryFact,
+    StudentMissionAnchor,
+    StudentReadinessSnapshot,
+    StudentTarget,
+    StudentTopicMastery,
+)
 from app.company_intelligence.models import CompanyIntelligence
 from app.coding.models import (
     CodingAiAnalysis,

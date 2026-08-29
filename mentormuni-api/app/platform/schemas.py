@@ -57,6 +57,8 @@ class MessageResponse(BaseModel):
 class PlatformOrganizationCreate(BaseModel):
     name: str = Field(min_length=2, max_length=255)
     code: str = Field(min_length=2, max_length=64)
+    # College short name → medicaps.mentormuni.com (optional; derived from code if omitted)
+    portal_slug: Optional[str] = Field(default=None, max_length=64)
     organization_type: str = Field(pattern="^(COLLEGE|PUBLIC)$")
     status: str = Field(default="ACTIVE", pattern="^(ACTIVE|SUSPENDED)$")
     contact_person: Optional[str] = None
@@ -71,6 +73,7 @@ class PlatformOrganizationCreate(BaseModel):
 class PlatformOrganizationUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=2, max_length=255)
     code: Optional[str] = Field(default=None, min_length=2, max_length=64)
+    portal_slug: Optional[str] = Field(default=None, max_length=64)
     organization_type: Optional[str] = Field(
         default=None, pattern="^(COLLEGE|PUBLIC)$"
     )
@@ -88,6 +91,8 @@ class PlatformOrganizationResponse(BaseModel):
     id: int
     name: str
     code: str
+    portal_slug: Optional[str] = None
+    portal_url: Optional[str] = None
     organization_type: str
     status: str
     contact_person: Optional[str] = None

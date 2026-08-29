@@ -293,8 +293,9 @@ def _lifecycle_from_enrich(payload: dict) -> dict:
     emailed = bool(payload.get("emailed"))
     token = payload.get("activation_token")
     url = payload.get("activation_url")
+    portal_slug = payload.get("portal_slug")
     if token and not url:
-        url = build_hod_activation_url(str(token))
+        url = build_hod_activation_url(str(token), portal_slug=portal_slug)
     return {
         "message": payload.get("message") or "",
         "emailed": emailed,
@@ -304,14 +305,19 @@ def _lifecycle_from_enrich(payload: dict) -> dict:
     }
 
 
-def _require_invite_delivery(raw_token: str | None, *, emailed: bool) -> tuple[str, str]:
+def _require_invite_delivery(
+    raw_token: str | None,
+    *,
+    emailed: bool,
+    portal_slug: str | None = None,
+) -> tuple[str, str]:
     if not raw_token:
         raise DepartmentError(
             "Invite created but activation token missing. Retry or contact support.",
             status_code=500,
             code="HOD_INVITE_TOKEN_MISSING",
         )
-    url = build_hod_activation_url(raw_token)
+    url = build_hod_activation_url(raw_token, portal_slug=portal_slug)
     return raw_token, url
 
 
@@ -443,8 +449,11 @@ async def invite_mentor(
 
     email_sent = False
     activation_url = None
+    portal_slug = getattr(getattr(actor, "organization", None), "portal_slug", None) or getattr(
+        getattr(user, "organization", None), "portal_slug", None
+    )
     if raw_token and expires:
-        activation_url = build_hod_activation_url(raw_token)
+        activation_url = build_hod_activation_url(raw_token, portal_slug=portal_slug)
         email_sent = await user_service.send_hod_invite_email(
             user=user,
             raw_token=raw_token,
@@ -452,7 +461,9 @@ async def invite_mentor(
             role_label=_email_role_label(title),
         )
 
-    raw_token, activation_url = _require_invite_delivery(raw_token, emailed=email_sent)
+    raw_token, activation_url = _require_invite_delivery(
+        raw_token, emailed=email_sent, portal_slug=portal_slug
+    )
 
     await write_audit(
         db,
@@ -518,14 +529,23 @@ async def reinvite_mentor(
     await db.flush()
     mentor = await user_service.get_user(db, mentor.id)
 
-    activation_url = build_hod_activation_url(raw_token)
+    activation_url = build_hod_activation_url(
+        raw_token,
+        portal_slug=getattr(getattr(mentor, "organization", None), "portal_slug", None)
+        or getattr(getattr(actor, "organization", None), "portal_slug", None),
+    )
     email_sent = await user_service.send_hod_invite_email(
         user=mentor,
         raw_token=raw_token,
         expires=expires,
         role_label=_email_role_label(title),
     )
-    raw_token, activation_url = _require_invite_delivery(raw_token, emailed=email_sent)
+    portal_slug = getattr(getattr(mentor, "organization", None), "portal_slug", None) or getattr(
+        getattr(actor, "organization", None), "portal_slug", None
+    )
+    raw_token, activation_url = _require_invite_delivery(
+        raw_token, emailed=email_sent, portal_slug=portal_slug
+    )
 
     await write_audit(
         db,

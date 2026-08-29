@@ -593,7 +593,10 @@ async def approve_user(
     user.status = UserStatus.INVITED.value
     user.activation_token_hash = _hash_token(raw_token)
     user.activation_expires_at = expires
-    setup_url = build_student_activation_url(raw_token)
+    setup_url = build_student_activation_url(
+        raw_token,
+        portal_slug=getattr(getattr(user, "organization", None), "portal_slug", None),
+    )
     if send_password_email:
         email_sent = await send_student_set_password_email(
             user=user, raw_token=raw_token, expires=expires
@@ -674,6 +677,7 @@ async def send_student_set_password_email(
 ) -> bool:
     from app.common.email.flows import send_student_activation_email
 
+    portal_slug = getattr(getattr(user, "organization", None), "portal_slug", None)
     try:
         result = await send_student_activation_email(
             to_email=user.email,
@@ -684,6 +688,7 @@ async def send_student_set_password_email(
             department_name=user.department.name if user.department else None,
             raw_token=raw_token,
             expires_at=expires,
+            portal_slug=portal_slug,
         )
         return bool(getattr(result, "sent", False))
     except EmailError as exc:
@@ -708,10 +713,10 @@ async def send_student_enrollment_denied_email(*, user: User) -> bool:
         return False
 
 
-def build_student_activation_url(raw_token: str) -> str:
+def build_student_activation_url(raw_token: str, *, portal_slug: str | None = None) -> str:
     from app.common.email.templates import build_student_activation_url as _build
 
-    return _build(raw_token)
+    return _build(raw_token, portal_slug=portal_slug)
 
 
 async def issue_student_activation(
@@ -746,7 +751,10 @@ async def issue_student_activation(
     user = await get_user(db, user.id)
 
     email_sent = False
-    setup_url = build_student_activation_url(raw_token)
+    setup_url = build_student_activation_url(
+        raw_token,
+        portal_slug=getattr(getattr(user, "organization", None), "portal_slug", None),
+    )
     if send_email:
         email_sent = await send_student_set_password_email(
             user=user, raw_token=raw_token, expires=expires
@@ -851,6 +859,7 @@ async def send_hod_invite_email(
     role_label: str | None = None,
 ) -> bool:
     label = role_label or "HOD (Department Admin)"
+    portal_slug = getattr(getattr(user, "organization", None), "portal_slug", None)
     try:
         await send_staff_activation_email(
             to_email=user.email,
@@ -861,6 +870,7 @@ async def send_hod_invite_email(
             role_label=label,
             raw_token=raw_token,
             expires_at=expires,
+            portal_slug=portal_slug,
         )
         return True
     except EmailError as exc:
@@ -868,5 +878,5 @@ async def send_hod_invite_email(
         return False
 
 
-def activation_link(raw_token: str) -> str:
-    return build_hod_activation_url(raw_token)
+def activation_link(raw_token: str, *, portal_slug: str | None = None) -> str:
+    return build_hod_activation_url(raw_token, portal_slug=portal_slug)

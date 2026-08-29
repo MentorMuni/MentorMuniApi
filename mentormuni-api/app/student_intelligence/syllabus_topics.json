@@ -1,0 +1,546 @@
+[
+  {
+    "id": "apt.verb.ana",
+    "path": "aptitude.verbal.analogies",
+    "minLevel": 2,
+    "companies": [
+      "tcs_ninja",
+      "tcs_digital",
+      "infosys_dse",
+      "wipro"
+    ]
+  },
+  {
+    "id": "apt.verb.com",
+    "path": "aptitude.verbal.comprehension",
+    "minLevel": 1,
+    "companies": [
+      "tcs_ninja",
+      "accenture"
+    ]
+  },
+  {
+    "id": "apt.verb.voc",
+    "path": "aptitude.verbal.vocabulary",
+    "minLevel": 1,
+    "companies": [
+      "tcs_ninja"
+    ]
+  },
+  {
+    "id": "apt.logic.syl",
+    "path": "aptitude.logical.syllogism",
+    "minLevel": 2,
+    "companies": [
+      "tcs_ninja",
+      "tcs_digital",
+      "infosys_dse"
+    ]
+  },
+  {
+    "id": "apt.logic.blo",
+    "path": "aptitude.logical.blood-relations",
+    "minLevel": 2,
+    "companies": [
+      "tcs_ninja",
+      "wipro"
+    ]
+  },
+  {
+    "id": "apt.logic.clo",
+    "path": "aptitude.logical.clocks-calendars",
+    "minLevel": 2,
+    "companies": [
+      "tcs_ninja",
+      "tcs_digital"
+    ]
+  },
+  {
+    "id": "apt.logic.arr",
+    "path": "aptitude.logical.arrangement",
+    "minLevel": 2,
+    "companies": [
+      "tcs_digital",
+      "infosys_sp"
+    ]
+  },
+  {
+    "id": "apt.logic.dir",
+    "path": "aptitude.logical.direction-distance",
+    "minLevel": 1,
+    "companies": [
+      "tcs_ninja"
+    ]
+  },
+  {
+    "id": "apt.quant.per",
+    "path": "aptitude.quantitative.percentages",
+    "minLevel": 3,
+    "companies": [
+      "tcs_ninja",
+      "tcs_digital",
+      "tcs_prime",
+      "infosys_dse"
+    ]
+  },
+  {
+    "id": "apt.quant.rat",
+    "path": "aptitude.quantitative.ratios-proportions",
+    "minLevel": 3,
+    "companies": [
+      "tcs_ninja",
+      "tcs_digital",
+      "infosys_dse",
+      "accenture"
+    ]
+  },
+  {
+    "id": "apt.quant.mix",
+    "path": "aptitude.quantitative.mixtures-solutions",
+    "minLevel": 2,
+    "companies": [
+      "tcs_digital"
+    ]
+  },
+  {
+    "id": "apt.quant.pro",
+    "path": "aptitude.quantitative.profit-loss",
+    "minLevel": 2,
+    "companies": [
+      "tcs_ninja",
+      "infosys_dse"
+    ]
+  },
+  {
+    "id": "apt.quant.tim",
+    "path": "aptitude.quantitative.time-work",
+    "minLevel": 2,
+    "companies": [
+      "tcs_ninja",
+      "tcs_digital",
+      "cognizant"
+    ]
+  },
+  {
+    "id": "apt.quant.tim",
+    "path": "aptitude.quantitative.time-distance",
+    "minLevel": 2,
+    "companies": [
+      "tcs_ninja",
+      "tcs_digital",
+      "infosys_dse"
+    ]
+  },
+  {
+    "id": "apt.quant.per",
+    "path": "aptitude.quantitative.permutations-combinations",
+    "minLevel": 2,
+    "companies": [
+      "tcs_digital",
+      "tcs_prime"
+    ]
+  },
+  {
+    "id": "apt.quant.pro",
+    "path": "aptitude.quantitative.probability",
+    "minLevel": 1,
+    "companies": [
+      "tcs_prime"
+    ]
+  },
+  {
+    "id": "code.arr",
+    "path": "coding.arrays",
+    "minLevel": 3,
+    "companies": [
+      "tcs_digital",
+      "tcs_prime",
+      "infosys_sp",
+      "capgemini"
+    ]
+  },
+  {
+    "id": "code.str",
+    "path": "coding.strings",
+    "minLevel": 3,
+    "companies": [
+      "tcs_digital",
+      "tcs_prime",
+      "infosys_sp"
+    ]
+  },
+  {
+    "id": "code.lin",
+    "path": "coding.linked-lists",
+    "minLevel": 2,
+    "companies": [
+      "tcs_digital",
+      "tcs_prime",
+      "infosys_sp"
+    ]
+  },
+  {
+    "id": "code.sta",
+    "path": "coding.stacks-queues",
+    "minLevel": 2,
+    "companies": [
+      "tcs_prime",
+      "infosys_sp"
+    ]
+  },
+  {
+    "id": "code.has",
+    "path": "coding.hashing",
+    "minLevel": 2,
+    "companies": [
+      "tcs_prime",
+      "infosys_sp"
+    ]
+  },
+  {
+    "id": "code.tre",
+    "path": "coding.trees",
+    "minLevel": 2,
+    "companies": [
+      "tcs_prime",
+      "infosys_sp"
+    ]
+  },
+  {
+    "id": "code.gra",
+    "path": "coding.graphs",
+    "minLevel": 1,
+    "companies": [
+      "tcs_prime"
+    ]
+  },
+  {
+    "id": "code.sor",
+    "path": "coding.sorting",
+    "minLevel": 3,
+    "companies": [
+      "tcs_digital",
+      "tcs_prime",
+      "infosys_sp"
+    ]
+  },
+  {
+    "id": "code.sea",
+    "path": "coding.searching",
+    "minLevel": 3,
+    "companies": [
+      "tcs_digital",
+      "tcs_prime",
+      "infosys_sp"
+    ]
+  },
+  {
+    "id": "code.rec",
+    "path": "coding.recursion",
+    "minLevel": 2,
+    "companies": [
+      "tcs_digital",
+      "tcs_prime",
+      "infosys_sp"
+    ]
+  },
+  {
+    "id": "code.dyn",
+    "path": "coding.dynamic-programming",
+    "minLevel": 1,
+    "companies": [
+      "tcs_prime",
+      "infosys_sp"
+    ]
+  },
+  {
+    "id": "tech.oop.cla",
+    "path": "technical.oops.classes-objects",
+    "minLevel": 2,
+    "companies": [
+      "tcs_digital",
+      "tcs_prime",
+      "infosys_sp"
+    ]
+  },
+  {
+    "id": "tech.oop.pol",
+    "path": "technical.oops.polymorphism",
+    "minLevel": 2,
+    "companies": [
+      "tcs_prime",
+      "infosys_sp"
+    ]
+  },
+  {
+    "id": "tech.oop.inh",
+    "path": "technical.oops.inheritance",
+    "minLevel": 2,
+    "companies": [
+      "tcs_prime",
+      "infosys_sp"
+    ]
+  },
+  {
+    "id": "tech.oop.enc",
+    "path": "technical.oops.encapsulation",
+    "minLevel": 1,
+    "companies": [
+      "tcs_prime"
+    ]
+  },
+  {
+    "id": "tech.oop.abs",
+    "path": "technical.oops.abstraction",
+    "minLevel": 1,
+    "companies": [
+      "tcs_prime"
+    ]
+  },
+  {
+    "id": "tech.dat.sql",
+    "path": "technical.database.sql-basics",
+    "minLevel": 3,
+    "companies": [
+      "tcs_digital",
+      "tcs_prime",
+      "infosys_sp",
+      "cognizant"
+    ]
+  },
+  {
+    "id": "tech.dat.joi",
+    "path": "technical.database.joins",
+    "minLevel": 3,
+    "companies": [
+      "tcs_digital",
+      "tcs_prime",
+      "infosys_sp"
+    ]
+  },
+  {
+    "id": "tech.dat.nor",
+    "path": "technical.database.normalization",
+    "minLevel": 2,
+    "companies": [
+      "tcs_prime",
+      "infosys_sp"
+    ]
+  },
+  {
+    "id": "tech.dat.ind",
+    "path": "technical.database.indexing",
+    "minLevel": 1,
+    "companies": [
+      "tcs_prime"
+    ]
+  },
+  {
+    "id": "tech.dat.tra",
+    "path": "technical.database.transactions",
+    "minLevel": 1,
+    "companies": [
+      "tcs_prime"
+    ]
+  },
+  {
+    "id": "tech.os.pro",
+    "path": "technical.os.processes-threads",
+    "minLevel": 2,
+    "companies": [
+      "tcs_prime",
+      "infosys_sp"
+    ]
+  },
+  {
+    "id": "tech.os.mem",
+    "path": "technical.os.memory-management",
+    "minLevel": 1,
+    "companies": [
+      "tcs_prime"
+    ]
+  },
+  {
+    "id": "tech.os.syn",
+    "path": "technical.os.synchronization",
+    "minLevel": 1,
+    "companies": [
+      "tcs_prime"
+    ]
+  },
+  {
+    "id": "tech.os.fil",
+    "path": "technical.os.file-systems",
+    "minLevel": 1,
+    "companies": [
+      "tcs_prime"
+    ]
+  },
+  {
+    "id": "tech.net.osi",
+    "path": "technical.networking.osi-model",
+    "minLevel": 1,
+    "companies": [
+      "tcs_prime",
+      "infosys_sp"
+    ]
+  },
+  {
+    "id": "tech.net.tcp",
+    "path": "technical.networking.tcp-ip",
+    "minLevel": 1,
+    "companies": [
+      "tcs_prime"
+    ]
+  },
+  {
+    "id": "tech.net.dns",
+    "path": "technical.networking.dns-http",
+    "minLevel": 1,
+    "companies": [
+      "tcs_prime"
+    ]
+  },
+  {
+    "id": "comm.tec",
+    "path": "communication.technical-explanation",
+    "minLevel": 2,
+    "companies": [
+      "tcs_digital",
+      "tcs_prime",
+      "infosys_sp",
+      "accenture"
+    ]
+  },
+  {
+    "id": "comm.pro",
+    "path": "communication.problem-solving-walkthrough",
+    "minLevel": 2,
+    "companies": [
+      "tcs_prime",
+      "infosys_sp"
+    ]
+  },
+  {
+    "id": "comm.fol",
+    "path": "communication.follow-up-responses",
+    "minLevel": 2,
+    "companies": [
+      "tcs_prime",
+      "infosys_sp",
+      "accenture"
+    ]
+  },
+  {
+    "id": "comm.con",
+    "path": "communication.confidence",
+    "minLevel": 2,
+    "companies": [
+      "tcs_ninja",
+      "accenture",
+      "wipro"
+    ]
+  },
+  {
+    "id": "comm.gra",
+    "path": "communication.grammar-clarity",
+    "minLevel": 1,
+    "companies": [
+      "accenture"
+    ]
+  },
+  {
+    "id": "res.ats",
+    "path": "resume.ats-formatting",
+    "minLevel": 3,
+    "companies": [
+      "tcs_ninja",
+      "tcs_digital",
+      "infosys_dse",
+      "accenture"
+    ]
+  },
+  {
+    "id": "res.key",
+    "path": "resume.keywords",
+    "minLevel": 2,
+    "companies": [
+      "tcs_digital",
+      "infosys_sp",
+      "accenture"
+    ]
+  },
+  {
+    "id": "res.wor",
+    "path": "resume.work-experience",
+    "minLevel": 2,
+    "companies": [
+      "tcs_digital",
+      "infosys_sp",
+      "accenture"
+    ]
+  },
+  {
+    "id": "res.pro",
+    "path": "resume.projects-section",
+    "minLevel": 2,
+    "companies": [
+      "tcs_digital",
+      "infosys_sp"
+    ]
+  },
+  {
+    "id": "res.cer",
+    "path": "resume.certifications",
+    "minLevel": 1,
+    "companies": [
+      "tcs_digital"
+    ]
+  },
+  {
+    "id": "hr.str",
+    "path": "hr.strengths-weaknesses",
+    "minLevel": 2,
+    "companies": [
+      "tcs_ninja",
+      "accenture",
+      "wipro"
+    ]
+  },
+  {
+    "id": "hr.why",
+    "path": "hr.why-this-company",
+    "minLevel": 2,
+    "companies": [
+      "tcs_digital",
+      "accenture"
+    ]
+  },
+  {
+    "id": "hr.con",
+    "path": "hr.conflict-resolution",
+    "minLevel": 2,
+    "companies": [
+      "accenture",
+      "infosys_sp"
+    ]
+  },
+  {
+    "id": "hr.tea",
+    "path": "hr.team-work",
+    "minLevel": 2,
+    "companies": [
+      "tcs_ninja",
+      "accenture"
+    ]
+  },
+  {
+    "id": "hr.pre",
+    "path": "hr.pressure-handling",
+    "minLevel": 1,
+    "companies": [
+      "accenture",
+      "infosys_sp"
+    ]
+  }
+]

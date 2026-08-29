@@ -58,7 +58,10 @@ async def create_organization(
     country: str | None = None,
     plan_id: int | None = None,
     subscription_start_date: date | None = None,
+    portal_slug: str | None = None,
 ) -> Organization:
+    from app.common.portal_slug import normalize_portal_slug, validate_portal_slug
+
     code_norm = code.strip().upper()
     existing = await db.execute(select(Organization).where(Organization.code == code_norm))
     if existing.scalar_one_or_none():
@@ -67,9 +70,23 @@ async def create_organization(
     if organization_type not in {OrganizationType.COLLEGE.value, OrganizationType.PUBLIC.value}:
         raise OrgError("organization_type must be COLLEGE or PUBLIC.")
 
+    slug: str | None = None
+    if organization_type == OrganizationType.COLLEGE.value:
+        try:
+            slug = validate_portal_slug(
+                portal_slug or normalize_portal_slug(code_norm),
+                required=True,
+            )
+        except ValueError as exc:
+            raise OrgError(str(exc), status_code=422) from exc
+        clash = await db.execute(select(Organization).where(Organization.portal_slug == slug))
+        if clash.scalar_one_or_none():
+            raise OrgError(f"Portal slug '{slug}' is already used.", status_code=409)
+
     org = Organization(
         name=name.strip(),
         code=code_norm,
+        portal_slug=slug,
         organization_type=organization_type,
         status=OrganizationStatus.ACTIVE.value,
         contact_person=contact_person,
@@ -153,6 +170,26 @@ async def get_college_by_code(db: AsyncSession, code: str) -> Organization:
         raise OrgError("College not found.", status_code=404)
     if org.status != OrganizationStatus.ACTIVE.value:
         raise OrgError("This college is not accepting enrollments.", status_code=403)
+    return org
+
+
+async def get_college_by_portal_slug(db: AsyncSession, slug: str) -> Organization:
+    from app.common.portal_slug import normalize_portal_slug
+
+    slug_norm = normalize_portal_slug(slug)
+    if not slug_norm:
+        raise OrgError("College not found.", status_code=404)
+    result = await db.execute(
+        select(Organization).where(
+            Organization.portal_slug == slug_norm,
+            Organization.organization_type == OrganizationType.COLLEGE.value,
+        )
+    )
+    org = result.scalar_one_or_none()
+    if org is None:
+        raise OrgError("College not found.", status_code=404)
+    if org.status != OrganizationStatus.ACTIVE.value:
+        raise OrgError("This college portal is not active.", status_code=403)
     return org
 
 

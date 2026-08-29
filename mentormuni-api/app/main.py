@@ -66,6 +66,7 @@ from app.notifications.router import router as notifications_router
 from app.dashboard.router import router as dashboard_router
 from app.platform.router import router as platform_router
 from app.student_roadmap.router import router as student_roadmap_router
+from app.student_intelligence.router import router as student_intelligence_router
 from app.personal_mentor.router import router as personal_mentor_router
 from app.know_my_fear.router_v2 import router as know_my_fear_router
 from app.know_my_fear.router_v2 import legacy_router as know_my_fear_legacy_router
@@ -103,7 +104,12 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    # Apex + college subdomains + Vercel previews + local Vite (incl. *.localhost tenants).
+    allow_origin_regex=(
+        r"https://([a-z0-9-]+\.)?mentormuni\.com|"
+        r"https://.*\.vercel\.app|"
+        r"http://((?:[a-z0-9-]+\.)*)?(localhost|127\.0\.0\.1):\d+"
+    ),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -125,6 +131,7 @@ app.include_router(students_router)
 app.include_router(notifications_router)
 app.include_router(dashboard_router)
 app.include_router(student_roadmap_router)
+app.include_router(student_intelligence_router)
 app.include_router(personal_mentor_router)
 app.include_router(know_my_fear_router)
 app.include_router(know_my_fear_legacy_router)

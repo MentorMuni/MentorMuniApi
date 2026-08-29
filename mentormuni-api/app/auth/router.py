@@ -52,9 +52,12 @@ def _auth_http(exc: auth_service.AuthError) -> HTTPException:
         if exc.status_code == 403
         else "AUTH_ERROR"
     )
+    detail = auth_detail(code=code, message=exc.message)
+    if getattr(exc, "extra", None):
+        detail.update({k: v for k, v in exc.extra.items() if v is not None})
     return HTTPException(
         status_code=exc.status_code,
-        detail=auth_detail(code=code, message=exc.message),
+        detail=detail,
     )
 
 

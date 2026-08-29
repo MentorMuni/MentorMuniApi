@@ -143,7 +143,10 @@ async def _email_setup_for_invited(
     Returns (user, token|None, setup_url|None, email_sent).
     """
     if raw_token and expires:
-        setup_url = user_service.build_student_activation_url(raw_token)
+        setup_url = user_service.build_student_activation_url(
+            raw_token,
+            portal_slug=getattr(getattr(user, "organization", None), "portal_slug", None),
+        )
         email_sent = await user_service.send_student_set_password_email(
             user=user, raw_token=raw_token, expires=expires
         )

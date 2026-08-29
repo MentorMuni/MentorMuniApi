@@ -15,9 +15,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.common.email import EmailError
 from app.common.email.flows import send_individual_activation_email, send_tpo_activation_email
 from app.common.email.templates import build_student_activation_url, build_tpo_activation_url
+from app.common.portal_slug import college_portal_base_url
 from app.common.security.jwt import create_access_token
 from app.core.config import settings
 from app.models.enums import PlatformRole
+from app.models.organization import Organization
 from app.models.platform_user import PlatformUser
 from app.platform import service as svc
 from app.platform.deps import get_current_platform_user, get_db, require_api_key, require_platform_roles
@@ -168,6 +170,13 @@ async def dashboard(
 # =============================================================================
 
 
+def _org_response(org: Organization) -> PlatformOrganizationResponse:
+    data = PlatformOrganizationResponse.model_validate(org)
+    if org.portal_slug and str(org.organization_type).upper() != "PUBLIC":
+        data.portal_url = college_portal_base_url(org.portal_slug)
+    return data
+
+
 @router.post("/organizations", response_model=PlatformOrganizationResponse, status_code=201)
 async def create_organization(
     body: PlatformOrganizationCreate,
@@ -178,7 +187,7 @@ async def create_organization(
         org = await svc.create_organization(db, **body.model_dump())
     except svc.PlatformError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-    return PlatformOrganizationResponse.model_validate(org)
+    return _org_response(org)
 
 
 @router.get("/organizations", response_model=PlatformOrganizationListResponse)
@@ -196,7 +205,7 @@ async def list_organizations(
         search=search,
     )
     return PlatformOrganizationListResponse(
-        items=[PlatformOrganizationResponse.model_validate(o) for o in items],
+        items=[_org_response(o) for o in items],
         total=total,
     )
 
@@ -211,7 +220,7 @@ async def get_organization(
         org = await svc.get_organization(db, organization_id)
     except svc.PlatformError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-    return PlatformOrganizationResponse.model_validate(org)
+    return _org_response(org)
 
 
 @router.put("/organizations/{organization_id}", response_model=PlatformOrganizationResponse)
@@ -227,7 +236,7 @@ async def update_organization(
         )
     except svc.PlatformError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-    return PlatformOrganizationResponse.model_validate(org)
+    return _org_response(org)
 
 
 @router.delete("/organizations/{organization_id}", response_model=PlatformOrganizationResponse)
@@ -241,7 +250,7 @@ async def delete_organization(
         org = await svc.delete_organization(db, organization_id)
     except svc.PlatformError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-    return PlatformOrganizationResponse.model_validate(org)
+    return _org_response(org)
 
 
 # =============================================================================
@@ -392,6 +401,7 @@ def _create_tpo_response(
     email_sent: bool = False,
     email_skipped: bool = False,
     email_detail: str = "",
+    portal_slug: str | None = None,
 ) -> CreateTpoResponse:
     title = _org_admin_title(user)
     return CreateTpoResponse(
@@ -406,7 +416,9 @@ def _create_tpo_response(
         is_primary=title == "TPO",
         display_role="Org Admin",
         activation_token=raw_token,
-        activation_url=build_tpo_activation_url(raw_token) if raw_token else "",
+        activation_url=(
+            build_tpo_activation_url(raw_token, portal_slug=portal_slug) if raw_token else ""
+        ),
         activation_expires_at=expires,
         message=message,
         email_sent=email_sent,
@@ -444,6 +456,7 @@ async def _build_tpo_invite_response(
     organization_name: str,
     is_reinvite: bool,
     is_update: bool = False,
+    portal_slug: str | None = None,
 ) -> CreateTpoResponse:
     """Attach email delivery result; never fail the invite if SMTP/Resend is down."""
     email_sent = False
@@ -464,6 +477,7 @@ async def _build_tpo_invite_response(
                 expires_at=expires,
                 is_reinvite=is_reinvite or is_update,
                 role_label=role_label,
+                portal_slug=portal_slug,
             ),
             timeout=email_budget,
         )
@@ -512,6 +526,7 @@ async def _build_tpo_invite_response(
         email_sent=email_sent,
         email_skipped=email_skipped,
         email_detail=email_detail,
+        portal_slug=portal_slug,
     )
 
 
@@ -548,6 +563,7 @@ async def create_tpo(
         expires=expires,
         organization_name=org.name,
         is_reinvite=False,
+        portal_slug=org.portal_slug,
     )
 
 
@@ -580,6 +596,7 @@ async def reinvite_tpo(
         expires=expires,
         organization_name=org.name,
         is_reinvite=True,
+        portal_slug=org.portal_slug,
     )
 
 
@@ -624,6 +641,7 @@ async def update_tpo(
             organization_name=org.name,
             is_reinvite=False,
             is_update=True,
+            portal_slug=org.portal_slug,
         )
 
     return _create_tpo_response(

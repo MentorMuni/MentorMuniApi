@@ -155,11 +155,16 @@ async def create_user(
         email_sent = await user_service.send_hod_invite_email(
             user=user, raw_token=raw_token, expires=expires
         )
+        portal_slug = getattr(getattr(user, "organization", None), "portal_slug", None)
         return UserInviteResponse(
             user=_to_response(user),
             email_sent=email_sent,
             activation_token=None if email_sent else raw_token,
-            activation_url=None if email_sent else user_service.activation_link(raw_token),
+            activation_url=(
+                None
+                if email_sent
+                else user_service.activation_link(raw_token, portal_slug=portal_slug)
+            ),
             message=(
                 "HOD invited and activation email sent."
                 if email_sent

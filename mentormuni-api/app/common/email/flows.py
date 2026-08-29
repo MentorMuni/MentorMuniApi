@@ -35,6 +35,7 @@ async def send_tpo_activation_email(
     expires_at: datetime,
     is_reinvite: bool = False,
     role_label: str = "Org Admin",
+    portal_slug: str | None = None,
 ) -> EmailSendResult:
     content = render_tpo_activation_email(
         first_name=first_name,
@@ -45,6 +46,7 @@ async def send_tpo_activation_email(
         expires_at=expires_at,
         is_reinvite=is_reinvite,
         role_label=role_label,
+        portal_slug=portal_slug,
     )
     try:
         return await send_email(
@@ -81,6 +83,7 @@ async def send_staff_activation_email(
     raw_token: str,
     expires_at: datetime,
     is_reinvite: bool = False,
+    portal_slug: str | None = None,
 ) -> EmailSendResult:
     content = render_staff_activation_email(
         first_name=first_name,
@@ -91,6 +94,7 @@ async def send_staff_activation_email(
         raw_token=raw_token,
         expires_at=expires_at,
         is_reinvite=is_reinvite,
+        portal_slug=portal_slug,
     )
     try:
         return await send_email(
@@ -126,6 +130,7 @@ async def send_student_activation_email(
     department_name: str | None,
     raw_token: str,
     expires_at: datetime,
+    portal_slug: str | None = None,
 ) -> EmailSendResult:
     content = render_student_activation_email(
         first_name=first_name,
@@ -135,6 +140,7 @@ async def send_student_activation_email(
         department_name=department_name,
         raw_token=raw_token,
         expires_at=expires_at,
+        portal_slug=portal_slug,
     )
     try:
         return await send_email(
@@ -238,6 +244,7 @@ async def send_password_reset_email(
     raw_token: str,
     expires_at: datetime,
     reset_path: str | None = None,
+    portal_slug: str | None = None,
 ) -> EmailSendResult:
     content = render_password_reset_email(
         first_name=first_name,
@@ -246,6 +253,7 @@ async def send_password_reset_email(
         raw_token=raw_token,
         expires_at=expires_at,
         reset_path=reset_path,
+        portal_slug=portal_slug,
     )
     try:
         return await send_email(

@@ -41,11 +41,13 @@ class AuthError(Exception):
         *,
         status_code: int = 400,
         code: str | None = None,
+        extra: dict | None = None,
     ) -> None:
         super().__init__(message)
         self.message = message
         self.status_code = status_code
         self.code = code
+        self.extra = dict(extra or {})
 
 
 def fe_role_alias(role_code: str | None) -> str:
@@ -118,6 +120,14 @@ async def authenticate_user(
     users = list(result.scalars().unique().all())
 
     if not users:
+        if organization_code:
+            await _raise_if_wrong_tenant(
+                db,
+                email=email,
+                username=username,
+                password=password,
+                requested_code=organization_code.upper(),
+            )
         raise AuthError(
             "Invalid credentials.",
             status_code=401,
@@ -136,6 +146,28 @@ async def authenticate_user(
             status_code=401,
             code="INVALID_CREDENTIALS",
         )
+
+    # College host must never accept PUBLIC / individual accounts.
+    if organization_code and user.organization:
+        from app.common.portal_slug import apex_portal_base_url
+        from app.models.enums import OrganizationType
+
+        req = await db.execute(
+            select(Organization).where(Organization.code == organization_code.upper())
+        )
+        requested_org = req.scalar_one_or_none()
+        if (
+            requested_org
+            and str(requested_org.organization_type).upper() == OrganizationType.COLLEGE.value
+            and str(user.organization.organization_type).upper() == OrganizationType.PUBLIC.value
+        ):
+            raise AuthError(
+                "Individual accounts sign in at mentormuni.com, not a college portal.",
+                status_code=403,
+                code="PUBLIC_ON_COLLEGE",
+                extra={"portal_url": apex_portal_base_url()},
+            )
+
     if user.status == UserStatus.INVITED.value:
         raise AuthError(
             "Account invited but not activated. Set your password via the activation link.",
@@ -178,6 +210,66 @@ async def authenticate_user(
         ) from exc
 
     return user
+
+
+async def _raise_if_wrong_tenant(
+    db: AsyncSession,
+    *,
+    email: str | None,
+    username: str | None,
+    password: str,
+    requested_code: str,
+) -> None:
+    """If password matches another org, raise WRONG_TENANT with correct portal URL."""
+    from app.common.portal_slug import apex_portal_base_url, college_portal_base_url
+    from app.models.enums import OrganizationType
+
+    stmt = (
+        select(User)
+        .join(Organization, User.organization_id == Organization.id)
+        .where(User.deleted_at.is_(None))
+        .options(selectinload(User.organization), selectinload(User.role))
+    )
+    if email and username:
+        stmt = stmt.where(or_(User.email == email.lower(), User.username == username))
+    elif email:
+        stmt = stmt.where(User.email == email.lower())
+    else:
+        stmt = stmt.where(User.username == username)
+
+    candidates = list((await db.execute(stmt)).scalars().unique().all())
+    matches = [
+        u
+        for u in candidates
+        if u.password_hash and verify_password(password, u.password_hash)
+    ]
+    if not matches:
+        return
+    user = matches[0]
+    home = user.organization
+    if home is None or home.code.upper() == requested_code:
+        return
+
+    if str(home.organization_type).upper() == OrganizationType.PUBLIC.value:
+        raise AuthError(
+            "Individual accounts sign in at mentormuni.com, not a college portal.",
+            status_code=403,
+            code="PUBLIC_ON_COLLEGE",
+            extra={"portal_url": apex_portal_base_url()},
+        )
+
+    portal = college_portal_base_url(home.portal_slug)
+    raise AuthError(
+        f"This account belongs to {home.name}. Open {portal} to sign in.",
+        status_code=403,
+        code="WRONG_TENANT",
+        extra={
+            "portal_url": portal,
+            "organization_code": home.code,
+            "organization_name": home.name,
+            "portal_slug": home.portal_slug,
+        },
+    )
 
 
 async def permissions_for_user(db: AsyncSession, user: User) -> list[str]:
@@ -272,7 +364,11 @@ async def request_password_reset(
     user.password_reset_expires_at = datetime.now(timezone.utc) + timedelta(hours=2)
     await db.flush()
 
-    reset_url = build_password_reset_url(raw_token, path=reset_path)
+    reset_url = build_password_reset_url(
+        raw_token,
+        path=reset_path,
+        portal_slug=getattr(user.organization, "portal_slug", None),
+    )
 
     try:
         result_mail = await send_password_reset_email(
@@ -283,6 +379,7 @@ async def request_password_reset(
             raw_token=raw_token,
             expires_at=user.password_reset_expires_at,
             reset_path=reset_path,
+            portal_slug=getattr(user.organization, "portal_slug", None),
         )
         emailed = bool(getattr(result_mail, "sent", False))
         return generic, emailed, (None if emailed else reset_url)

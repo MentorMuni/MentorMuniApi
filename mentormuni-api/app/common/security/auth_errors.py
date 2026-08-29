@@ -31,10 +31,15 @@ TOKEN_WRONG_TYPE = "TOKEN_WRONG_TYPE"
 ACCOUNT_INACTIVE = "ACCOUNT_INACTIVE"
 FORBIDDEN_ROLE = "FORBIDDEN_ROLE"
 INVALID_CREDENTIALS = "INVALID_CREDENTIALS"
+MUST_CHANGE_PASSWORD = "MUST_CHANGE_PASSWORD"
 
 
-def auth_detail(*, code: str, message: str) -> dict[str, str]:
-    return {"code": code, "message": message}
+def auth_detail(*, code: str, message: str, **extra: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {"code": code, "message": message}
+    for key, value in extra.items():
+        if value is not None:
+            payload[key] = value
+    return payload
 
 
 def raise_unauthorized(

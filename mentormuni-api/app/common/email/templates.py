@@ -56,13 +56,25 @@ def email_signature_html() -> str:
 """
 
 
-def build_activation_url(raw_token: str, *, path: str | None = None) -> str:
+def build_activation_url(
+    raw_token: str,
+    *,
+    path: str | None = None,
+    portal_slug: str | None = None,
+) -> str:
     """
     Build the FE activation URL.
 
     path overrides: TPO → /activate-tpo, HOD → /activate-hod
+    portal_slug: when set, use https://{slug}.mentormuni.com for college tenants.
     """
-    base = (settings.org_portal_base_url or "https://www.mentormuni.com").rstrip("/")
+    from app.common.portal_slug import apex_portal_base_url, college_portal_base_url
+
+    base = (
+        college_portal_base_url(portal_slug)
+        if portal_slug
+        else apex_portal_base_url()
+    )
     query = urlencode({"token": raw_token})
     resolved = (
         path
@@ -76,21 +88,27 @@ def build_activation_url(raw_token: str, *, path: str | None = None) -> str:
     return f"{base}{resolved}?{query}"
 
 
-def build_tpo_activation_url(raw_token: str) -> str:
-    return build_activation_url(raw_token, path=settings.tpo_activation_path or "/activate-tpo")
-
-
-def build_hod_activation_url(raw_token: str) -> str:
+def build_tpo_activation_url(raw_token: str, *, portal_slug: str | None = None) -> str:
     return build_activation_url(
         raw_token,
-        path=settings.hod_activation_path or settings.staff_activation_path or "/activate-hod",
+        path=settings.tpo_activation_path or "/activate-tpo",
+        portal_slug=portal_slug,
     )
 
 
-def build_student_activation_url(raw_token: str) -> str:
+def build_hod_activation_url(raw_token: str, *, portal_slug: str | None = None) -> str:
+    return build_activation_url(
+        raw_token,
+        path=settings.hod_activation_path or settings.staff_activation_path or "/activate-hod",
+        portal_slug=portal_slug,
+    )
+
+
+def build_student_activation_url(raw_token: str, *, portal_slug: str | None = None) -> str:
     return build_activation_url(
         raw_token,
         path=settings.student_activation_path or "/studentportal/set-password",
+        portal_slug=portal_slug,
     )
 
 
@@ -104,6 +122,7 @@ def render_tpo_activation_email(
     expires_at: datetime,
     is_reinvite: bool = False,
     role_label: str = "Org Admin",
+    portal_slug: str | None = None,
 ) -> RenderedEmailContent:
     """Org Admin invite / reinvite — set password via /activate-tpo link."""
     return render_staff_activation_email(
@@ -116,6 +135,7 @@ def render_tpo_activation_email(
         expires_at=expires_at,
         is_reinvite=is_reinvite,
         activation_path=settings.tpo_activation_path or "/activate-tpo",
+        portal_slug=portal_slug,
     )
 
 
@@ -130,6 +150,7 @@ def render_staff_activation_email(
     expires_at: datetime,
     is_reinvite: bool = False,
     activation_path: str | None = None,
+    portal_slug: str | None = None,
 ) -> RenderedEmailContent:
     display_name = f"{first_name} {last_name}".strip() or "there"
     activate_url = build_activation_url(
@@ -138,6 +159,7 @@ def render_staff_activation_email(
         or settings.hod_activation_path
         or settings.staff_activation_path
         or "/activate-hod",
+        portal_slug=portal_slug,
     )
     expires_label = expires_at.strftime("%d %b %Y %H:%M UTC")
     action = "re-activate" if is_reinvite else "activate"
@@ -196,9 +218,10 @@ def render_student_activation_email(
     department_name: str | None,
     raw_token: str,
     expires_at: datetime,
+    portal_slug: str | None = None,
 ) -> RenderedEmailContent:
     display_name = f"{first_name} {last_name}".strip() or "there"
-    activate_url = build_student_activation_url(raw_token)
+    activate_url = build_student_activation_url(raw_token, portal_slug=portal_slug)
     expires_label = expires_at.strftime("%d %b %Y %H:%M UTC")
     dept_line = f" ({department_name})" if department_name else ""
 
@@ -337,8 +360,19 @@ If you believe this is a mistake, please contact {contact} at your college.
     return RenderedEmailContent(subject=subject, text_body=text_body, html_body=html_body)
 
 
-def build_password_reset_url(raw_token: str, *, path: str | None = None) -> str:
-    base = (settings.org_portal_base_url or "https://www.mentormuni.com").rstrip("/")
+def build_password_reset_url(
+    raw_token: str,
+    *,
+    path: str | None = None,
+    portal_slug: str | None = None,
+) -> str:
+    from app.common.portal_slug import apex_portal_base_url, college_portal_base_url
+
+    base = (
+        college_portal_base_url(portal_slug)
+        if portal_slug
+        else (settings.org_portal_base_url or apex_portal_base_url()).rstrip("/")
+    )
     query = urlencode({"token": raw_token})
     reset_path = (
         path
@@ -358,9 +392,12 @@ def render_password_reset_email(
     raw_token: str,
     expires_at: datetime,
     reset_path: str | None = None,
+    portal_slug: str | None = None,
 ) -> RenderedEmailContent:
     display_name = f"{first_name} {last_name}".strip() or "there"
-    reset_url = build_password_reset_url(raw_token, path=reset_path)
+    reset_url = build_password_reset_url(
+        raw_token, path=reset_path, portal_slug=portal_slug
+    )
     expires_label = expires_at.strftime("%d %b %Y %H:%M UTC")
 
     subject = f"Reset your MentorMuni password — {organization_name}"

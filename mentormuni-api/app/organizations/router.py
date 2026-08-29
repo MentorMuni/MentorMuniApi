@@ -20,6 +20,7 @@ from app.models.user import User
 from app.organizations import service as org_service
 from app.organizations.schemas import (
     AssignSubscriptionRequest,
+    CollegeBySlugResponse,
     CollegeNameItem,
     CollegeNamesResponse,
     OrganizationCreate,
@@ -63,6 +64,7 @@ async def create_organization(
             db,
             name=body.name,
             code=body.code,
+            portal_slug=body.portal_slug,
             organization_type=body.organization_type,
             contact_person=body.contact_person,
             contact_email=str(body.contact_email) if body.contact_email else None,
@@ -114,9 +116,37 @@ async def list_college_names(
         db,
         active_only=not include_suspended,
     )
-    return CollegeNamesResponse(
-        items=[CollegeNameItem.model_validate(o) for o in items],
-        total=len(items),
+    from app.common.portal_slug import college_portal_base_url
+
+    out = []
+    for o in items:
+        row = CollegeNameItem.model_validate(o)
+        if o.portal_slug:
+            row.portal_url = college_portal_base_url(o.portal_slug)
+        out.append(row)
+    return CollegeNamesResponse(items=out, total=len(out))
+
+
+@router.get("/colleges/by-slug/{slug}", response_model=CollegeBySlugResponse)
+async def get_college_by_portal_slug(
+    slug: str,
+    db: AsyncSession = Depends(get_db),
+) -> CollegeBySlugResponse:
+    """Resolve a college tenant from its portal subdomain slug (API key only)."""
+    from app.common.portal_slug import college_portal_base_url
+
+    try:
+        org = await org_service.get_college_by_portal_slug(db, slug)
+    except org_service.OrgError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return CollegeBySlugResponse(
+        id=org.id,
+        name=org.name,
+        code=org.code,
+        portal_slug=org.portal_slug or slug,
+        portal_url=college_portal_base_url(org.portal_slug),
+        status=org.status,
+        organization_type=org.organization_type,
     )
 
 

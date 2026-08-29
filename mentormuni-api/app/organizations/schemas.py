@@ -12,6 +12,9 @@ from pydantic import BaseModel, EmailStr, Field
 class OrganizationCreate(BaseModel):
     name: str = Field(min_length=2, max_length=255)
     code: str = Field(min_length=2, max_length=64, description="Unique short code, e.g. IIST")
+    portal_slug: Optional[str] = Field(
+        default=None, max_length=64, description="DNS slug e.g. medicaps → medicaps.mentormuni.com"
+    )
     organization_type: str = Field(default="COLLEGE", pattern="^(COLLEGE|PUBLIC)$")
     contact_person: Optional[str] = None
     contact_email: Optional[EmailStr] = None
@@ -28,6 +31,7 @@ class OrganizationCreate(BaseModel):
 class OrganizationUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=2, max_length=255)
     status: Optional[str] = Field(default=None, pattern="^(ACTIVE|SUSPENDED)$")
+    portal_slug: Optional[str] = Field(default=None, max_length=64)
     contact_person: Optional[str] = None
     contact_email: Optional[EmailStr] = None
     contact_phone: Optional[str] = None
@@ -41,6 +45,7 @@ class OrganizationResponse(BaseModel):
     id: int
     name: str
     code: str
+    portal_slug: Optional[str] = None
     organization_type: str
     status: str
     contact_person: Optional[str] = None
@@ -67,9 +72,23 @@ class CollegeNameItem(BaseModel):
     id: int
     name: str
     code: str
+    portal_slug: Optional[str] = None
+    portal_url: Optional[str] = None
     status: str = "ACTIVE"
 
     model_config = {"from_attributes": True}
+
+
+class CollegeBySlugResponse(BaseModel):
+    """Public tenant resolve for college subdomains."""
+
+    id: int
+    name: str
+    code: str
+    portal_slug: str
+    portal_url: str
+    status: str
+    organization_type: str = "COLLEGE"
 
 
 class CollegeNamesResponse(BaseModel):

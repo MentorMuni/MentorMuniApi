@@ -31,6 +31,9 @@ class Organization(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     # Short unique code, e.g. "IIST" or "PUBLIC"
     code: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    # DNS-safe subdomain for college portals, e.g. "medicaps" → medicaps.mentormuni.com
+    # NULL for PUBLIC (individuals use apex).
+    portal_slug: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
 
     organization_type: Mapped[str] = mapped_column(
         String(32),
