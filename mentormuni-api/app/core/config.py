@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     # --- Existing AI / app settings ---
     openai_api_key: str = Field(default="")
     app_env: str = "development"
+    # Explicit SQL logging — never auto-enable from APP_ENV (echo kills list latency).
+    sql_echo: bool = Field(default=False)
     # Plan endpoints (large prompts + long JSON): 30s often hits OpenAI latency; Railway may need 60s+ proxy too.
     llm_timeout_seconds: int = Field(default=120, ge=15, le=600)
     # Resume ATS: enrich summary/fixes/strengths with OpenAI (scores stay heuristic). Set false to skip LLM.

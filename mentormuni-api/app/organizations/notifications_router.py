@@ -39,7 +39,7 @@ def _event_date(n) -> object:
     return n.event_date.date() if hasattr(n.event_date, "date") else n.event_date
 
 
-def _to_item(n) -> CampusNotificationItem:
+def _to_item(n, *, recipients_estimated: int = 0) -> CampusNotificationItem:
     return CampusNotificationItem(
         id=n.id,
         kind=getattr(n, "kind", None) or "announcement",
@@ -51,7 +51,7 @@ def _to_item(n) -> CampusNotificationItem:
         created_at=n.created_at,
         delivery_status=getattr(n, "delivery_status", None) or "queued",
         created_by=n.created_by,
-        recipients_estimated=len(n.recipients) if n.recipients is not None else 0,
+        recipients_estimated=int(recipients_estimated or 0),
     )
 
 
@@ -92,11 +92,14 @@ async def list_campus_notifications(
     db: AsyncSession = Depends(get_db),
     ctx: TenantContext = Depends(require_permission("SEND_NOTIFICATION")),
 ) -> CampusNotificationListResponse:
-    items, total = await notif_service.list_notifications(
+    items, total, recipient_counts = await notif_service.list_notifications(
         db, organization_id=ctx.organization_id
     )
     return CampusNotificationListResponse(
-        items=[_to_item(n) for n in items],
+        items=[
+            _to_item(n, recipients_estimated=recipient_counts.get(int(n.id), 0))
+            for n in items
+        ],
         total=total,
     )
 

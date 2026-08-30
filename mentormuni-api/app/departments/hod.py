@@ -188,34 +188,69 @@ async def student_count(db: AsyncSession, department_id: int) -> int:
     return int(result.scalar_one() or 0)
 
 
-async def load_mentor_history(db: AsyncSession, dept) -> list[dict]:
-    result = await db.execute(
-        select(AuditLog)
-        .where(AuditLog.organization_id == dept.organization_id)
-        .where(AuditLog.action.in_(_HOD_AUDIT_ACTIONS))
-        .where(AuditLog.entity_type == "department")
-        .where(AuditLog.entity_id == dept.id)
-        .order_by(AuditLog.created_at.asc())
-        .limit(100)
-    )
-    items: list[dict] = []
-    for row in result.scalars().all():
-        payload = row.payload_json or {}
-        items.append(
-            {
-                "id": str(row.id),
-                "at": row.created_at,
-                "event": _EVENT_MAP.get(
-                    row.action,
-                    row.action.replace("hod.", "").replace("coordinator.", "coordinator_"),
-                ),
-                "name": str(payload.get("name") or ""),
-                "email": str(payload.get("email") or payload.get("new_email") or ""),
-                "reason": str(payload.get("reason") or ""),
-                "replaced_by_email": str(payload.get("replaced_by_email") or ""),
-            }
-        )
-    return items
+async def enrich_department(
+    db: AsyncSession,
+    dept,
+    *,
+    activation_token: str | None = None,
+    activation_url: str | None = None,
+    emailed: bool | None = None,
+    message: str | None = None,
+) -> dict:
+    rows = await enrich_departments_batch(db, [dept], include_history=True)
+    payload = rows[0] if rows else {
+        "id": dept.id,
+        "organization_id": dept.organization_id,
+        "name": dept.name,
+        "code": dept.code,
+        "status": dept.status,
+        "created_at": dept.created_at,
+        "hod_status": "unassigned",
+        "coordinator_status": "unassigned",
+        "student_count": 0,
+        "mentor_history": [],
+    }
+    if activation_token is not None:
+        payload["activation_token"] = activation_token
+    if activation_url is not None:
+        payload["activation_url"] = activation_url
+    if emailed is not None:
+        payload["emailed"] = emailed
+    if message is not None:
+        payload["message"] = message
+    return payload
+
+
+def _pick_mentor_slot(
+    slot_map: dict[int, User],
+    department_id: int,
+    user: User,
+) -> None:
+    """Prefer live (invited/active) over blocked; keep first among same class (rows ordered newest-first)."""
+    current = slot_map.get(department_id)
+    if current is None:
+        slot_map[department_id] = user
+        return
+    current_live = current.status in _LIVE
+    incoming_live = user.status in _LIVE
+    if incoming_live and not current_live:
+        slot_map[department_id] = user
+
+
+def _audit_history_item(row: AuditLog) -> dict:
+    payload = row.payload_json or {}
+    return {
+        "id": str(row.id),
+        "at": row.created_at,
+        "event": _EVENT_MAP.get(
+            row.action,
+            row.action.replace("hod.", "").replace("coordinator.", "coordinator_"),
+        ),
+        "name": str(payload.get("name") or ""),
+        "email": str(payload.get("email") or payload.get("new_email") or ""),
+        "reason": str(payload.get("reason") or ""),
+        "replaced_by_email": str(payload.get("replaced_by_email") or ""),
+    }
 
 
 def _slot_timestamps(user: User | None, status: str) -> tuple[datetime | None, datetime | None]:
@@ -233,22 +268,18 @@ def _slot_timestamps(user: User | None, status: str) -> tuple[datetime | None, d
     return invited_at, activated_at
 
 
-async def enrich_department(
-    db: AsyncSession,
+def _department_payload(
     dept,
     *,
-    activation_token: str | None = None,
-    activation_url: str | None = None,
-    emailed: bool | None = None,
-    message: str | None = None,
+    hod: User | None,
+    coordinator: User | None,
+    student_count_value: int,
+    mentor_history: list[dict],
 ) -> dict:
-    hod = await get_current_hod(db, dept.id)
-    coordinator = await get_current_coordinator(db, dept.id)
     hod_status = _mentor_status(hod)
     coord_status = _mentor_status(coordinator)
     invited_at, activated_at = _slot_timestamps(hod, hod_status)
     coord_invited_at, coord_activated_at = _slot_timestamps(coordinator, coord_status)
-
     return {
         "id": dept.id,
         "organization_id": dept.organization_id,
@@ -266,15 +297,157 @@ async def enrich_department(
         "coordinator_status": coord_status,
         "coordinator_invited_at": coord_invited_at,
         "coordinator_activated_at": coord_activated_at if coord_status == "active" else None,
-        "student_count": await student_count(db, dept.id),
+        "student_count": int(student_count_value or 0),
         "invited_at": invited_at,
         "activated_at": activated_at if hod_status == "active" else None,
-        "mentor_history": await load_mentor_history(db, dept),
-        "activation_token": activation_token,
-        "activation_url": activation_url,
-        "emailed": emailed,
-        "message": message,
+        "mentor_history": mentor_history,
+        "activation_token": None,
+        "activation_url": None,
+        "emailed": None,
+        "message": None,
     }
+
+
+async def enrich_departments_batch(
+    db: AsyncSession,
+    depts: list,
+    *,
+    include_history: bool = True,
+) -> list[dict]:
+    """
+    Enrich many departments with ~4 queries total (not N×9).
+
+    Queries: role ids (2), mentors IN dept_ids, student counts GROUP BY,
+    optional audit history IN dept_ids.
+    """
+    if not depts:
+        return []
+
+    dept_ids = [int(d.id) for d in depts]
+    org_id = int(depts[0].organization_id)
+
+    dept_admin_role_id = await _dept_admin_role_id(db)
+    student_role_id = (
+        await db.execute(select(Role.id).where(Role.role_code == RoleCode.STUDENT.value))
+    ).scalar_one()
+
+    mentors_result = await db.execute(
+        select(User)
+        .where(User.department_id.in_(dept_ids))
+        .where(User.role_id == dept_admin_role_id)
+        .where(User.deleted_at.is_(None))
+        .where(
+            User.status.in_(
+                [
+                    UserStatus.INVITED.value,
+                    UserStatus.ACTIVE.value,
+                    UserStatus.BLOCKED.value,
+                ]
+            )
+        )
+        .order_by(User.created_at.desc())
+    )
+    hod_by_dept: dict[int, User] = {}
+    coord_by_dept: dict[int, User] = {}
+    for user in mentors_result.scalars().all():
+        did = int(user.department_id) if user.department_id is not None else None
+        if did is None:
+            continue
+        if _normalize_title(user.dept_admin_title) == _TITLE_COORD:
+            _pick_mentor_slot(coord_by_dept, did, user)
+        else:
+            _pick_mentor_slot(hod_by_dept, did, user)
+
+    counts_result = await db.execute(
+        select(User.department_id, func.count())
+        .where(User.department_id.in_(dept_ids))
+        .where(User.role_id == student_role_id)
+        .where(User.deleted_at.is_(None))
+        .where(
+            User.status.in_(
+                [
+                    UserStatus.PENDING.value,
+                    UserStatus.ACTIVE.value,
+                    UserStatus.INVITED.value,
+                ]
+            )
+        )
+        .group_by(User.department_id)
+    )
+    count_map = {int(did): int(cnt or 0) for did, cnt in counts_result.all() if did is not None}
+
+    history_by_dept: dict[int, list[dict]] = {did: [] for did in dept_ids}
+    if include_history:
+        history_result = await db.execute(
+            select(AuditLog)
+            .where(AuditLog.organization_id == org_id)
+            .where(AuditLog.action.in_(_HOD_AUDIT_ACTIONS))
+            .where(AuditLog.entity_type == "department")
+            .where(AuditLog.entity_id.in_(dept_ids))
+            .order_by(AuditLog.created_at.asc())
+            .limit(max(100, 100 * len(dept_ids)))
+        )
+        for row in history_result.scalars().all():
+            did = int(row.entity_id) if row.entity_id is not None else None
+            if did is None or did not in history_by_dept:
+                continue
+            bucket = history_by_dept[did]
+            if len(bucket) >= 100:
+                continue
+            bucket.append(_audit_history_item(row))
+
+    return [
+        _department_payload(
+            dept,
+            hod=hod_by_dept.get(int(dept.id)),
+            coordinator=coord_by_dept.get(int(dept.id)),
+            student_count_value=count_map.get(int(dept.id), 0),
+            mentor_history=history_by_dept.get(int(dept.id), []),
+        )
+        for dept in depts
+    ]
+
+
+def light_department_payload(dept) -> dict:
+    """Minimal row for dropdowns / filters — no mentor or history queries."""
+    return {
+        "id": dept.id,
+        "organization_id": dept.organization_id,
+        "name": dept.name,
+        "code": dept.code,
+        "status": dept.status,
+        "created_at": dept.created_at,
+        "hod_name": None,
+        "hod_email": None,
+        "hod_status": "unassigned",
+        "coordinator_name": None,
+        "coordinator_email": None,
+        "coordinator_status": "unassigned",
+        "coordinator_invited_at": None,
+        "coordinator_activated_at": None,
+        "student_count": 0,
+        "invited_at": None,
+        "activated_at": None,
+        "mentor_history": [],
+        "activation_token": None,
+        "activation_url": None,
+        "emailed": None,
+        "message": None,
+    }
+
+
+async def load_mentor_history(db: AsyncSession, dept) -> list[dict]:
+    result = await db.execute(
+        select(AuditLog)
+        .where(AuditLog.organization_id == dept.organization_id)
+        .where(AuditLog.action.in_(_HOD_AUDIT_ACTIONS))
+        .where(AuditLog.entity_type == "department")
+        .where(AuditLog.entity_id == dept.id)
+        .order_by(AuditLog.created_at.asc())
+        .limit(100)
+    )
+    return [_audit_history_item(row) for row in result.scalars().all()]
+
 
 
 def _lifecycle_from_enrich(payload: dict) -> dict:

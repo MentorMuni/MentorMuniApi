@@ -72,6 +72,14 @@ async def list_org_departments(
         default=None,
         description="Public enroll: list active departments for this college code (no JWT).",
     ),
+    include: str = Query(
+        default="full",
+        description=(
+            "Authenticated list detail: "
+            "'full' = mentors + student counts + history (batch); "
+            "'light' / 'minimal' / 'options' = id/name/code only (for dropdowns)."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
 ) -> Union[list[OrgDepartmentResponse], PublicDepartmentsResponse]:
@@ -102,10 +110,14 @@ async def list_org_departments(
     ctx = await build_tenant_context(db, user)
 
     items = await dept_service.list_departments(db, organization_id=ctx.organization_id)
-    return [
-        _dept_response(await hod_service.enrich_department(db, d))
-        for d in items
-    ]
+    mode = (include or "full").strip().lower()
+    if mode in {"light", "minimal", "options"}:
+        return [_dept_response(hod_service.light_department_payload(d)) for d in items]
+
+    enriched = await hod_service.enrich_departments_batch(
+        db, items, include_history=True
+    )
+    return [_dept_response(row) for row in enriched]
 
 
 @router.post("", response_model=OrgDepartmentResponse, status_code=201)

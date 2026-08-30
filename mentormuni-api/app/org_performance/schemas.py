@@ -207,6 +207,8 @@ class PerformanceSummaryOut(BaseModel):
     upcoming_drives: int = 0
     hod_gaps: int = 0
     generated_at: str
+    # Included so FE can skip a second /scorecards call (same pipeline).
+    scorecards: list[StudentScorecard] = Field(default_factory=list)
 
 
 class ScorecardListOut(BaseModel):

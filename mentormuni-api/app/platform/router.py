@@ -24,6 +24,7 @@ from app.models.platform_user import PlatformUser
 from app.platform import service as svc
 from app.platform.deps import get_current_platform_user, get_db, require_api_key, require_platform_roles
 from app.platform.schemas import (
+    ActivateTpoPreviewResponse,
     ActivateTpoRequest,
     ActivateTpoResponse,
     CreateIndividualRequest,
@@ -134,6 +135,19 @@ async def platform_change_password(
     return MessageResponse(message="Password updated.")
 
 
+@router.get("/auth/activate-tpo/preview", response_model=ActivateTpoPreviewResponse)
+async def preview_tpo_activation(
+    token: str = Query(..., min_length=10),
+    db: AsyncSession = Depends(get_db),
+) -> ActivateTpoPreviewResponse:
+    """Preview college + invite details for /activate-tpo (does not consume the token)."""
+    try:
+        data = await svc.preview_tpo_activation(db, token=token)
+    except svc.PlatformError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return ActivateTpoPreviewResponse(**data)
+
+
 @router.post("/auth/activate-tpo", response_model=ActivateTpoResponse)
 async def activate_tpo(
     body: ActivateTpoRequest,
@@ -144,10 +158,11 @@ async def activate_tpo(
         user = await svc.activate_tpo(db, token=body.token, new_password=body.new_password)
     except svc.PlatformError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-    org_code = user.organization.code if user.organization else None
+    org = user.organization
     return ActivateTpoResponse(
         message="Password set. You can log in to the Organization Portal.",
-        organization_code=org_code,
+        organization_code=org.code if org else None,
+        organization_name=org.name if org else None,
     )
 
 

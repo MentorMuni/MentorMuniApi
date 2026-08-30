@@ -184,26 +184,19 @@ async def list_organizations(
     search: str | None = None,
 ) -> tuple[list[Organization], int]:
     stmt = select(Organization)
-    count_stmt = select(func.count()).select_from(Organization)
 
     if status:
         stmt = stmt.where(Organization.status == status)
-        count_stmt = count_stmt.where(Organization.status == status)
     if organization_type:
         stmt = stmt.where(Organization.organization_type == organization_type)
-        count_stmt = count_stmt.where(Organization.organization_type == organization_type)
     if search:
         like = f"%{search.strip()}%"
         stmt = stmt.where(
             (Organization.name.ilike(like)) | (Organization.code.ilike(like))
         )
-        count_stmt = count_stmt.where(
-            (Organization.name.ilike(like)) | (Organization.code.ilike(like))
-        )
 
     items = list((await db.execute(stmt.order_by(Organization.id.desc()))).scalars().all())
-    total = int((await db.execute(count_stmt)).scalar_one())
-    return items, total
+    return items, len(items)
 
 
 async def get_organization(db: AsyncSession, organization_id: int) -> Organization:
@@ -396,22 +389,16 @@ async def list_subscriptions(
     stmt = select(OrganizationSubscription).options(
         selectinload(OrganizationSubscription.organization)
     )
-    count_stmt = select(func.count()).select_from(OrganizationSubscription)
 
     if organization_id is not None:
         stmt = stmt.where(OrganizationSubscription.organization_id == organization_id)
-        count_stmt = count_stmt.where(
-            OrganizationSubscription.organization_id == organization_id
-        )
     if status:
         stmt = stmt.where(OrganizationSubscription.status == status)
-        count_stmt = count_stmt.where(OrganizationSubscription.status == status)
 
     items = list(
         (await db.execute(stmt.order_by(OrganizationSubscription.id.desc()))).scalars().all()
     )
-    total = int((await db.execute(count_stmt)).scalar_one())
-    return items, total
+    return items, len(items)
 
 
 async def update_subscription(
@@ -634,19 +621,11 @@ async def list_tpos(
         .where(Role.role_code == RoleCode.ORG_ADMIN.value)
         .options(selectinload(User.organization), selectinload(User.role))
     )
-    count_stmt = (
-        select(func.count())
-        .select_from(User)
-        .join(Role, User.role_id == Role.id)
-        .where(Role.role_code == RoleCode.ORG_ADMIN.value)
-    )
     if organization_id is not None:
         stmt = stmt.where(User.organization_id == organization_id)
-        count_stmt = count_stmt.where(User.organization_id == organization_id)
 
     items = list((await db.execute(stmt.order_by(User.id.desc()))).scalars().unique().all())
-    total = int((await db.execute(count_stmt)).scalar_one())
-    return items, total
+    return items, len(items)
 
 
 async def reinvite_tpo(
@@ -875,6 +854,51 @@ async def deactivate_org_admin(
     await db.flush()
     await db.refresh(user)
     return user
+
+
+async def preview_tpo_activation(
+    db: AsyncSession,
+    *,
+    token: str,
+) -> dict:
+    """Return college + invite context for the activate page (token stays valid)."""
+    token_hash = _hash_token(token)
+    result = await db.execute(
+        select(User)
+        .where(User.activation_token_hash == token_hash)
+        .options(selectinload(User.role), selectinload(User.organization))
+    )
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise PlatformError(
+            "Invalid or already-used activation token.",
+            status_code=400,
+        )
+    if user.status != UserStatus.INVITED.value:
+        raise PlatformError("Account is not awaiting activation.", status_code=400)
+    if user.activation_expires_at and user.activation_expires_at < datetime.now(timezone.utc):
+        raise PlatformError(
+            "Activation token expired. Ask platform to re-invite.",
+            status_code=400,
+        )
+
+    org = user.organization
+    if org is not None:
+        try:
+            ensure_organization_accepts_activation(org)
+        except OrganizationAccessError as exc:
+            raise PlatformError(exc.message, status_code=exc.status_code) from exc
+
+    title = user.org_admin_title or OrgAdminTitle.TPO.value
+    return {
+        "organization_name": (org.name if org else None) or "Your college",
+        "organization_code": org.code if org else None,
+        "portal_slug": getattr(org, "portal_slug", None) if org else None,
+        "title": title,
+        "email": user.email,
+        "first_name": user.first_name,
+        "expires_at": user.activation_expires_at,
+    }
 
 
 async def activate_tpo(
@@ -1113,6 +1137,14 @@ async def dashboard_metrics(db: AsyncSession) -> dict:
         for row in usage_rows
     ]
 
+    recent_orgs = list(
+        (
+            await db.execute(select(Organization).order_by(Organization.id.desc()).limit(5))
+        )
+        .scalars()
+        .all()
+    )
+
     return {
         "organizations": org_count,
         "students_purchased": students_purchased,
@@ -1120,6 +1152,18 @@ async def dashboard_metrics(db: AsyncSession) -> dict:
         "active_plans": active_plans,
         "expiring_this_month": expiring,
         "feature_usage": feature_usage,
+        "recent_organizations": [
+            {
+                "id": o.id,
+                "name": o.name,
+                "code": o.code,
+                "status": o.status,
+                "organization_type": o.organization_type,
+                "portal_slug": getattr(o, "portal_slug", None),
+                "has_logo": bool(getattr(o, "logo_content_type", None)),
+            }
+            for o in recent_orgs
+        ],
     }
 
 

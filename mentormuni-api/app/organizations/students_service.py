@@ -196,14 +196,16 @@ async def list_roster(
         organization_id=ctx.organization_id,
         department_id=dept,
         role_code=RoleCode.STUDENT.value,
+        statuses=[
+            UserStatus.ACTIVE.value,
+            UserStatus.INVITED.value,
+            UserStatus.BLOCKED.value,
+        ],
+        include_total=False,
+        load_role=False,
     )
-    # Roster = enrolled (ACTIVE or INVITED awaiting password). Exclude PENDING queue + REJECTED.
-    roster = [
-        to_student_row(u)
-        for u in items
-        if u.status in {UserStatus.ACTIVE.value, UserStatus.INVITED.value, UserStatus.BLOCKED.value}
-    ]
-    return roster, len(roster)
+    roster = [to_student_row(u) for u in items]
+    return roster, total
 
 
 async def list_invites(
@@ -217,6 +219,7 @@ async def list_invites(
     if not ctx.sees_all_students:
         dept = ctx.department_id
 
+    statuses: list[str] | None = None
     status_filter = None
     if status:
         s = status.strip().lower()
@@ -225,29 +228,24 @@ async def list_invites(
         elif s == "rejected":
             status_filter = UserStatus.REJECTED.value
         elif s == "approved":
-            # approved queue already moved to roster — return INVITED+ACTIVE if asked
-            status_filter = None
+            statuses = [UserStatus.ACTIVE.value, UserStatus.INVITED.value]
         else:
             status_filter = status.upper()
+    else:
+        status_filter = UserStatus.PENDING.value
 
-    items, _ = await user_service.list_users(
+    items, total = await user_service.list_users(
         db,
         organization_id=ctx.organization_id,
         department_id=dept,
         status=status_filter,
+        statuses=statuses,
         role_code=RoleCode.STUDENT.value,
+        include_total=False,
+        load_role=False,
     )
-    if status and status.strip().lower() == "approved":
-        items = [
-            u
-            for u in items
-            if u.status in {UserStatus.ACTIVE.value, UserStatus.INVITED.value}
-        ]
-    elif status is None or status.strip().lower() == "pending":
-        items = [u for u in items if u.status == UserStatus.PENDING.value]
-
     rows = [to_invite_row(u) for u in items]
-    return rows, len(rows)
+    return rows, total
 
 
 async def _create_student_user(

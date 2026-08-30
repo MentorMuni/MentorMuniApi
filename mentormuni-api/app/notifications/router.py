@@ -83,7 +83,7 @@ async def list_notifications(
             status_code=403,
             detail="Use GET /notifications/inbox for your messages.",
         )
-    items, total = await notif_service.list_notifications(
+    items, total, _counts = await notif_service.list_notifications(
         db, organization_id=ctx.organization_id
     )
     return NotificationListResponse(items=[_to_response(n) for n in items], total=total)

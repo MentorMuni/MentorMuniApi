@@ -1041,4 +1041,5 @@ async def get_performance_summary(
         upcoming_drives=drives,
         hod_gaps=hod_gaps if scope == "organization" and dept_id is None else 0,
         generated_at=_iso(_now()) or "",
+        scorecards=cards.items,
     )

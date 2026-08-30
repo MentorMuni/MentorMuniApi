@@ -45,6 +45,19 @@ class PlatformChangePasswordRequest(BaseModel):
 class ActivateTpoResponse(BaseModel):
     message: str
     organization_code: Optional[str] = None
+    organization_name: Optional[str] = None
+
+
+class ActivateTpoPreviewResponse(BaseModel):
+    """Safe invite preview for /activate-tpo (does not consume the token)."""
+
+    organization_name: str
+    organization_code: Optional[str] = None
+    portal_slug: Optional[str] = None
+    title: Optional[str] = None
+    email: Optional[str] = None
+    first_name: Optional[str] = None
+    expires_at: Optional[datetime] = None
 
 
 class MessageResponse(BaseModel):
@@ -407,6 +420,16 @@ class FeatureUsageItem(BaseModel):
     enabled_org_count: int
 
 
+class DashboardOrganizationItem(BaseModel):
+    id: int
+    name: str
+    code: str
+    status: str
+    organization_type: str
+    portal_slug: Optional[str] = None
+    has_logo: bool = False
+
+
 class PlatformDashboardResponse(BaseModel):
     organizations: int
     students_purchased: int
@@ -414,3 +437,4 @@ class PlatformDashboardResponse(BaseModel):
     active_plans: int
     expiring_this_month: int
     feature_usage: list[FeatureUsageItem]
+    recent_organizations: list[DashboardOrganizationItem] = Field(default_factory=list)

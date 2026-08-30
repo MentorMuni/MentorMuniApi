@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime, time, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -231,16 +231,32 @@ async def list_notifications(
     db: AsyncSession,
     *,
     organization_id: int,
-) -> tuple[list[Notification], int]:
+) -> tuple[list[Notification], int, dict[int, int]]:
+    """
+    List campus notifications without loading every recipient row.
+    Returns (items, total, recipient_counts_by_notification_id).
+    """
     stmt = (
         select(Notification)
         .where(Notification.organization_id == organization_id)
         .where(Notification.deleted_at.is_(None))
-        .options(selectinload(Notification.recipients))
         .order_by(Notification.id.desc())
     )
     items = list((await db.execute(stmt)).scalars().unique().all())
-    return items, len(items)
+    ids = [int(n.id) for n in items]
+    counts: dict[int, int] = {}
+    if ids:
+        count_rows = await db.execute(
+            select(NotificationRecipient.notification_id, func.count())
+            .where(NotificationRecipient.notification_id.in_(ids))
+            .group_by(NotificationRecipient.notification_id)
+        )
+        counts = {
+            int(nid): int(cnt or 0)
+            for nid, cnt in count_rows.all()
+            if nid is not None
+        }
+    return items, len(items), counts
 
 
 async def get_notification(db: AsyncSession, notification_id: int) -> Notification:

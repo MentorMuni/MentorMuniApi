@@ -472,15 +472,36 @@ async def list_users(
     organization_id: int,
     department_id: int | None = None,
     status: str | None = None,
+    statuses: list[str] | None = None,
     role_code: str | None = None,
+    include_total: bool = True,
+    load_role: bool = True,
 ) -> tuple[list[User], int]:
     stmt = (
         select(User)
         .join(Role, User.role_id == Role.id)
         .where(User.organization_id == organization_id)
         .where(User.deleted_at.is_(None))
-        .options(selectinload(User.role), selectinload(User.department))
     )
+    options = [selectinload(User.department)]
+    if load_role:
+        options.append(selectinload(User.role))
+    stmt = stmt.options(*options)
+
+    if department_id is not None:
+        stmt = stmt.where(User.department_id == department_id)
+    if statuses:
+        stmt = stmt.where(User.status.in_(list(statuses)))
+    elif status:
+        stmt = stmt.where(User.status == status)
+    if role_code:
+        stmt = stmt.where(Role.role_code == role_code)
+
+    stmt = stmt.order_by(User.id.desc())
+    items = list((await db.execute(stmt)).scalars().unique().all())
+    if not include_total:
+        return items, len(items)
+
     count_stmt = (
         select(func.count())
         .select_from(User)
@@ -488,19 +509,14 @@ async def list_users(
         .where(User.organization_id == organization_id)
         .where(User.deleted_at.is_(None))
     )
-
     if department_id is not None:
-        stmt = stmt.where(User.department_id == department_id)
         count_stmt = count_stmt.where(User.department_id == department_id)
-    if status:
-        stmt = stmt.where(User.status == status)
+    if statuses:
+        count_stmt = count_stmt.where(User.status.in_(list(statuses)))
+    elif status:
         count_stmt = count_stmt.where(User.status == status)
     if role_code:
-        stmt = stmt.where(Role.role_code == role_code)
         count_stmt = count_stmt.where(Role.role_code == role_code)
-
-    stmt = stmt.order_by(User.id.desc())
-    items = list((await db.execute(stmt)).scalars().unique().all())
     total = int((await db.execute(count_stmt)).scalar_one())
     return items, total
 
