@@ -49,6 +49,11 @@ from app.student_roadmap.models import StudentAssessmentResult, StudentRoadmapSt
 logger = logging.getLogger(__name__)
 
 
+def _user_display_name(user: User) -> str:
+    full = f"{(user.first_name or '').strip()} {(user.last_name or '').strip()}".strip()
+    return full or user.email or f"Student {user.id}"
+
+
 class PerformanceError(Exception):
     def __init__(self, message: str, *, status_code: int = 400) -> None:
         super().__init__(message)
@@ -434,7 +439,7 @@ async def _student_query(
         .where(User.status == UserStatus.ACTIVE.value)
         .where(User.deleted_at.is_(None))
         .options(selectinload(User.department))
-        .order_by(User.name.asc())
+        .order_by(User.first_name.asc(), User.last_name.asc())
     )
     if department_id is not None:
         stmt = stmt.where(User.department_id == department_id)
@@ -716,7 +721,7 @@ def _scorecard_from_week(
 
     return StudentScorecard(
         id=user.id,
-        name=user.name or user.email or f"Student {user.id}",
+        name=_user_display_name(user),
         email=user.email,
         department_id=user.department_id,
         department_name=dept.name if dept else None,
@@ -1041,8 +1046,10 @@ async def get_performance_summary(
     leaders = [to_leader(c) for c in ranked[:leaderboard_limit]]
     at_risk = [
         to_leader(c)
-        for c in sorted(scored, key=lambda c: float(c.readiness or 0))[:leaderboard_limit]
-        if float(c.readiness or 0) < 50
+        for c in sorted(
+            (c for c in scored if float(c.readiness or 0) < 50),
+            key=lambda c: float(c.readiness or 0),
+        )[:leaderboard_limit]
     ]
 
     area_leaders: list[AreaLeader] = []

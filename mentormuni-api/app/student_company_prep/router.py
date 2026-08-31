@@ -71,6 +71,7 @@ async def list_student_upcoming_drives(
             )
         )
 
+    # Students only see today/future drives — past dates are not listed.
     upcoming = [i for i in items if not i.is_past]
-    nearest = upcoming[0] if upcoming else (items[0] if items else None)
-    return StudentDriveListOut(items=items, nearest=nearest)
+    nearest = upcoming[0] if upcoming else None
+    return StudentDriveListOut(items=upcoming, nearest=nearest)

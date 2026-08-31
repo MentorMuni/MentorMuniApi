@@ -65,6 +65,7 @@ async def _resolve_recipient_ids(
     organization_id: int,
     audience: str,
     department_id: int | None,
+    department_ids: list[int] | None = None,
     user_ids: list[int] | None = None,
 ) -> list[int]:
     if audience == NotificationAudience.USERS.value:
@@ -90,8 +91,60 @@ async def _resolve_recipient_ids(
         .where(Role.role_code == RoleCode.STUDENT.value)
     )
     if audience == NotificationAudience.DEPARTMENT.value:
-        stmt = stmt.where(User.department_id == department_id)
+        dept_ids = list(dict.fromkeys(department_ids or []))
+        if not dept_ids and department_id is not None:
+            dept_ids = [int(department_id)]
+        if not dept_ids:
+            raise NotificationError("department_id or department_ids required for DEPARTMENT audience.")
+        stmt = stmt.where(User.department_id.in_(dept_ids))
     return list((await db.execute(stmt)).scalars().all())
+
+
+def _normalize_department_ids(
+    department_id: int | None,
+    department_ids: list[int] | None,
+) -> list[int]:
+    out: list[int] = []
+    if department_ids:
+        for raw in department_ids:
+            try:
+                out.append(int(raw))
+            except (TypeError, ValueError):
+                continue
+    elif department_id is not None:
+        out.append(int(department_id))
+    return list(dict.fromkeys(out))
+
+
+def _assert_department_scope(
+    ctx: TenantContext,
+    *,
+    audience: str,
+    department_ids: list[int],
+) -> None:
+    if ctx.sees_all_students:
+        return
+    if audience != NotificationAudience.DEPARTMENT.value:
+        raise NotificationError("HOD can only send department-scoped notifications.", status_code=403)
+    if ctx.department_id is None:
+        raise NotificationError("HOD account is not linked to a department.", status_code=403)
+    allowed = {int(ctx.department_id)}
+    bad = [d for d in department_ids if d not in allowed]
+    if bad:
+        raise NotificationError("HOD can only notify their own department.", status_code=403)
+
+
+def assert_can_manage_notification(ctx: TenantContext, notif: Notification) -> None:
+    """TPO may cancel any org notice; HOD only department notices for their branch."""
+    if ctx.sees_all_students:
+        return
+    if notif.audience != NotificationAudience.DEPARTMENT.value:
+        raise NotificationError("HOD can only manage department notifications.", status_code=403)
+    if ctx.department_id is None:
+        raise NotificationError("HOD account is not linked to a department.", status_code=403)
+    dept_ids = _department_ids_from_row(notif)
+    if int(ctx.department_id) not in dept_ids:
+        raise NotificationError("HOD can only manage notifications for their department.", status_code=403)
 
 
 async def create_notification(
@@ -102,14 +155,16 @@ async def create_notification(
     body: str,
     audience: str,
     department_id: int | None = None,
+    department_ids: list[int] | None = None,
     user_ids: list[int] | None = None,
     metadata_json: dict | None = None,
     kind: str = NotificationKind.ANNOUNCEMENT.value,
     event_date: date | datetime | None = None,
     delivery_status: str = NotificationDeliveryStatus.QUEUED.value,
 ) -> Notification:
-    if audience == NotificationAudience.DEPARTMENT.value and department_id is None:
-        raise NotificationError("department_id required for DEPARTMENT audience.")
+    dept_ids = _normalize_department_ids(department_id, department_ids)
+    if audience == NotificationAudience.DEPARTMENT.value and not dept_ids:
+        raise NotificationError("department_id or department_ids required for DEPARTMENT audience.")
     if audience == NotificationAudience.USERS.value and not user_ids:
         raise NotificationError("user_ids required for USERS audience.")
 
@@ -117,12 +172,13 @@ async def create_notification(
         raise NotificationError("Only TPO can send org-wide notifications.", status_code=403)
     if not ctx.sees_all_students and audience == NotificationAudience.HODS.value:
         raise NotificationError("Only TPO / Org Admin can notify HODs.", status_code=403)
-    if (
-        not ctx.sees_all_students
-        and audience == NotificationAudience.DEPARTMENT.value
-        and department_id != ctx.department_id
-    ):
-        raise NotificationError("HOD can only notify their own department.", status_code=403)
+    if audience == NotificationAudience.DEPARTMENT.value:
+        _assert_department_scope(ctx, audience=audience, department_ids=dept_ids)
+
+    meta = dict(metadata_json or {})
+    if dept_ids:
+        meta["department_ids"] = dept_ids
+    primary_dept = dept_ids[0] if dept_ids else department_id
 
     event_dt: datetime | None = None
     if isinstance(event_date, datetime):
@@ -146,10 +202,10 @@ async def create_notification(
         kind=kind_norm,
         event_date=event_dt,
         audience=audience,
-        department_id=department_id,
+        department_id=primary_dept,
         status=NotificationStatus.ACTIVE.value,
         delivery_status=delivery_status,
-        metadata_json=metadata_json,
+        metadata_json=meta or None,
     )
     db.add(notif)
     await db.flush()
@@ -158,7 +214,8 @@ async def create_notification(
         db,
         organization_id=ctx.organization_id,
         audience=audience,
-        department_id=department_id,
+        department_id=primary_dept,
+        department_ids=dept_ids,
         user_ids=user_ids,
     )
 
@@ -204,22 +261,26 @@ async def create_campus_notification(
     message: str,
     audience: str,
     department_id: int | None = None,
+    department_ids: list[int] | None = None,
     event_date: date | None = None,
 ) -> tuple[Notification, int]:
-    """TPO campus notify — FE audience (all|department|hods)."""
-    if not ctx.sees_all_students:
+    """Campus notify — TPO (all audiences) or HOD (department audience only)."""
+    fe_aud = (audience or "all").strip().lower()
+    if not ctx.sees_all_students and fe_aud != "department":
         raise NotificationError(
-            "Only Org Admin (TPO / Dean / Director) can send campus notifications.",
+            "HOD can only notify students in their department.",
             status_code=403,
         )
-    stored = stored_audience(audience)
+    stored = stored_audience(fe_aud)
+    dept_ids = _normalize_department_ids(department_id, department_ids)
     notif = await create_notification(
         db,
         ctx=ctx,
         title=title,
         body=message,
         audience=stored,
-        department_id=department_id,
+        department_id=dept_ids[0] if dept_ids else department_id,
+        department_ids=dept_ids or None,
         kind=kind,
         event_date=event_date,
         delivery_status=NotificationDeliveryStatus.QUEUED.value,
@@ -227,14 +288,33 @@ async def create_campus_notification(
     return notif, len(notif.recipients or [])
 
 
+def _department_ids_from_row(notification: Notification) -> list[int]:
+    meta = notification.metadata_json if isinstance(notification.metadata_json, dict) else {}
+    raw = meta.get("department_ids")
+    if isinstance(raw, list) and raw:
+        out: list[int] = []
+        for x in raw:
+            try:
+                out.append(int(x))
+            except (TypeError, ValueError):
+                continue
+        if out:
+            return list(dict.fromkeys(out))
+    if notification.department_id is not None:
+        return [int(notification.department_id)]
+    return []
+
+
 async def list_notifications(
     db: AsyncSession,
     *,
     organization_id: int,
+    ctx: TenantContext | None = None,
 ) -> tuple[list[Notification], int, dict[int, int]]:
     """
     List campus notifications without loading every recipient row.
     Returns (items, total, recipient_counts_by_notification_id).
+    HOD sees only department-scoped notices for their branch.
     """
     stmt = (
         select(Notification)
@@ -243,6 +323,17 @@ async def list_notifications(
         .order_by(Notification.id.desc())
     )
     items = list((await db.execute(stmt)).scalars().unique().all())
+
+    if ctx is not None and not ctx.sees_all_students and ctx.department_id is not None:
+        hod_dept = int(ctx.department_id)
+        scoped: list[Notification] = []
+        for n in items:
+            if n.audience != NotificationAudience.DEPARTMENT.value:
+                continue
+            dept_ids = _department_ids_from_row(n)
+            if hod_dept in dept_ids:
+                scoped.append(n)
+        items = scoped
     ids = [int(n.id) for n in items]
     counts: dict[int, int] = {}
     if ids:

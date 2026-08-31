@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timedelta
@@ -249,13 +250,17 @@ class PrivateKnowMeService:
         if not checkin or checkin.student_id != user.id:
             raise PermissionError("This check-in does not belong to you.")
 
+        qdef = get_question_by_key(step.question_key)
+        if qdef is None:
+            raise ValueError(f"Unknown question: {step.question_key}")
+
         resp = PrivateStudentResponse(
             checkin_id=checkin_id,
             question_key=step.question_key,
-            response_type=step.response_type,
+            response_type=qdef.response_type,
             response_value={
-                "selected_ids": step.selected_ids,
-                "free_text": step.free_text,
+                "selected_ids": list(step.selected_ids or [])[:20],
+                "free_text": (step.free_text or "")[:2000],
             },
         )
         db.add(resp)
@@ -287,7 +292,10 @@ class PrivateKnowMeService:
         responses = result.scalars().all()
 
         responses_by_key: dict[str, dict] = {}
-        for resp in responses:
+        for resp in sorted(
+            responses,
+            key=lambda r: (r.created_at or datetime.min, r.id),
+        ):
             if isinstance(resp.response_value, dict):
                 responses_by_key[resp.question_key] = resp.response_value
 
@@ -321,15 +329,18 @@ class PrivateKnowMeService:
             user_prompt = build_insight_user_prompt(responses_by_key)
             try:
                 client = AsyncOpenAI(api_key=settings.openai_api_key)
-                resp = await client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": KNOW_ME_INSIGHT_SYSTEM.strip()},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    temperature=0.8,
-                    max_tokens=1600,
-                    response_format={"type": "json_object"},
+                resp = await asyncio.wait_for(
+                    client.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {"role": "system", "content": KNOW_ME_INSIGHT_SYSTEM.strip()},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        temperature=0.8,
+                        max_tokens=1600,
+                        response_format={"type": "json_object"},
+                    ),
+                    timeout=float(settings.llm_timeout_seconds),
                 )
                 content = (resp.choices[0].message.content or "").strip()
                 payload = _parse_insight_json(

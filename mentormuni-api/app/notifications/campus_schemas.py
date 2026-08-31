@@ -12,6 +12,22 @@ FE_AUDIENCES = ("all", "department", "hods")
 FE_KINDS = ("event", "workshop", "announcement")
 
 
+def _normalize_department_ids(
+    department_id: Optional[int],
+    department_ids: Optional[list[int]],
+) -> list[int]:
+    out: list[int] = []
+    if department_ids:
+        for raw in department_ids:
+            try:
+                out.append(int(raw))
+            except (TypeError, ValueError):
+                continue
+    elif department_id is not None:
+        out.append(int(department_id))
+    return list(dict.fromkeys(out))
+
+
 class CampusNotificationCreate(BaseModel):
     kind: str = Field(default="announcement", description="event | workshop | announcement")
     title: str = Field(min_length=1, max_length=255)
@@ -19,6 +35,7 @@ class CampusNotificationCreate(BaseModel):
     date: Optional[date] = None
     audience: str = Field(default="all", description="all | department | hods")
     department_id: Optional[int] = None
+    department_ids: Optional[list[int]] = None
 
     @field_validator("kind")
     @classmethod
@@ -38,8 +55,15 @@ class CampusNotificationCreate(BaseModel):
 
     @model_validator(mode="after")
     def require_department_when_needed(self) -> "CampusNotificationCreate":
-        if self.audience == "department" and self.department_id is None:
-            raise ValueError("department_id is required when audience=department")
+        if self.audience == "department":
+            ids = _normalize_department_ids(self.department_id, self.department_ids)
+            if not ids:
+                raise ValueError(
+                    "department_id or department_ids is required when audience=department"
+                )
+            self.department_ids = ids
+            if self.department_id is None:
+                self.department_id = ids[0]
         return self
 
 
@@ -58,6 +82,7 @@ class CampusNotificationItem(BaseModel):
     date: Optional[date] = None
     audience: str
     department_id: Optional[int] = None
+    department_ids: list[int] = Field(default_factory=list)
     created_at: datetime
     delivery_status: str
     created_by: Optional[int] = None

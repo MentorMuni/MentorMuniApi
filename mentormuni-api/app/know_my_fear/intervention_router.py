@@ -41,6 +41,10 @@ legacy_router = _build_router("/student/know-me")
 class FearSolutionRequest(BaseModel):
     checkin_id: int
     fears: list[dict] = Field(default_factory=list)
+    fast: bool = Field(
+        default=True,
+        description="Use instant heuristic plans (recommended for submit flow).",
+    )
 
 
 class FearSolutionOut(BaseModel):
@@ -86,6 +90,7 @@ def _register_routes(r: APIRouter) -> None:
                     checkin_id=req.checkin_id,
                     student=user,
                     fears=req.fears,
+                    heuristic_only=req.fast,
                 )
                 await _service.schedule_6_week_notifications(
                     db=db,
@@ -98,6 +103,7 @@ def _register_routes(r: APIRouter) -> None:
                     student=user,
                     checkin_id=req.checkin_id,
                     blockers=[],
+                    heuristic_only=req.fast,
                 )
             await db.commit()
             return [FearSolutionOut(**sol) for sol in solutions]

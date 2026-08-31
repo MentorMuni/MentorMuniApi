@@ -8,6 +8,13 @@ from typing import Optional
 from pydantic import BaseModel, Field, field_validator
 
 
+def _require_not_past(value: date) -> date:
+    today = date.today()
+    if value < today:
+        raise ValueError("drive date must be today or a future date")
+    return value
+
+
 class UpcomingDriveCreate(BaseModel):
     company_name: str = Field(min_length=1, max_length=255)
     eligibility_criteria: str = Field(min_length=1)
@@ -21,6 +28,11 @@ class UpcomingDriveCreate(BaseModel):
         if not text:
             raise ValueError("field is required")
         return text
+
+    @field_validator("drive_date")
+    @classmethod
+    def future_drive_date(cls, value: date) -> date:
+        return _require_not_past(value)
 
     @field_validator("remark")
     @classmethod
@@ -46,6 +58,13 @@ class UpcomingDriveUpdate(BaseModel):
         if not text:
             raise ValueError("field cannot be empty")
         return text
+
+    @field_validator("drive_date")
+    @classmethod
+    def future_drive_date(cls, value: Optional[date]) -> Optional[date]:
+        if value is None:
+            return None
+        return _require_not_past(value)
 
     @field_validator("remark")
     @classmethod

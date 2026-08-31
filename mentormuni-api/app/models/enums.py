@@ -112,6 +112,7 @@ class NotificationKind(str, Enum):
     EVENT = "event"
     WORKSHOP = "workshop"
     ANNOUNCEMENT = "announcement"
+    PROGRAM = "program"
 
 
 class NotificationDeliveryStatus(str, Enum):

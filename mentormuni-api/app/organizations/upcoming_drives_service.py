@@ -29,12 +29,32 @@ def require_org_admin(ctx: TenantContext) -> None:
     )
 
 
+def _today() -> date:
+    return datetime.now(timezone.utc).date()
+
+
+def _require_upcoming_date(drive_date: date) -> None:
+    if drive_date < _today():
+        raise UpcomingDriveError(
+            "Drive date must be today or a future date.",
+            status_code=400,
+        )
+
+
 async def list_drives(db: AsyncSession, *, ctx: TenantContext) -> list[UpcomingDrive]:
-    require_org_admin(ctx)
+    """TPO manage + HOD read: only today/future drives (past dates excluded)."""
+    if not (
+        ctx.role == RoleCode.ORG_ADMIN.value
+        or ctx.sees_all_students
+        or ctx.role == RoleCode.HOD.value
+    ):
+        require_org_admin(ctx)
+    today = _today()
     result = await db.execute(
         select(UpcomingDrive)
         .where(UpcomingDrive.organization_id == ctx.organization_id)
         .where(UpcomingDrive.deleted_at.is_(None))
+        .where(UpcomingDrive.drive_date >= today)
         .order_by(UpcomingDrive.drive_date.asc(), UpcomingDrive.id.desc())
     )
     return list(result.scalars().all())
@@ -50,6 +70,7 @@ async def create_drive(
     remark: str | None = None,
 ) -> UpcomingDrive:
     require_org_admin(ctx)
+    _require_upcoming_date(drive_date)
     drive = UpcomingDrive(
         organization_id=ctx.organization_id,
         created_by=ctx.user_id,
@@ -100,6 +121,7 @@ async def update_drive(
     if eligibility_criteria is not None:
         drive.eligibility_criteria = eligibility_criteria.strip()
     if drive_date is not None:
+        _require_upcoming_date(drive_date)
         drive.drive_date = drive_date
     if clear_remark:
         drive.remark = None

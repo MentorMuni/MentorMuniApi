@@ -69,6 +69,8 @@ class InterventionService:
         checkin_id: int,
         student: User,
         fears: list[dict],
+        *,
+        heuristic_only: bool = False,
     ) -> list[dict]:
         """
         Generate 6-week action plans for each identified fear.
@@ -89,8 +91,14 @@ class InterventionService:
         for fear in fears:
             logger.info(
                 f"Generating solution for fear: {fear['name']} "
-                f"(severity: {fear['severity']}/10)"
+                f"(severity: {fear['severity']}/10, heuristic_only={heuristic_only})"
             )
+
+            if heuristic_only:
+                solutions.append(
+                    await self._store_solution_for_fear(db, checkin_id, student, fear, heuristic=True)
+                )
+                continue
             
             # Get widget mapping for this fear
             fear_widget = get_widget_for_fear(fear["name"])
@@ -169,29 +177,50 @@ class InterventionService:
                 
             except Exception as e:
                 logger.error(f"Failed to generate solution for {fear['name']}: {e}")
-                # Persist heuristic solution so status/weekly tracking still work
-                heuristic = await self._heuristic_solution(fear)
-                initial = int(fear["severity"])
-                solution = PrivateStudentFearSolution(
-                    checkin_id=checkin_id,
-                    student_id=student.id,
-                    fear_id=fear.get("id", fear["name"].lower().replace(" ", "_")),
-                    fear_name=fear["name"],
-                    fear_severity=initial,
-                    current_severity=initial,
-                    solution_plan=heuristic["solution_data"],
-                    weekly_actions=extract_weekly_actions(heuristic["solution_data"]),
-                    resources=heuristic["solution_data"].get("resources", []),
+                solutions.append(
+                    await self._store_solution_for_fear(db, checkin_id, student, fear, heuristic=True)
                 )
-                db.add(solution)
-                await db.flush()
-                solutions.append({
-                    "solution_id": solution.id,
-                    "fear_name": fear["name"],
-                    "solution_data": heuristic["solution_data"],
-                })
         
         return solutions
+
+    async def _store_solution_for_fear(
+        self,
+        db: AsyncSession,
+        checkin_id: int,
+        student: User,
+        fear: dict,
+        *,
+        heuristic: bool,
+        solution_data: Optional[dict] = None,
+    ) -> dict:
+        """Persist one fear solution row (heuristic or OpenAI payload)."""
+        if heuristic or solution_data is None:
+            payload = await self._heuristic_solution(fear)
+            solution_data = payload["solution_data"]
+            fear_name = payload["fear_name"]
+        else:
+            fear_name = fear["name"]
+
+        initial = int(fear["severity"])
+        solution = PrivateStudentFearSolution(
+            checkin_id=checkin_id,
+            student_id=student.id,
+            fear_id=fear.get("id", fear_name.lower().replace(" ", "_")),
+            fear_name=fear_name,
+            fear_severity=initial,
+            current_severity=initial,
+            solution_plan=solution_data,
+            weekly_actions=extract_weekly_actions(solution_data),
+            resources=solution_data.get("resources", []),
+        )
+        db.add(solution)
+        await db.flush()
+        logger.info("✓ Solution stored for %s (heuristic=%s)", fear_name, heuristic)
+        return {
+            "solution_id": solution.id,
+            "fear_name": fear_name,
+            "solution_data": solution_data,
+        }
 
     async def generate_weekly_feedback(
         self,
@@ -665,6 +694,8 @@ class InterventionService:
         checkin_id: int,
         blockers: list,
         responses: Optional[dict] = None,
+        *,
+        heuristic_only: bool = False,
     ) -> list[dict]:
         """Generate solutions once per check-in (idempotent)."""
         await self._require_owned_checkin(db, student, checkin_id)
@@ -712,7 +743,13 @@ class InterventionService:
                     answer_map[row.question_key] = row.response_value
         initial = self.compute_initial_fear_factor(answer_map)
         fears = self.fears_from_blockers(blockers, initial_severity=initial)
-        solutions = await self.generate_fear_solutions(db, checkin_id, student, fears)
+        solutions = await self.generate_fear_solutions(
+            db,
+            checkin_id,
+            student,
+            fears,
+            heuristic_only=heuristic_only,
+        )
         await self.schedule_6_week_notifications(db, student.id, checkin_id)
         return solutions
 

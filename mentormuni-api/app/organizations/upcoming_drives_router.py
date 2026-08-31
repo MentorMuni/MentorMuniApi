@@ -1,12 +1,12 @@
 """
-Upcoming placement drives — Org Admins (TPO / Dean / Director) only.
+Upcoming placement drives — Org Admins manage; HODs can list (read-only).
 
 GET    /organizations/upcoming-drives
 POST   /organizations/upcoming-drives
 PUT    /organizations/upcoming-drives/{id}
 DELETE /organizations/upcoming-drives/{id}
 
-Shared across Org Admins in the same college. HODs cannot access.
+List returns today/future dates only.
 """
 
 from __future__ import annotations
