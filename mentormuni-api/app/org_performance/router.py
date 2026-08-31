@@ -2,20 +2,29 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.authz import require_permission
 from app.common.deps import get_db, require_api_key
 from app.common.tenant.context import TenantContext
 from app.org_performance import service as perf_service
-from app.org_performance.insight import generate_insight
+from app.notifications import service as notif_service
+from app.org_performance.insight import generate_insight, generate_student_insight
+from app.org_performance.notify import notify_performance_cohort
 from app.org_performance.schemas import (
     InsightOut,
     InsightRequest,
+    NotifyCohortOut,
+    NotifyCohortRequest,
     PerformanceSummaryOut,
+    PerformanceTrendsOut,
     ScorecardListOut,
+    StudentInsightOut,
+    StudentInsightRequest,
+    StudentScorecard,
 )
+from app.org_performance.snapshots import get_performance_trends
 
 router = APIRouter(
     prefix="/organizations/performance",
@@ -59,6 +68,62 @@ async def performance_scorecards(
         if ctx.department_id is None or int(department_id) != int(ctx.department_id):
             raise HTTPException(status_code=403, detail="HOD can only view their own department.")
     return await perf_service.list_scorecards(db, ctx, department_id=department_id)
+
+
+@router.get("/scorecards/{student_id}", response_model=StudentScorecard)
+async def performance_student_scorecard(
+    student_id: int,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(
+        require_permission("VIEW_REPORTS", "VIEW_ALL_STUDENTS", "VIEW_DEPARTMENT_STUDENTS")
+    ),
+) -> StudentScorecard:
+    return await perf_service.get_student_scorecard(db, ctx, student_id)
+
+
+@router.get("/trends", response_model=PerformanceTrendsOut)
+async def performance_trends(
+    department_id: int | None = Query(default=None),
+    days: int = Query(default=30, ge=7, le=90),
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(
+        require_permission("VIEW_REPORTS", "VIEW_ALL_STUDENTS", "VIEW_DEPARTMENT_STUDENTS")
+    ),
+) -> PerformanceTrendsOut:
+    if not ctx.sees_all_students and department_id is not None:
+        if ctx.department_id is None or int(department_id) != int(ctx.department_id):
+            raise HTTPException(status_code=403, detail="HOD can only view their own department.")
+    dept_id = department_id
+    if not ctx.sees_all_students:
+        dept_id = ctx.department_id
+    return await get_performance_trends(
+        db,
+        organization_id=ctx.organization_id,
+        department_id=dept_id,
+        days=days,
+    )
+
+
+@router.post("/notify-cohort", response_model=NotifyCohortOut)
+async def performance_notify_cohort(
+    body: NotifyCohortRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(
+        require_permission("SEND_NOTIFICATION", "VIEW_ALL_STUDENTS", "VIEW_DEPARTMENT_STUDENTS")
+    ),
+) -> NotifyCohortOut:
+    """Notify a performance cohort (inactive, at-risk, etc.) via in-app + email."""
+    from app.org_performance.service import PerformanceError
+
+    try:
+        return await notify_performance_cohort(
+            db, ctx, body, background_tasks=background_tasks
+        )
+    except PerformanceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    except notif_service.NotificationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
 
 @ai_router.post("/campus-insight", response_model=InsightOut)
@@ -105,3 +170,36 @@ async def branch_insight(
         db, ctx, department_id=dept_id
     )
     return await generate_insight(summary, req)
+
+
+@ai_router.post("/student-insight/{student_id}", response_model=StudentInsightOut)
+async def student_insight(
+    student_id: int,
+    body: StudentInsightRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(
+        require_permission("VIEW_REPORTS", "VIEW_ALL_STUDENTS", "VIEW_DEPARTMENT_STUDENTS")
+    ),
+) -> StudentInsightOut:
+    """Deep AI coaching brief for one student (TPO or HOD in scope)."""
+    req = body or StudentInsightRequest()
+    card = await perf_service.get_student_scorecard(db, ctx, student_id)
+    scope = "department" if not ctx.sees_all_students else "organization"
+
+    dept_context = None
+    if req.include_dept_context and card.department_id is not None:
+        summary = await perf_service.get_performance_summary(
+            db, ctx, department_id=card.department_id
+        )
+        dept_context = next(
+            (d for d in summary.by_department if d.id == card.department_id),
+            None,
+        )
+
+    return await generate_student_insight(
+        card,
+        req,
+        organization_id=ctx.organization_id,
+        scope=scope,
+        dept_context=dept_context,
+    )

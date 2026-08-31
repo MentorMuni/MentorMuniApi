@@ -198,6 +198,32 @@ class PersonalMentorService:
         except Exception:
             logger.debug("mentor: coding unavailable", exc_info=True)
 
+        target_tier = None
+        target_companies: list[str] = []
+        starting_level = None
+        baseline_path = None
+        daily_budget = None
+        readiness_overall = None
+        focus_pillar = None
+        memory_facts: list[str] = []
+
+        try:
+            from app.student_intelligence.service import get_or_create_target, get_readiness, list_memory
+
+            target_row = await get_or_create_target(db, user)
+            target_tier = target_row.target_tier
+            target_companies = list(target_row.target_companies or [])
+            starting_level = target_row.starting_level
+            baseline_path = target_row.baseline_path
+            daily_budget = target_row.daily_budget_minutes
+            readiness = await get_readiness(db, user)
+            readiness_overall = readiness.get("overall")
+            focus_pillar = readiness.get("focus_pillar")
+            memory_rows = await list_memory(db, user)
+            memory_facts = [m["fact"] for m in memory_rows[:12]]
+        except Exception:
+            logger.debug("mentor: intelligence context unavailable", exc_info=True)
+
         return {
             "student_name": name,
             "college": college,
@@ -211,6 +237,14 @@ class PersonalMentorService:
             "plan_summary": plan_summary,
             "next_drive": next_drive,
             "recent_coding": recent_coding,
+            "target_tier": target_tier,
+            "target_companies": target_companies,
+            "starting_level": starting_level,
+            "baseline_path": baseline_path,
+            "daily_budget_minutes": daily_budget,
+            "readiness_overall": readiness_overall,
+            "focus_pillar": focus_pillar,
+            "memory_facts": memory_facts,
         }
 
 
@@ -295,6 +329,25 @@ def _format_context_block(ctx: dict[str, Any]) -> str:
         lines.append(f"Recent coding submissions: {json.dumps(coding, ensure_ascii=True)}")
     else:
         lines.append("Recent coding submissions: none yet")
+
+    if ctx.get("target_tier"):
+        lines.append(f"Placement target tier: {ctx.get('target_tier')}")
+    companies = ctx.get("target_companies") or []
+    if companies:
+        lines.append(f"Dream companies: {', '.join(companies)}")
+    if ctx.get("starting_level"):
+        lines.append(f"Starting level (self-reported): {ctx.get('starting_level')}")
+    if ctx.get("baseline_path"):
+        lines.append(f"Baseline path: {ctx.get('baseline_path')}")
+    if ctx.get("daily_budget_minutes"):
+        lines.append(f"Typical daily prep budget: {ctx.get('daily_budget_minutes')} minutes")
+    if ctx.get("readiness_overall") is not None:
+        lines.append(f"Live readiness score: {ctx.get('readiness_overall')}%")
+    if ctx.get("focus_pillar"):
+        lines.append(f"Today's focus pillar: {ctx.get('focus_pillar')}")
+    memory = ctx.get("memory_facts") or []
+    if memory:
+        lines.append("Remembered facts: " + "; ".join(memory[:8]))
     return "\n".join(lines)
 
 
@@ -311,8 +364,13 @@ def _context_summary(ctx: dict[str, Any]) -> dict[str, Any]:
 
 def _greeting_hint(ctx: dict[str, Any]) -> str:
     weaknesses = ctx.get("top_weaknesses") or []
+    focus = ctx.get("focus_pillar")
+    if focus and weaknesses:
+        return f"Want help on {focus} — especially {weaknesses[0]}?"
     if weaknesses:
         return f"Want help closing: {weaknesses[0]}?"
+    if ctx.get("readiness_overall") is not None and ctx.get("readiness_overall") >= 85:
+        return "You're drive-ready — want a hard mock or company-specific prep?"
     if ctx.get("week_status") != "done":
         return "Ask me how to tackle your current baseline step."
     if ctx.get("plan_status") != "ready":

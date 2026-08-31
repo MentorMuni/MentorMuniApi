@@ -37,6 +37,7 @@ WEIGHTS_BY_TIER = {
 }
 
 TOOL_PILLARS = {
+    "5_sec": {"communication": 0.6, "hr": 0.4},
     "aptitude": {"aptitude": 1},
     "pseudocode": {"coding": 0.6, "technical": 0.4},
     "coding": {"coding": 1},
@@ -66,6 +67,8 @@ GATES = [
     {"id": "wipro", "company": "Wipro", "label": "Wipro Elite", "overall": 55, "pillars": {"aptitude": 55, "communication": 55}},
     {"id": "cognizant", "company": "Cognizant", "label": "Cognizant GenC", "overall": 58, "pillars": {"aptitude": 58, "technical": 55}},
     {"id": "capgemini", "company": "Capgemini", "label": "Capgemini", "overall": 55, "pillars": {"aptitude": 58, "coding": 50}},
+    {"id": "persistent", "company": "Persistent", "label": "Persistent", "overall": 65, "pillars": {"coding": 65, "technical": 60}},
+    {"id": "microsoft", "company": "Microsoft", "label": "Microsoft", "overall": 80, "pillars": {"coding": 80, "technical": 75, "communication": 70}},
 ]
 
 
@@ -114,6 +117,10 @@ def gates_for(readiness: dict[str, Any], target_companies: list[str] | None = No
     relevant = (
         [g for g in GATES if g["company"].lower() in wanted] if wanted else list(GATES)
     )
+    # If student picked companies we don't model yet, fall back to full gate list
+    # so the UI still shows actionable unlock cards.
+    if wanted and not relevant:
+        relevant = list(GATES)
     out = []
     for gate in relevant:
         blockers = []

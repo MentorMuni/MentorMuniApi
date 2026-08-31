@@ -1,10 +1,11 @@
-"""Validate OpenAI 90-day placement plan JSON before marking ready."""
+"""Validate OpenAI personalized placement plan JSON (30–45 days) before marking ready."""
 
 from __future__ import annotations
 
 from typing import Any
 
 from app.student_roadmap.constants import MOCK_TOOL_CODES
+from app.student_roadmap.plan_horizon import PLAN_HORIZON_MAX, PLAN_HORIZON_MIN
 
 
 class PlanValidationError(ValueError):
@@ -31,13 +32,10 @@ def _href_is_mock_tool(href: Any) -> bool:
     if not raw:
         return False
     lower = raw.lower()
-    # Reject absolute / protocol-relative off-site URLs (LLM can invent these).
     if lower.startswith(("http://", "https://", "//")):
         return False
-    # Legacy marketing voice coach URLs (mode in query or path).
     if "voice-interview" in lower:
         return True
-    # In-portal widget: /studentportal/tools/{mock_code}
     marker = "/studentportal/tools/"
     idx = lower.find(marker)
     if idx < 0:
@@ -86,7 +84,7 @@ def _daily_map(weeks: list[dict], day_start: int, day_end: int, phase: str) -> d
     return by_day
 
 
-def validate_placement_90day_plan(plan: Any) -> dict[str, Any]:
+def validate_placement_plan(plan: Any, *, expected_horizon: int | None = None) -> dict[str, Any]:
     root = _require_dict(plan, "plan")
     phases = root.get("phases")
     if not isinstance(phases, list) or len(phases) != 2:
@@ -104,23 +102,31 @@ def validate_placement_90day_plan(plan: Any) -> dict[str, Any]:
     if prep is None or mocks is None:
         raise PlanValidationError("phases must include phase_id prep and mocks")
 
-    if int(prep.get("day_start", -1)) != 1 or int(prep.get("day_end", -1)) != 42:
-        raise PlanValidationError("prep must be day_start=1 day_end=42")
-    if int(mocks.get("day_start", -1)) != 43 or int(mocks.get("day_end", -1)) != 90:
-        raise PlanValidationError("mocks must be day_start=43 day_end=90")
+    prep_start = int(prep.get("day_start", -1))
+    prep_end = int(prep.get("day_end", -1))
+    mock_start = int(mocks.get("day_start", -1))
+    mock_end = int(mocks.get("day_end", -1))
+
+    if prep_start != 1:
+        raise PlanValidationError("prep must start at day 1")
+    if mock_start != prep_end + 1:
+        raise PlanValidationError("mocks must start the day after prep ends")
+    horizon = mock_end
+    if horizon < PLAN_HORIZON_MIN or horizon > PLAN_HORIZON_MAX:
+        raise PlanValidationError(f"plan must span {PLAN_HORIZON_MIN}–{PLAN_HORIZON_MAX} days")
+    if expected_horizon is not None and horizon != expected_horizon:
+        raise PlanValidationError(f"plan horizon {horizon} does not match expected {expected_horizon}")
 
     prep_weeks = prep.get("weeks")
-    if not isinstance(prep_weeks, list) or len(prep_weeks) != 6:
-        raise PlanValidationError("prep must have exactly 6 weeks")
-    _daily_map(prep_weeks, 1, 42, "prep")
+    if not isinstance(prep_weeks, list) or len(prep_weeks) < 2:
+        raise PlanValidationError("prep must have at least 2 weeks")
+    _daily_map(prep_weeks, 1, prep_end, "prep")
 
     mock_weeks = mocks.get("weeks")
-    if not isinstance(mock_weeks, list) or not (6 <= len(mock_weeks) <= 7):
-        raise PlanValidationError("mocks must have 6–7 weeks")
-    _daily_map(mock_weeks, 43, 90, "mocks")
+    if not isinstance(mock_weeks, list) or len(mock_weeks) < 2:
+        raise PlanValidationError("mocks must have at least 2 weeks")
+    _daily_map(mock_weeks, mock_start, horizon, "mocks")
 
-    # Mock phase must stay mock-only: every day needs an explicit mock tool signal,
-    # inherited from its week when the day itself does not declare one.
     for week in mock_weeks:
         week_ok = _has_mock_tool(week.get("focus_tools"))
         for entry in week.get("daily") or []:
@@ -135,9 +141,11 @@ def validate_placement_90day_plan(plan: Any) -> dict[str, Any]:
             )
 
     if not str(root.get("title") or "").strip():
-        root["title"] = "90-day MNC placement roadmap"
-    if not str(root.get("summary") or root.get("baseline_summary") or "").strip():
-        # summary may live on DB row; baseline_summary on plan is enough
-        pass
+        root["title"] = f"{horizon}-day personalized placement roadmap"
 
     return root
+
+
+def validate_placement_90day_plan(plan: Any) -> dict[str, Any]:
+    """Backward-compatible alias — validates any 30–45 day plan shape."""
+    return validate_placement_plan(plan)

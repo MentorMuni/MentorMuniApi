@@ -32,6 +32,16 @@ class ClarityBoard(BaseModel):
     status: Literal["healthy", "watch", "critical"] = "watch"
 
 
+class PillarAverages(BaseModel):
+    aptitude: Optional[float] = None
+    skills: Optional[float] = None
+    interview: Optional[float] = None
+    snap: Optional[float] = None
+    communication: Optional[float] = None
+    technical: Optional[float] = None
+    shortlist: Optional[float] = None
+
+
 class DeptPerformanceRow(BaseModel):
     id: int
     code: Optional[str] = None
@@ -41,6 +51,9 @@ class DeptPerformanceRow(BaseModel):
     coverage_pct: float = 0
     avg_readiness: Optional[float] = None
     avg_mock: Optional[float] = None
+    pillars: PillarAverages = Field(default_factory=PillarAverages)
+    best_pillar: Optional[str] = None
+    weakest_pillar: Optional[str] = None
     strong: int = 0
     mid: int = 0
     weak: int = 0
@@ -50,16 +63,6 @@ class DeptPerformanceRow(BaseModel):
     avg_tests_done: Optional[float] = None
     top_gap: Optional[str] = None
     hod_status: Optional[str] = None
-
-
-class PillarAverages(BaseModel):
-    aptitude: Optional[float] = None
-    skills: Optional[float] = None
-    interview: Optional[float] = None
-    snap: Optional[float] = None
-    communication: Optional[float] = None
-    technical: Optional[float] = None
-    shortlist: Optional[float] = None
 
 
 class RankedStudent(BaseModel):
@@ -88,6 +91,21 @@ class AreaBoard(BaseModel):
     avg_score: Optional[float] = None
     top: list[RankedStudent] = Field(default_factory=list)
     less_prepared: list[RankedStudent] = Field(default_factory=list)
+
+
+class BranchPillarRankItem(BaseModel):
+    rank: int = 0
+    department_id: int
+    department_name: str
+    code: Optional[str] = None
+    score: Optional[float] = None
+    students_scored: int = 0
+
+
+class BranchPillarRankings(BaseModel):
+    aptitude: list[BranchPillarRankItem] = Field(default_factory=list)
+    skills: list[BranchPillarRankItem] = Field(default_factory=list)
+    interview: list[BranchPillarRankItem] = Field(default_factory=list)
 
 
 class LevelFunnelItem(BaseModel):
@@ -193,6 +211,7 @@ class PerformanceSummaryOut(BaseModel):
     top_gaps: list[GapStrengthItem] = Field(default_factory=list)
     top_strengths: list[GapStrengthItem] = Field(default_factory=list)
     by_department: list[DeptPerformanceRow] = Field(default_factory=list)
+    branch_pillar_rankings: BranchPillarRankings = Field(default_factory=BranchPillarRankings)
     leaders: list[LeaderboardEntry] = Field(default_factory=list)
     at_risk: list[LeaderboardEntry] = Field(default_factory=list)
     area_leaders: list[AreaLeader] = Field(default_factory=list)
@@ -250,3 +269,71 @@ class InsightOut(BaseModel):
     scope: Literal["organization", "department"]
     metrics: dict[str, Any] = Field(default_factory=dict)
     insight: InsightPayload
+
+
+class StudentInsightRequest(BaseModel):
+    max_actions: int = Field(default=5, ge=3, le=8)
+    locale: str = Field(default="en-IN", max_length=16)
+    focus_area: Optional[str] = Field(
+        default=None,
+        description="Optional focus: overall|aptitude|skills|interview|communication|technical|shortlist|snap",
+    )
+    include_dept_context: bool = Field(
+        default=True,
+        description="Include branch averages for comparison when student has a department",
+    )
+
+
+class StudentInsightOut(BaseModel):
+    ok: bool = True
+    source: Literal["openai", "heuristic"] = "openai"
+    model: Optional[str] = None
+    generated_at: str
+    cache_ttl_seconds: int = 900
+    organization_id: int
+    student_id: int
+    student_name: str
+    department_id: Optional[int] = None
+    department_name: Optional[str] = None
+    scope: Literal["organization", "department"]
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    insight: InsightPayload
+
+
+class PerformanceTrendPoint(BaseModel):
+    date: str
+    avg_readiness: Optional[float] = None
+    coverage_pct: Optional[float] = None
+    drive_ready_of_scored_pct: Optional[float] = None
+    students_scored: Optional[int] = None
+
+
+class PerformanceTrendsOut(BaseModel):
+    organization_id: int
+    department_id: Optional[int] = None
+    days: int = 30
+    points: list[PerformanceTrendPoint] = Field(default_factory=list)
+
+
+class NotifyCohortRequest(BaseModel):
+    cohort: Literal[
+        "inactive",
+        "never",
+        "at-risk",
+        "needs-practice",
+        "drive-ready",
+        "custom",
+    ]
+    title: str = Field(min_length=1, max_length=255)
+    message: str = Field(min_length=1)
+    department_id: Optional[int] = None
+    student_ids: list[int] = Field(default_factory=list)
+    max_recipients: int = Field(default=500, ge=1, le=2000)
+
+
+class NotifyCohortOut(BaseModel):
+    ok: bool = True
+    notification_id: Optional[int] = None
+    recipients: int = 0
+    delivery_status: Optional[str] = None
+    message: str = ""

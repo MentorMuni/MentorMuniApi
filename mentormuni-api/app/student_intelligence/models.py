@@ -152,6 +152,17 @@ class StudentTarget(Base):
         String(50), nullable=False, server_default="mass_recruiter"
     )
     target_readiness: Mapped[int] = mapped_column(Integer, nullable=False, server_default="85")
+    starting_level: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default="some_experience"
+    )
+    baseline_path: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    daily_budget_minutes: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="25"
+    )
+    onboarding_completed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    baseline_sprint_start_date: Mapped[Optional[date]] = mapped_column(Date(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

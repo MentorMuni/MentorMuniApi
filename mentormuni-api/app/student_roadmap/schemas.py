@@ -46,6 +46,10 @@ class RoadmapOut(BaseModel):
     steps: list[RoadmapStepOut]
 
 
+class BaselinePathRequest(BaseModel):
+    path: str = Field(..., pattern="^(fast_track|standard|foundation)$")
+
+
 class AnalysisOut(BaseModel):
     week_number: int
     week_status: str

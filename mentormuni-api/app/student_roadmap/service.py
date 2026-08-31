@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Optional
 
 from fastapi import HTTPException
@@ -15,6 +15,12 @@ from sqlalchemy.orm import selectinload
 
 from app.models.enums import RoleCode
 from app.models.user import User
+from app.student_roadmap.baseline_sprint import (
+    FAST_TRACK_DEFER_TOOLS,
+    allowed_max_order,
+    campus_today,
+    parse_sprint_start,
+)
 from app.student_roadmap.constants import (
     PLAN_GENERATING_STALE_SECONDS,
     PLAN_STATUS_FAILED,
@@ -53,7 +59,8 @@ from app.student_roadmap.schemas import (
     RoadmapOut,
     RoadmapStepOut,
 )
-from app.student_roadmap.validate_plan import PlanValidationError, validate_placement_90day_plan
+from app.student_roadmap.plan_horizon import plan_horizon_days
+from app.student_roadmap.validate_plan import PlanValidationError, validate_placement_plan
 
 logger = logging.getLogger("student_roadmap")
 
@@ -172,6 +179,12 @@ def serialize_roadmap(week: StudentRoadmapWeek, plan_available: bool, plan_statu
 
 async def get_roadmap(db: AsyncSession, user: User) -> RoadmapOut:
     week = await get_or_create_week(db, user)
+    statuses_before = {s.id: s.status for s in (week.steps or [])}
+    await _apply_sprint_gates(db, user, week)
+    dirty = any(s.status != statuses_before.get(s.id) for s in (week.steps or []))
+    if dirty:
+        await db.commit()
+        week = await _load_week(db, user.id)  # type: ignore[assignment]
     plan_available, plan_status = await _latest_plan_status(db, user.id)
     return serialize_roadmap(week, plan_available, plan_status)
 
@@ -268,7 +281,9 @@ async def list_results(
     ]
 
 
-def _recompute_week_progress(week: StudentRoadmapWeek) -> None:
+def _recompute_week_progress(
+    week: StudentRoadmapWeek, *, allowed_max_order: int | None = None
+) -> None:
     """Ensure exactly one CURRENT step (first not-done) or mark week done."""
     steps = sorted(week.steps or [], key=lambda x: x.step_order)
     if not steps:
@@ -282,9 +297,142 @@ def _recompute_week_progress(week: StudentRoadmapWeek) -> None:
         if week.completed_at is None:
             week.completed_at = datetime.now(timezone.utc)
         return
+
+    if allowed_max_order is not None:
+        for s in steps:
+            if s.step_order > allowed_max_order and s.status != STEP_STATUS_DONE:
+                s.status = STEP_STATUS_LOCKED
+        if first_open.step_order > allowed_max_order:
+            week.status = WEEK_STATUS_IN_PROGRESS
+            week.completed_at = None
+            return
+
     first_open.status = STEP_STATUS_CURRENT
     week.status = WEEK_STATUS_IN_PROGRESS
     week.completed_at = None
+
+
+async def _baseline_sprint_start(db: AsyncSession, user: User) -> date | None:
+    from app.student_intelligence.service import get_or_create_target
+
+    row = await get_or_create_target(db, user)
+    if row.baseline_sprint_start_date:
+        return row.baseline_sprint_start_date
+    if row.onboarding_completed_at:
+        return parse_sprint_start(row.onboarding_completed_at)
+    week = await _load_week(db, user.id)
+    if week:
+        done_times = [
+            s.completed_at
+            for s in week.steps or []
+            if s.status == STEP_STATUS_DONE and s.completed_at is not None
+        ]
+        if done_times:
+            return parse_sprint_start(min(done_times))
+    return None
+
+
+def _apply_deferred_fast_track(
+    week: StudentRoadmapWeek, *, baseline_path: str | None, allowed: int
+) -> None:
+    """Fast-track: skill_readiness on day 1; interview_readiness when day-2 batch unlocks."""
+    if baseline_path != "fast_track":
+        return
+    inferred = max(70, _early_baseline_average(week) or 70)
+    now = datetime.now(timezone.utc)
+    for code in FAST_TRACK_DEFER_TOOLS:
+        step = next((s for s in week.steps if s.tool_code == code), None)
+        if step is None or step.status == STEP_STATUS_DONE:
+            continue
+        if step.step_order > allowed:
+            continue
+        step.status = STEP_STATUS_DONE
+        step.score = float(inferred)
+        step.label = "Fast-track waived"
+        step.completed_at = now
+        if not step.strengths_json:
+            step.strengths_json = ["Inferred from early baseline"]
+
+
+async def _apply_sprint_gates(db: AsyncSession, user: User, week: StudentRoadmapWeek) -> None:
+    from app.student_intelligence.service import get_or_create_target
+
+    start = await _baseline_sprint_start(db, user)
+    allowed = allowed_max_order(start)
+    target = await get_or_create_target(db, user)
+    _apply_deferred_fast_track(
+        week, baseline_path=target.baseline_path, allowed=allowed
+    )
+    _recompute_week_progress(week, allowed_max_order=allowed)
+
+
+def _early_baseline_average(week: StudentRoadmapWeek) -> Optional[int]:
+    scores: list[float] = []
+    for step in week.steps or []:
+        if step.tool_code in ("5_sec", "aptitude") and step.status == STEP_STATUS_DONE:
+            if step.score is not None:
+                scores.append(float(step.score))
+    if not scores:
+        return None
+    return round(sum(scores) / len(scores))
+
+
+def plan_persona_from_score(score: Optional[float]) -> str:
+    if score is None:
+        return "balanced"
+    if score >= 85:
+        return "interview_ready"
+    if score < 40:
+        return "foundation"
+    return "balanced"
+
+
+async def apply_baseline_path(db: AsyncSession, user: User, path: str) -> RoadmapOut:
+    """Apply fast-track waivers after snap + aptitude; standard/foundation are no-ops server-side."""
+    _ensure_student(user)
+    if path not in ("fast_track", "standard", "foundation"):
+        raise HTTPException(status_code=422, detail="Invalid baseline path.")
+
+    week = await get_or_create_week(db, user)
+    aptitude = next((s for s in week.steps if s.tool_code == "aptitude"), None)
+    if aptitude is None or aptitude.status != STEP_STATUS_DONE:
+        raise HTTPException(
+            status_code=409,
+            detail="Complete aptitude before choosing a baseline path.",
+        )
+
+    if path == "fast_track":
+        inferred = max(70, _early_baseline_average(week) or 70)
+        now = datetime.now(timezone.utc)
+        for code in ("skill_readiness",):
+            step = next((s for s in week.steps if s.tool_code == code), None)
+            if step is None or step.status == STEP_STATUS_DONE:
+                continue
+            step.status = STEP_STATUS_DONE
+            step.score = float(inferred)
+            step.label = "Fast-track waived"
+            step.completed_at = now
+            if not step.strengths_json:
+                step.strengths_json = ["Inferred from early baseline"]
+
+    await _apply_sprint_gates(db, user, week)
+
+    from app.student_intelligence.service import patch_target_baseline_path, remember_fact
+
+    await patch_target_baseline_path(db, user, path)
+    await remember_fact(
+        db,
+        user.id,
+        fact=f"Baseline path chosen: {path.replace('_', ' ')}.",
+        fact_type="profile",
+        topic_id="baseline_path",
+        confidence=0.95,
+    )
+    await db.commit()
+    await db.refresh(week)
+
+    plan_available, plan_status = await _latest_plan_status(db, user.id)
+    return serialize_roadmap(week, plan_available, plan_status)
 
 
 async def complete_step(
@@ -308,6 +456,14 @@ async def complete_step(
         raise HTTPException(
             status_code=409,
             detail="This step is locked. Complete earlier Week-1 tools first.",
+        )
+
+    start = await _baseline_sprint_start(db, user)
+    allowed = allowed_max_order(start)
+    if step.status != STEP_STATUS_DONE and step.step_order > allowed:
+        raise HTTPException(
+            status_code=409,
+            detail="Today's baseline batch is complete. Next checks unlock tomorrow.",
         )
 
     normalized = normalize_complete_payload(body.model_dump())
@@ -353,7 +509,18 @@ async def complete_step(
     step.completed_at = now
     step.status = STEP_STATUS_DONE
 
-    _recompute_week_progress(week)
+    await _apply_sprint_gates(db, user, week)
+
+    from app.student_intelligence.service import sync_roadmap_step_memory
+
+    await sync_roadmap_step_memory(
+        db,
+        user,
+        tool_code=tool_code,
+        strengths=normalized["strengths"],
+        weaknesses=normalized["weaknesses"],
+        score=float(normalized["score"]) if normalized["score"] is not None else None,
+    )
 
     await db.commit()
     week = await _load_week(db, user.id)  # type: ignore[assignment]
@@ -426,7 +593,7 @@ async def start_plan_generation(db: AsyncSession, user: User) -> tuple[Generated
     if week.status != WEEK_STATUS_DONE:
         raise HTTPException(
             status_code=409,
-            detail="Complete all Week-1 baseline steps before generating the 90-day plan.",
+            detail="Complete all 8 assessment checks before generating your personalized plan.",
         )
 
     latest_q = await db.execute(
@@ -450,10 +617,24 @@ async def start_plan_generation(db: AsyncSession, user: User) -> tuple[Generated
         await db.flush()
 
     analysis = build_analysis_from_week(week)
+    persona = plan_persona_from_score(analysis.overall_score)
+    horizon_days = plan_horizon_days(persona)
+
+    from app.student_intelligence.service import get_or_create_target
+
+    target_row = await get_or_create_target(db, user)
+    companies = list(target_row.target_companies or []) or DEFAULT_TARGET_COMPANIES
+
     snapshot = {
         **analysis.model_dump(),
-        "target_companies": DEFAULT_TARGET_COMPANIES,
+        "target_companies": companies,
+        "target_tier": target_row.target_tier,
+        "starting_level": target_row.starting_level or "some_experience",
+        "baseline_path": target_row.baseline_path or "standard",
+        "daily_budget_minutes": int(target_row.daily_budget_minutes or 25),
         "batch_year": user.batch_year,
+        "student_band": persona,
+        "plan_horizon_days": horizon_days,
     }
 
     row = StudentGeneratedRoadmap(
@@ -484,12 +665,22 @@ async def run_plan_generation(plan_id: int, llm_service: Any) -> None:
         batch_year = snapshot.get("batch_year")
 
         try:
+            persona = snapshot.get("student_band") or plan_persona_from_score(
+                snapshot.get("overall_score")
+            )
+            expected_horizon = snapshot.get("plan_horizon_days") or plan_horizon_days(persona)
             plan_obj, summary, model_name = await llm_service.generate_placement_90day_roadmap(
                 analysis=snapshot,
                 target_companies=companies,
                 batch_year=batch_year,
+                student_band=persona,
+                target_tier=snapshot.get("target_tier"),
+                starting_level=snapshot.get("starting_level"),
+                baseline_path=snapshot.get("baseline_path"),
+                daily_budget_minutes=snapshot.get("daily_budget_minutes"),
+                horizon_days=expected_horizon,
             )
-            validated = validate_placement_90day_plan(plan_obj)
+            validated = validate_placement_plan(plan_obj, expected_horizon=expected_horizon)
             row.plan_json = validated
             row.summary = (
                 summary or validated.get("baseline_summary") or validated.get("confidence_goal")

@@ -1082,9 +1082,15 @@ If YES, respond with just: YES"""
         analysis: dict,
         target_companies: list[str],
         batch_year: int | None = None,
+        student_band: str = "balanced",
+        target_tier: str | None = None,
+        starting_level: str | None = None,
+        baseline_path: str | None = None,
+        daily_budget_minutes: int | None = None,
+        horizon_days: int | None = None,
     ) -> tuple[dict, str, str]:
         """
-        Generate a validated-ready JSON 90-day placement plan from Week-1 baseline analysis.
+        Generate a validated-ready JSON placement plan (30–45 days) from assessment week.
         Returns (plan_dict, summary, model_name). Raises on LLM/parse failure.
         """
         from app.services.placement_90day_prompt import render_placement_90day_prompt
@@ -1092,11 +1098,20 @@ If YES, respond with just: YES"""
             MAX_TOKENS_PLACEMENT_90DAY,
             PLACEMENT_90DAY_MODEL,
         )
+        from app.student_roadmap.plan_horizon import plan_horizon_days
+
+        horizon = horizon_days or plan_horizon_days(student_band)
 
         prompt = render_placement_90day_prompt(
             analysis,
             target_companies=target_companies,
             batch_year=batch_year,
+            student_band=student_band,
+            target_tier=target_tier,
+            starting_level=starting_level,
+            baseline_path=baseline_path,
+            daily_budget_minutes=daily_budget_minutes,
+            horizon_days=horizon,
         )
         model_name = PLACEMENT_90DAY_MODEL
 
@@ -1108,7 +1123,7 @@ If YES, respond with just: YES"""
                         "role": "system",
                         "content": (
                             "You are MentorMuni placement coach. Reply with a single JSON object only. "
-                            "No markdown fences. Every day 1–90 must appear exactly once."
+                            f"No markdown fences. Every day 1–{horizon} must appear exactly once."
                         ),
                     },
                     {"role": "user", "content": prompt},

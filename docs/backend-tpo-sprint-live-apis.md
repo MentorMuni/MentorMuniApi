@@ -4,7 +4,8 @@
 **Product:** MentorMuni Organization Portal (`/Organization/*`)  
 **Sprint goal (this build):** Real data — **not** browser localStorage dummy.  
 **In scope:** Students register + import · HOD invite **email** · notifications tables/API · audit_logs  
-**Out of scope (next):** AI Campus Brief / OpenAI (`docs/backend-campus-insight-api.md` on frontend repo)
+**In scope (this build):** AI Campus / Branch / Student insight (`docs/backend-campus-insight-api.md`)  
+**Out of scope (next):** Full HOD batch ops UI (can be stub dashboard)
 
 **Frontend source of truth (contracts + local fallback):**  
 `Frontend/docs/backend-tpo-sprint-live-apis.md` · `departmentsApi.js` · `orgPortal/auth.js`

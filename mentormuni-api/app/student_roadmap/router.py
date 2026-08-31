@@ -15,6 +15,7 @@ from app.student_roadmap import service as roadmap_service
 from app.student_roadmap.schemas import (
     AnalysisOut,
     AssessmentResultOut,
+    BaselinePathRequest,
     CompleteStepRequest,
     GeneratedPlanOut,
     ProgressLearningTopicsOut,
@@ -47,6 +48,15 @@ async def complete_step(
     user: User = Depends(require_roles(RoleCode.STUDENT.value)),
 ) -> RoadmapOut:
     return await roadmap_service.complete_step(db, user, tool_code, body)
+
+
+@router.post("/baseline-path", response_model=RoadmapOut)
+async def apply_baseline_path(
+    body: BaselinePathRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_roles(RoleCode.STUDENT.value)),
+) -> RoadmapOut:
+    return await roadmap_service.apply_baseline_path(db, user, body.path)
 
 
 @router.get("/analysis", response_model=AnalysisOut)

@@ -10,7 +10,17 @@ from typing import Any, Optional
 from openai import AsyncOpenAI
 
 from app.core.config import settings
-from app.org_performance.schemas import InsightOut, InsightPayload, InsightRequest, PerformanceSummaryOut
+from app.org_performance.schemas import (
+    DeptPerformanceRow,
+    InsightOut,
+    InsightPayload,
+    InsightRequest,
+    PerformanceSummaryOut,
+    StudentInsightOut,
+    StudentInsightRequest,
+    StudentScorecard,
+)
+from app.student_roadmap.constants import TOOL_META
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +32,7 @@ Given ONLY the metrics JSON below, write a decision brief with full clarity for 
 Rules:
 - Use ONLY the provided numbers. Do not invent departments, students, or scores.
 - Cover readiness bands, test completion (given vs remaining), pillar strengths and preparation gaps,
+  branch-level aptitude/skills/interview comparisons (which department leads each pillar),
   top performers vs less-prepared students, and shortlist readiness when present.
 - Never call students "weak". Say they are less prepared / need more practice.
 - Be concrete and actionable for campus placement prep (aptitude, skills, interview mocks, shortlisting).
@@ -42,6 +53,34 @@ FOCUS_AREA: FOCUS_LABEL
 Audience scope: SCOPE_LABEL
 
 METRICS:
+"""
+
+STUDENT_INSIGHT_PROMPT = r"""
+You are Mentor Muni — placement coach briefing a TPO or HOD about ONE student.
+
+Given ONLY the student metrics JSON below, write a coaching brief for the staff member.
+
+Rules:
+- Use ONLY the provided numbers and names. Do not invent scores, tools, or assessments.
+- going_well: student strengths and positive signals (2 to 4 short bullets).
+- concerns: preparation gaps, inactivity, or risks (2 to 4 short bullets).
+- actions: what TPO/HOD should assign, escalate, or follow up (3 to MAX_ACTIONS imperative bullets).
+- shortlist_notes: drive-readiness verdict plus what the student should do next (1 to 3 bullets).
+- If assessment week is incomplete, name pending checks from step_status.
+- Compare to dept_context averages only when that block is present — do not invent branch stats.
+- Never call the student "weak". Say less prepared / needs more practice.
+- Tone: professional Indian English, concise, respectful.
+- Return STRICT JSON only:
+{
+  "summary": "3-4 sentences: readiness, progress through 8 checks, drive-readiness verdict",
+  "going_well": ["bullet", "bullet"],
+  "concerns": ["bullet", "bullet"],
+  "actions": ["action 1", "action 2", "action 3"],
+  "shortlist_notes": ["drive verdict + student next step", "bullet"]
+}
+FOCUS_AREA: FOCUS_LABEL
+
+STUDENT METRICS:
 """
 
 
@@ -172,6 +211,9 @@ def _metrics_for_llm(
                 "coverage_pct": d.coverage_pct,
                 "avg_readiness": d.avg_readiness,
                 "avg_tests_done": d.avg_tests_done,
+                "pillars": d.pillars.model_dump(),
+                "best_pillar": d.best_pillar,
+                "weakest_pillar": d.weakest_pillar,
                 "strong": d.strong,
                 "mid": d.mid,
                 "weak": d.weak,
@@ -181,6 +223,7 @@ def _metrics_for_llm(
             }
             for d in summary.by_department
         ],
+        "branch_pillar_rankings": summary.branch_pillar_rankings.model_dump(),
         "area_boards": [
             {
                 "area": b.area,
@@ -308,6 +351,238 @@ def _heuristic_insight(
         summary=summary_text,
         going_well=list(clarity.going_well),
         concerns=list(clarity.concerns),
+        actions=actions[:max_actions],
+        shortlist_notes=shortlist_notes[:3],
+    )
+
+
+async def generate_student_insight(
+    card: StudentScorecard,
+    body: StudentInsightRequest,
+    *,
+    organization_id: int,
+    scope: str,
+    dept_context: Optional[DeptPerformanceRow] = None,
+    force_heuristic: bool = False,
+) -> StudentInsightOut:
+    metrics = _student_metrics_for_llm(card, dept_context=dept_context, focus_area=body.focus_area)
+    focus_label = body.focus_area or "overall (all areas)"
+    generated_at = datetime.now(timezone.utc).isoformat()
+    heuristic = _heuristic_student_insight(card, body.max_actions, dept_context=dept_context)
+
+    if force_heuristic or not (settings.openai_api_key or "").strip():
+        return StudentInsightOut(
+            ok=True,
+            source="heuristic",
+            model=None,
+            generated_at=generated_at,
+            organization_id=organization_id,
+            student_id=card.id,
+            student_name=card.name,
+            department_id=card.department_id,
+            department_name=card.department_name,
+            scope=scope,  # type: ignore[arg-type]
+            metrics=metrics,
+            insight=heuristic,
+        )
+
+    prompt = (
+        STUDENT_INSIGHT_PROMPT.replace("MAX_ACTIONS", str(body.max_actions))
+        .replace("FOCUS_LABEL", focus_label)
+        + json.dumps(metrics, ensure_ascii=True)
+    )
+    model = settings.org_performance_insight_model
+    try:
+        client = AsyncOpenAI(api_key=settings.openai_api_key)
+        resp = await client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Return only valid JSON for single-student placement coaching briefs.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.3,
+            max_tokens=900,
+            response_format={"type": "json_object"},
+        )
+        content = (resp.choices[0].message.content or "").strip()
+        payload = _parse_insight(content, body.max_actions, fallback=heuristic)
+        return StudentInsightOut(
+            ok=True,
+            source="openai",
+            model=model,
+            generated_at=generated_at,
+            organization_id=organization_id,
+            student_id=card.id,
+            student_name=card.name,
+            department_id=card.department_id,
+            department_name=card.department_name,
+            scope=scope,  # type: ignore[arg-type]
+            metrics=metrics,
+            insight=payload,
+        )
+    except Exception:
+        logger.exception("student insight failed for student_id=%s", card.id)
+        return StudentInsightOut(
+            ok=True,
+            source="heuristic",
+            model=None,
+            generated_at=generated_at,
+            organization_id=organization_id,
+            student_id=card.id,
+            student_name=card.name,
+            department_id=card.department_id,
+            department_name=card.department_name,
+            scope=scope,  # type: ignore[arg-type]
+            metrics=metrics,
+            insight=heuristic,
+        )
+
+
+def _student_metrics_for_llm(
+    card: StudentScorecard,
+    *,
+    dept_context: Optional[DeptPerformanceRow] = None,
+    focus_area: Optional[str] = None,
+) -> dict[str, Any]:
+    tools: list[dict[str, Any]] = []
+    for tool_code, status in card.step_status_by_tool.items():
+        meta = TOOL_META.get(tool_code) or {}
+        tools.append(
+            {
+                "tool": tool_code,
+                "label": meta.get("title") or tool_code,
+                "status": status,
+                "score": card.scores_by_tool.get(tool_code),
+            }
+        )
+    tools.sort(key=lambda t: int((TOOL_META.get(t["tool"]) or {}).get("order") or 0))
+
+    data: dict[str, Any] = {
+        "focus_area": focus_area or "overall",
+        "student": {
+            "id": card.id,
+            "name": card.name,
+            "department": card.department_name,
+            "readiness": card.readiness,
+            "mock_score": card.mock_score,
+            "technical_score": card.technical_score,
+            "communication_score": card.communication_score,
+            "shortlist_score": card.shortlist_score,
+            "best_area": card.best_area,
+            "strength": card.strength,
+            "weakness": card.weakness,
+            "strengths": card.strengths[:8],
+            "weaknesses": card.weaknesses[:8],
+            "tests_done": card.tests_done,
+            "tests_in_progress": card.tests_in_progress,
+            "tests_remaining": card.tests_remaining,
+            "progress_level": card.progress_level,
+            "progress_pct": card.progress_pct,
+            "week_status": card.week_status,
+            "activity_status": card.activity_status,
+            "days_inactive": card.days_inactive,
+            "last_active_at": card.last_active_at,
+            "scores_by_tool": card.scores_by_tool,
+            "tools": tools,
+        },
+    }
+    if dept_context is not None:
+        data["dept_context"] = {
+            "name": dept_context.name,
+            "avg_readiness": dept_context.avg_readiness,
+            "coverage_pct": dept_context.coverage_pct,
+            "pillars": dept_context.pillars.model_dump(),
+            "best_pillar": dept_context.best_pillar,
+            "weakest_pillar": dept_context.weakest_pillar,
+            "strong": dept_context.strong,
+            "mid": dept_context.mid,
+            "weak": dept_context.weak,
+            "top_gap": dept_context.top_gap,
+        }
+    return data
+
+
+def _heuristic_student_insight(
+    card: StudentScorecard,
+    max_actions: int,
+    *,
+    dept_context: Optional[DeptPerformanceRow] = None,
+) -> InsightPayload:
+    readiness = card.readiness
+    name = card.name
+    gap = card.weakness or (card.weaknesses[0] if card.weaknesses else "core fundamentals")
+    strength = card.strength or (card.strengths[0] if card.strengths else "baseline progress")
+    going_well: list[str] = []
+    concerns: list[str] = []
+    actions: list[str] = []
+    shortlist_notes: list[str] = []
+
+    if readiness is not None and readiness >= 75:
+        going_well.append(f"{name} is drive-ready at {readiness}% overall readiness.")
+    elif readiness is not None and readiness >= 50:
+        going_well.append(f"{name} is in the developing band at {readiness}% readiness.")
+    if card.tests_done > 0:
+        going_well.append(f"Completed {card.tests_done}/8 assessment checks.")
+    if strength:
+        going_well.append(f"Strongest signal: {strength}.")
+    if card.activity_status == "active":
+        going_well.append("Active in the last 7 days.")
+
+    if card.tests_remaining > 0:
+        concerns.append(f"{card.tests_remaining} baseline check(s) still pending.")
+    if readiness is not None and readiness < 50:
+        concerns.append(f"Overall readiness is {readiness}% — needs focused practice before drives.")
+    if card.activity_status in ("inactive", "never"):
+        label = "never started" if card.activity_status == "never" else f"inactive {card.days_inactive or 14}+ days"
+        concerns.append(f"Student has {label} — re-engagement needed.")
+    if gap:
+        concerns.append(f"Top prep gap: {gap}.")
+
+    if card.tests_remaining > 0:
+        actions.append("Message student to complete the next unlocked baseline check this week.")
+    if gap:
+        actions.append(f"Assign targeted practice for {gap}.")
+    if readiness is not None and readiness < 75:
+        actions.append("Schedule a skill or interview mock before campus shortlisting.")
+    if not actions:
+        actions.append("Keep weekly mock practice and track readiness before upcoming drives.")
+
+    if readiness is not None and readiness >= 75:
+        shortlist_notes.append("Drive-ready — consider for shortlist after one more mock refresh.")
+    elif readiness is not None and readiness >= 50:
+        shortlist_notes.append("Developing — hold shortlist until mock scores cross 75%.")
+    else:
+        shortlist_notes.append("Hold shortlist — complete baseline week and close top gaps first.")
+    if card.tests_remaining > 0:
+        shortlist_notes.append(f"Student should finish {card.tests_remaining} remaining assessment check(s).")
+
+    if dept_context and readiness is not None and dept_context.avg_readiness is not None:
+        delta = round(readiness - float(dept_context.avg_readiness), 1)
+        if delta >= 5:
+            going_well.append(f"Above branch average ({dept_context.avg_readiness}%) by {delta} pts.")
+        elif delta <= -5:
+            concerns.append(f"Below branch average ({dept_context.avg_readiness}%) by {abs(delta)} pts.")
+
+    summary = (
+        f"{name} ({card.department_name or 'no branch'}) — "
+        f"readiness {readiness if readiness is not None else 'n/a'}%, "
+        f"{card.tests_done}/8 checks done"
+        + (f", activity: {card.activity_status}" if card.activity_status else "")
+        + "."
+    )
+
+    if not going_well:
+        going_well.append("Student is on the roadmap — encourage completion of baseline checks.")
+    if not concerns:
+        concerns.append("No critical red flags — keep monitoring mock scores and activity.")
+
+    return InsightPayload(
+        summary=summary,
+        going_well=going_well[:4],
+        concerns=concerns[:4],
         actions=actions[:max_actions],
         shortlist_notes=shortlist_notes[:3],
     )

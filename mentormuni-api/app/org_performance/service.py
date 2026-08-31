@@ -20,6 +20,8 @@ from app.models.user import User
 from app.org_performance.schemas import (
     AreaBoard,
     AreaLeader,
+    BranchPillarRankItem,
+    BranchPillarRankings,
     ClarityBoard,
     DeptPerformanceRow,
     GapStrengthItem,
@@ -45,6 +47,14 @@ from app.student_roadmap.constants import (
 from app.student_roadmap.models import StudentAssessmentResult, StudentRoadmapStep, StudentRoadmapWeek
 
 logger = logging.getLogger(__name__)
+
+
+class PerformanceError(Exception):
+    def __init__(self, message: str, *, status_code: int = 400) -> None:
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
+
 
 PILLAR_TOOLS: dict[str, tuple[str, ...]] = {
     "snap": ("5_sec",),
@@ -504,6 +514,69 @@ def _pillar_score(scores_by_tool: dict[str, float], pillar: str) -> Optional[flo
     return _mean(vals)
 
 
+def _aggregate_dept_pillars(rows: list[StudentScorecard]) -> PillarAverages:
+    pillar_vals: dict[str, list[float]] = defaultdict(list)
+    shortlist_vals: list[float] = []
+    for r in rows:
+        if r.readiness is None:
+            continue
+        for pillar in ("aptitude", "skills", "interview", "snap"):
+            v = _pillar_score(r.scores_by_tool, pillar)
+            if v is not None:
+                pillar_vals[pillar].append(v)
+        if r.technical_score is not None:
+            pillar_vals["technical"].append(float(r.technical_score))
+        if r.communication_score is not None:
+            pillar_vals["communication"].append(float(r.communication_score))
+        if r.shortlist_score is not None:
+            shortlist_vals.append(float(r.shortlist_score))
+    return PillarAverages(
+        aptitude=_mean(pillar_vals["aptitude"]),
+        skills=_mean(pillar_vals["skills"]),
+        interview=_mean(pillar_vals["interview"]),
+        snap=_mean(pillar_vals["snap"]),
+        communication=_mean(pillar_vals["communication"]),
+        technical=_mean(pillar_vals["technical"]),
+        shortlist=_mean(shortlist_vals),
+    )
+
+
+def _best_weakest_pillars(pillars: PillarAverages) -> tuple[Optional[str], Optional[str]]:
+    pairs = [
+        (k, getattr(pillars, k))
+        for k in ("aptitude", "skills", "interview")
+        if getattr(pillars, k) is not None
+    ]
+    if not pairs:
+        return None, None
+    pairs.sort(key=lambda x: float(x[1] or 0), reverse=True)
+    return pairs[0][0], pairs[-1][0]
+
+
+def _build_branch_pillar_rankings(by_department: list[DeptPerformanceRow]) -> BranchPillarRankings:
+    out = BranchPillarRankings()
+    for area in ("aptitude", "skills", "interview"):
+        items: list[BranchPillarRankItem] = []
+        for d in by_department:
+            score = getattr(d.pillars, area, None)
+            if score is None:
+                continue
+            items.append(
+                BranchPillarRankItem(
+                    department_id=d.id,
+                    department_name=d.name,
+                    code=d.code,
+                    score=score,
+                    students_scored=d.scored_students,
+                )
+            )
+        items.sort(key=lambda x: float(x.score or 0), reverse=True)
+        for i, item in enumerate(items, 1):
+            item.rank = i
+        setattr(out, area, items)
+    return out
+
+
 def _best_area(scores_by_tool: dict[str, float], tech: Optional[float], comm: Optional[float]) -> Optional[str]:
     candidates: list[tuple[str, float]] = []
     for key in ("aptitude", "skills", "interview", "snap", "coding"):
@@ -763,6 +836,43 @@ async def list_scorecards(
     return ScorecardListOut(scope=scope, total=len(items), items=items)
 
 
+async def get_student_scorecard(
+    db: AsyncSession,
+    ctx: TenantContext,
+    student_id: int,
+) -> StudentScorecard:
+    from fastapi import HTTPException
+
+    scope, dept_id = _resolve_scope(ctx, None)
+    stmt = (
+        select(User)
+        .join(Role, User.role_id == Role.id)
+        .where(User.id == student_id)
+        .where(User.organization_id == ctx.organization_id)
+        .where(Role.role_code == RoleCode.STUDENT.value)
+        .where(User.status == UserStatus.ACTIVE.value)
+        .where(User.deleted_at.is_(None))
+        .options(selectinload(User.department))
+    )
+    if scope == "department" and dept_id is not None:
+        stmt = stmt.where(User.department_id == dept_id)
+    user = (await db.execute(stmt)).scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="Student not found in your scope.")
+
+    weeks = await _weeks_by_user(db, [user.id])
+    attempts = await _attempt_counts(db, [user.id])
+    coding_best = await _best_coding_scores(db, [user.id])
+    results_by_user = await _latest_result_raw_by_user(db, [user.id])
+    return _scorecard_from_week(
+        user,
+        weeks.get(user.id),
+        attempts.get(user.id, 0),
+        coding_score=coding_best.get(user.id),
+        result_rows=results_by_user.get(user.id),
+    )
+
+
 async def get_performance_summary(
     db: AsyncSession,
     ctx: TenantContext,
@@ -872,6 +982,8 @@ async def get_performance_summary(
                 never += 1
             for g in r.weaknesses:
                 dept_gap_counter[g] += 1
+        dept_pillars = _aggregate_dept_pillars(scored_rows)
+        best_pillar, weakest_pillar = _best_weakest_pillars(dept_pillars)
         by_department.append(
             DeptPerformanceRow(
                 id=d.id,
@@ -882,6 +994,9 @@ async def get_performance_summary(
                 coverage_pct=_pct(len(scored_rows), len(rows)),
                 avg_readiness=_mean([float(r.readiness) for r in scored_rows if r.readiness is not None]),
                 avg_mock=_mean([float(r.mock_score) for r in scored_rows if r.mock_score is not None]),
+                pillars=dept_pillars,
+                best_pillar=best_pillar,
+                weakest_pillar=weakest_pillar,
                 strong=strong,
                 mid=mid,
                 weak=weak,
@@ -1007,7 +1122,9 @@ async def get_performance_summary(
         by_department=by_department,
     )
 
-    return PerformanceSummaryOut(
+    branch_pillar_rankings = _build_branch_pillar_rankings(by_department)
+
+    out = PerformanceSummaryOut(
         scope=scope,  # type: ignore[arg-type]
         organization_id=ctx.organization_id,
         department_id=dept_id,
@@ -1027,6 +1144,7 @@ async def get_performance_summary(
         top_gaps=top_gaps,
         top_strengths=top_strengths,
         by_department=by_department,
+        branch_pillar_rankings=branch_pillar_rankings,
         leaders=leaders,
         at_risk=at_risk,
         area_leaders=area_leaders,
@@ -1043,3 +1161,15 @@ async def get_performance_summary(
         generated_at=_iso(_now()) or "",
         scorecards=cards.items,
     )
+    try:
+        from app.org_performance.snapshots import record_snapshot
+
+        await record_snapshot(
+            db,
+            organization_id=ctx.organization_id,
+            department_id=dept_id,
+            summary=out,
+        )
+    except Exception:
+        logger.exception("performance snapshot record failed")
+    return out

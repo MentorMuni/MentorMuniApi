@@ -39,6 +39,7 @@ from app.models.workspace_item import WorkspaceItem
 from app.models.upcoming_drive import UpcomingDrive
 from app.models.platform_support import PlatformSupportTicket, PlatformSupportReply
 from app.models.whiteboard import WhiteboardMentorship, WhiteboardNote
+from app.org_performance.models import OrgPerformanceSnapshot
 from app.student_roadmap.models import (
     StudentAssessmentResult,
     StudentGeneratedRoadmap,
@@ -104,6 +105,7 @@ __all__ = [
     "StudentRoadmapStep",
     "StudentAssessmentResult",
     "StudentGeneratedRoadmap",
+    "OrgPerformanceSnapshot",
     "CompanyIntelligence",
     "PrivateStudentCheckIn",
     "PrivateStudentResponse",
