@@ -46,7 +46,7 @@ async def list_drives(db: AsyncSession, *, ctx: TenantContext) -> list[UpcomingD
     if not (
         ctx.role == RoleCode.ORG_ADMIN.value
         or ctx.sees_all_students
-        or ctx.role == RoleCode.HOD.value
+        or ctx.role == RoleCode.DEPARTMENT_ADMIN.value
     ):
         require_org_admin(ctx)
     today = _today()

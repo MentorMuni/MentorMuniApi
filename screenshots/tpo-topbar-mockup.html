@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TPO Topbar — Proposed Layout</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Plus Jakarta Sans", Inter, system-ui, sans-serif;
+      background: #eef6fb;
+      color: #0f172a;
+    }
+    .note {
+      padding: 14px 20px;
+      background: #0f172a;
+      color: #e2e8f0;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .note strong { color: #7dd3fc; }
+    .topbar {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 16px 24px;
+      background: rgba(248, 251, 255, 0.92);
+      border-bottom: 1px solid rgba(26, 143, 196, 0.14);
+      backdrop-filter: blur(12px);
+    }
+    .titles { flex: 0 1 auto; min-width: 0; max-width: 280px; }
+    .titles h1 { margin: 0; font-size: 26px; font-weight: 850; letter-spacing: -0.03em; }
+    .titles p { margin: 4px 0 0; font-size: 13px; color: #64748b; }
+
+    /* Proposed campus strip */
+    .campus-strip {
+      flex: 1 1 auto;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 14px;
+      border-radius: 14px;
+      border: 1px solid rgba(26, 143, 196, 0.16);
+      background: linear-gradient(135deg, rgba(255,255,255,0.95), rgba(232,246,252,0.7));
+      box-shadow: 0 8px 24px -18px rgba(26, 143, 196, 0.35);
+    }
+    .live {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      color: #047857;
+      background: #ecfdf5;
+      border: 1px solid #a7f3d0;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .live i { width: 7px; height: 7px; border-radius: 50%; background: #34d399; display: inline-block; }
+    .divider {
+      width: 1px;
+      align-self: stretch;
+      min-height: 34px;
+      background: rgba(26, 143, 196, 0.18);
+      flex-shrink: 0;
+    }
+    .college {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+    .logo {
+      width: 32px;
+      height: 32px;
+      border-radius: 9px;
+      background: #fff;
+      border: 1px solid rgba(26, 143, 196, 0.2);
+      display: grid;
+      place-items: center;
+      color: #15799f;
+      flex-shrink: 0;
+      font-size: 16px;
+    }
+    .college-name {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 800;
+      line-height: 1.3;
+      color: #0f172a;
+      min-width: 0;
+      word-break: break-word;
+    }
+
+    .account {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(26, 143, 196, 0.14);
+      background: #fff;
+      max-width: 320px;
+    }
+    .meta { min-width: 0; text-align: right; }
+    .meta .name { margin: 0; font-size: 12px; font-weight: 750; }
+    .meta .email { margin: 2px 0 0; font-size: 11px; color: #64748b; }
+    .meta .role { margin: 4px 0 0; font-size: 10px; font-weight: 800; color: #15799f; text-transform: uppercase; letter-spacing: 0.06em; }
+    .actions { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+    .signout {
+      border: 1px solid #cbd5e1;
+      background: #fff;
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #0f172a;
+      white-space: nowrap;
+    }
+    .theme {
+      width: 40px;
+      height: 22px;
+      border-radius: 999px;
+      background: #1a8fc4;
+      position: relative;
+    }
+    .theme::after {
+      content: '';
+      position: absolute;
+      right: 2px;
+      top: 2px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #fff;
+    }
+
+    .variants { padding: 20px 24px 32px; display: grid; gap: 20px; }
+    .variant h2 { margin: 0 0 8px; font-size: 14px; color: #334155; }
+    .variant .topbar { border-radius: 16px; border: 1px solid rgba(26,143,196,0.12); }
+    .long .college-name { max-width: none; }
+  </style>
+</head>
+<body>
+  <div class="note"><strong>Proposed TPO topbar</strong> — Live badge + college in one campus strip (middle). Account + theme stay separate on the right.</div>
+
+  <div class="variants">
+    <div class="variant">
+      <h2>Standard college name</h2>
+      <div class="topbar">
+        <div class="titles">
+          <h1>TPO Dashboard</h1>
+          <p>Campus readiness, enrollment, and placement ops.</p>
+        </div>
+        <div class="campus-strip">
+          <span class="live"><i></i> Live · Campus ops</span>
+          <span class="divider" aria-hidden="true"></span>
+          <div class="college">
+            <div class="logo">🏫</div>
+            <p class="college-name">Indore Public School</p>
+          </div>
+        </div>
+        <div class="account">
+          <div class="meta">
+            <p class="name">Rahul Sharma</p>
+            <p class="email">mentormunitest-ips-tpo@gmail.com</p>
+            <p class="role">TPO · Indore Public School</p>
+          </div>
+          <div class="actions">
+            <button class="signout">Sign out</button>
+            <div class="theme" title="Theme toggle"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="variant long">
+      <h2>Longer college name (wraps in strip)</h2>
+      <div class="topbar">
+        <div class="titles">
+          <h1>TPO Dashboard</h1>
+          <p>Campus readiness, enrollment, and placement ops.</p>
+        </div>
+        <div class="campus-strip">
+          <span class="live"><i></i> Live · Campus ops</span>
+          <span class="divider" aria-hidden="true"></span>
+          <div class="college">
+            <div class="logo">🏫</div>
+            <p class="college-name">Shri Govindram Seksaria Institute of Technology and Science</p>
+          </div>
+        </div>
+        <div class="account">
+          <div class="meta">
+            <p class="name">Demo TPO</p>
+            <p class="email">tpo@demo.edu</p>
+            <p class="role">TPO · SGSITS</p>
+          </div>
+          <div class="actions">
+            <button class="signout">Sign out</button>
+            <div class="theme"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
