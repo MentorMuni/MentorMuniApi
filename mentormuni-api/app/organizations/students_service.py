@@ -181,6 +181,39 @@ def _resolve_department_id(ctx: TenantContext, department_id: int | None) -> int
     return department_id
 
 
+async def _ensure_org_has_departments(db: AsyncSession, ctx: TenantContext) -> None:
+    if ctx.organization_id is None:
+        raise StudentPortalError("Organization context is required.", status_code=403)
+    from app.departments import service as dept_service
+
+    depts = await dept_service.list_departments(db, organization_id=ctx.organization_id)
+    if not depts:
+        raise StudentPortalError(
+            "Add at least one department before enrolling students. "
+            "Every student must belong to a department.",
+            status_code=422,
+        )
+
+
+async def _validate_department_for_enrollment(
+    db: AsyncSession,
+    ctx: TenantContext,
+    department_id: int | None,
+) -> int:
+    await _ensure_org_has_departments(db, ctx)
+    dept_id = _resolve_department_id(ctx, department_id)
+    from app.departments import service as dept_service
+
+    depts = await dept_service.list_departments(db, organization_id=ctx.organization_id)
+    valid_ids = {int(d.id) for d in depts}
+    if int(dept_id) not in valid_ids:
+        raise StudentPortalError(
+            "Department not found in your organization.",
+            status_code=404,
+        )
+    return dept_id
+
+
 async def list_roster(
     db: AsyncSession,
     ctx: TenantContext,
@@ -314,7 +347,7 @@ async def invite_emails(
     auto_enroll: bool = False,
     skip_approval: bool = False,
 ) -> dict:
-    dept_id = _resolve_department_id(ctx, department_id)
+    dept_id = await _validate_department_for_enrollment(db, ctx, department_id)
     enroll = _wants_auto_enroll(auto_enroll=auto_enroll, skip_approval=skip_approval)
     created_rows: list[dict] = []
     skipped = 0
@@ -412,7 +445,7 @@ async def create_manual(
     auto_enroll: bool = False,
     skip_approval: bool = False,
 ) -> dict:
-    dept_id = _resolve_department_id(ctx, department_id)
+    dept_id = await _validate_department_for_enrollment(db, ctx, department_id)
     enroll = _wants_auto_enroll(auto_enroll=auto_enroll, skip_approval=skip_approval)
     email_norm = email.lower().strip()
     first_name, last_name = _split_name(name, email_norm)
@@ -528,7 +561,7 @@ async def import_students(
     auto_enroll: bool = False,
     skip_approval: bool = False,
 ) -> dict:
-    dept_id = _resolve_department_id(ctx, department_id)
+    dept_id = await _validate_department_for_enrollment(db, ctx, department_id)
     enroll = _wants_auto_enroll(auto_enroll=auto_enroll, skip_approval=skip_approval)
     # Auto-enroll implies setup email; otherwise honor explicit send_invite_email.
     do_email = enroll or bool(send_invite_email)
@@ -632,6 +665,12 @@ async def approve_invite(
         raise StudentPortalError("Invite not in your organization.", status_code=403)
     if not ctx.sees_all_students and user.department_id != ctx.department_id:
         raise StudentPortalError("Outside your department.", status_code=403)
+    if user.department_id is None:
+        raise StudentPortalError(
+            "This student has no department. Create a department and assign them before approving.",
+            status_code=422,
+        )
+    await _ensure_org_has_departments(db, ctx)
 
     try:
         user, token, setup_url, email_sent = await user_service.approve_user(
