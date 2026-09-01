@@ -15,6 +15,8 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1)
     # Optional: scope login to a tenant (recommended for multi-tenant)
     organization_code: Optional[str] = None
+    # organization | student — enforces role + tenant rules per portal
+    portal: Optional[str] = Field(default=None, max_length=32)
 
 
 class MeResponse(BaseModel):

@@ -118,6 +118,15 @@ async def login(
     except auth_service.AuthError as exc:
         raise _auth_http(exc) from exc
 
+    try:
+        auth_service.ensure_login_portal_allowed(
+            user,
+            portal=body.portal,
+            organization_code=body.organization_code,
+        )
+    except auth_service.AuthError as exc:
+        raise _auth_http(exc) from exc
+
     permissions = await auth_service.permissions_for_user(db, user)
     role_code = user.role.role_code if user.role else ""
     fe_role = auth_service.fe_role_alias(role_code)

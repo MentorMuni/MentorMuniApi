@@ -80,6 +80,61 @@ def user_display_name(user: User) -> str:
     return f"{user.first_name} {user.last_name}".strip() or user.email
 
 
+_ORG_PORTAL_KEYS = frozenset({"organization", "org", "orgportal"})
+_STUDENT_PORTAL_KEYS = frozenset({"student", "students", "studentportal"})
+
+
+def ensure_login_portal_allowed(
+    user: User,
+    *,
+    portal: str | None,
+    organization_code: str | None,
+) -> None:
+    """Reject cross-portal logins and org-portal access without matching college code."""
+    if not portal:
+        return
+
+    portal_key = portal.strip().lower()
+    role_code = user.role.role_code if user.role else None
+    staff_roles = {RoleCode.ORG_ADMIN.value, RoleCode.DEPARTMENT_ADMIN.value}
+
+    if portal_key in _ORG_PORTAL_KEYS:
+        if role_code not in staff_roles:
+            raise AuthError(
+                "Student accounts must use the student portal (My Performance).",
+                status_code=403,
+                code="WRONG_PORTAL",
+            )
+        code = (organization_code or "").strip().upper()
+        if not code:
+            raise AuthError(
+                "College code is required to sign in to the organization portal.",
+                status_code=422,
+                code="ORGANIZATION_CODE_REQUIRED",
+            )
+        if not user.organization or user.organization.code.upper() != code:
+            raise AuthError(
+                "These credentials do not match this college code.",
+                status_code=403,
+                code="WRONG_TENANT",
+            )
+        return
+
+    if portal_key in _STUDENT_PORTAL_KEYS:
+        if role_code in staff_roles:
+            raise AuthError(
+                "TPO and HOD accounts must use the organization portal.",
+                status_code=403,
+                code="WRONG_PORTAL",
+            )
+        if role_code != RoleCode.STUDENT.value:
+            raise AuthError(
+                "This portal is for student accounts only.",
+                status_code=403,
+                code="WRONG_PORTAL",
+            )
+
+
 def _hash_token(raw: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
