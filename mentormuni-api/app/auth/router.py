@@ -35,6 +35,9 @@ from app.common.rate_limit import limiter
 from app.common.security.auth_errors import auth_detail
 from app.common.security.jwt import create_access_token
 from app.common.tenant.deps import build_tenant_context
+from app.models.enums import RoleCode
+from app.organizations.hod_access_schemas import HodAccessPolicy
+from app.organizations.hod_access_service import get_hod_access_policy
 from app.models.user import User
 
 router = APIRouter(
@@ -69,6 +72,11 @@ async def _to_me(db: AsyncSession, user: User) -> MeResponse:
         user.organization.organization_type if user.organization else "COLLEGE"
     )
     is_individual = str(org_type).upper() == "PUBLIC"
+    hod_access = None
+    if role_code in (RoleCode.ORG_ADMIN.value, RoleCode.DEPARTMENT_ADMIN.value):
+        if user.organization_id is not None:
+            policy = await get_hod_access_policy(db, user.organization_id)
+            hod_access = HodAccessPolicy(**policy)
     return MeResponse(
         id=user.id,
         user_id=user.id,
@@ -88,6 +96,7 @@ async def _to_me(db: AsyncSession, user: User) -> MeResponse:
         department_name=dept.name if dept else "",
         department_code=dept.code if dept else "",
         permissions=sorted(ctx.permissions),
+        hod_access=hod_access,
         must_change_password=bool(getattr(user, "must_change_password", False)),
         first_name=user.first_name,
         last_name=user.last_name,

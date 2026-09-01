@@ -18,7 +18,12 @@ from app.common.organization_access import (
     ensure_organization_active_for_login,
 )
 from app.common.security.passwords import hash_password, verify_password
-from app.common.tenant.deps import load_permissions_for_role
+from app.common.tenant.deps import build_tenant_context, load_permissions_for_role
+from app.models.enums import RoleCode
+from app.organizations.hod_access_service import (
+    filter_permissions_for_hod,
+    get_hod_access_policy,
+)
 from app.core.config import settings
 from app.models.enums import DeptAdminTitle, RoleCode, UserStatus
 from app.models.organization import Organization
@@ -329,6 +334,13 @@ async def _raise_if_wrong_tenant(
 
 async def permissions_for_user(db: AsyncSession, user: User) -> list[str]:
     perms = await load_permissions_for_role(db, user.role_id)
+    if (
+        user.role
+        and user.role.role_code == RoleCode.DEPARTMENT_ADMIN.value
+        and user.organization_id is not None
+    ):
+        policy = await get_hod_access_policy(db, user.organization_id)
+        perms = filter_permissions_for_hod(perms, policy)
     return sorted(perms)
 
 

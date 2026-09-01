@@ -9,9 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.common.database.session import get_db
 from app.common.deps import get_current_active_user
 from app.common.tenant.context import TenantContext
+from app.models.enums import RoleCode
 from app.models.permission import Permission
 from app.models.role_permission import RolePermission
 from app.models.user import User
+from app.organizations.hod_access_service import (
+    filter_permissions_for_hod,
+    get_hod_access_policy,
+)
 
 
 async def load_permissions_for_role(db: AsyncSession, role_id: int) -> frozenset[str]:
@@ -30,6 +35,12 @@ async def build_tenant_context(db: AsyncSession, user: User) -> TenantContext:
             detail="User has no role assigned.",
         )
     perms = await load_permissions_for_role(db, user.role_id)
+    if (
+        user.role.role_code == RoleCode.DEPARTMENT_ADMIN.value
+        and user.organization_id is not None
+    ):
+        policy = await get_hod_access_policy(db, user.organization_id)
+        perms = filter_permissions_for_hod(perms, policy)
     return TenantContext(
         user_id=user.id,
         organization_id=user.organization_id,

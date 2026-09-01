@@ -29,6 +29,7 @@ from app.models.private_intervention import (
 )
 from app.models.feature_catalog import FeatureCatalog
 from app.models.organization_feature import OrganizationFeature
+from app.models.organization_hod_access import OrganizationHodAccess
 from app.models.platform_user import PlatformUser
 from app.models.permission import Permission
 from app.models.role_permission import RolePermission
@@ -89,6 +90,7 @@ __all__ = [
     "User",
     "FeatureCatalog",
     "OrganizationFeature",
+    "OrganizationHodAccess",
     "PlatformUser",
     "Permission",
     "RolePermission",

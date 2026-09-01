@@ -7,6 +7,8 @@ from typing import Optional
 
 from pydantic import BaseModel, EmailStr, Field
 
+from app.organizations.hod_access_schemas import HodAccessPolicy
+
 
 class LoginRequest(BaseModel):
     # Login with email OR username
@@ -43,6 +45,7 @@ class MeResponse(BaseModel):
     department_name: str = ""
     department_code: str = ""
     permissions: list[str] = Field(default_factory=list)
+    hod_access: Optional[HodAccessPolicy] = None
     must_change_password: bool = False
     # Back-compat fields
     user_id: int
