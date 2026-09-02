@@ -2111,4 +2111,6 @@ public class Main {
 def catalog_as_contracts():
     from app.coding_bank.schemas import GeneratedProblemContract
 
-    return [GeneratedProblemContract.model_validate(x) for x in PLACEMENT_BANK_V1]
+    from app.coding_bank.gfg_placement_bank import GFG_PLACEMENT_BANK
+
+    return [GeneratedProblemContract.model_validate(x) for x in GFG_PLACEMENT_BANK]

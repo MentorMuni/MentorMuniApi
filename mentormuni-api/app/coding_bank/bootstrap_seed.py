@@ -42,6 +42,88 @@ def _async_db_url(url: str) -> str:
     return url
 
 
+async def _refresh_contract(
+    db: AsyncSession,
+    problem: CodingProblem,
+    contract,
+) -> bool:
+    """Update published problem content when seed catalog changes."""
+    from sqlalchemy import delete
+
+    from app.coding.models import (
+        CodingProblemVersion,
+        CodingReferenceSolution,
+        CodingTestCase,
+    )
+    from app.coding_bank.validators.duplicate import content_fingerprint
+
+    topic = normalize_topic_label(contract.primary_topic())
+    problem.difficulty = contract.difficulty
+    problem.topic = topic
+    problem.pattern = contract.primary_pattern()
+    problem.content_fingerprint = content_fingerprint(
+        contract.title,
+        contract.problem_statement,
+        contract.primary_topic(),
+        contract.primary_pattern(),
+    )
+
+    version = None
+    if problem.current_version_id:
+        version = await db.get(CodingProblemVersion, problem.current_version_id)
+    if version is None:
+        return False
+
+    version.title = contract.title
+    version.description = contract.problem_statement
+    version.difficulty = contract.difficulty
+    version.topic = topic
+    version.pattern = contract.primary_pattern()
+    version.constraints_text = contract.constraints
+    version.input_format = contract.input_format
+    version.output_format = contract.output_format
+    version.examples_json = [e.model_dump() for e in contract.examples]
+    version.explanation_text = contract.explanation
+    version.expected_time_complexity = contract.expected_time_complexity
+    version.expected_space_complexity = contract.expected_space_complexity
+    version.concepts_json = list(contract.topics)
+    version.starter_code_by_language = contract.starter_map()
+    version.supported_languages_json = list(contract.supported_languages)
+    version.generation_payload_json = contract.to_persistence_dict()
+
+    await db.execute(
+        delete(CodingReferenceSolution).where(
+            CodingReferenceSolution.problem_version_id == version.id
+        )
+    )
+    await db.execute(
+        delete(CodingTestCase).where(CodingTestCase.problem_version_id == version.id)
+    )
+    for ref in contract.reference_solutions:
+        db.add(
+            CodingReferenceSolution(
+                problem_version_id=version.id,
+                language_code=ref.language,
+                source_code=ref.code,
+                notes=ref.notes,
+            )
+        )
+    for i, tc in enumerate(contract.candidate_test_cases):
+        db.add(
+            CodingTestCase(
+                problem_version_id=version.id,
+                input=tc.input,
+                expected_output=tc.expected_output or "",
+                is_hidden=tc.is_hidden,
+                weight=tc.weight,
+                order_index=i,
+                category=tc.category,
+            )
+        )
+    await db.flush()
+    return True
+
+
 async def _persist_contract(
     db: AsyncSession,
     contract,
@@ -65,7 +147,11 @@ async def _persist_contract(
         await db.execute(select(CodingProblem).where(CodingProblem.slug == contract.slug))
     ).scalar_one_or_none()
     if existing is not None:
-        logger.info("skip existing slug=%s", contract.slug)
+        refreshed = await _refresh_contract(db, existing, contract)
+        if refreshed:
+            logger.info("refreshed slug=%s", contract.slug)
+        else:
+            logger.info("skip existing slug=%s", contract.slug)
         return existing
 
     now = datetime.now(timezone.utc)
@@ -207,6 +293,7 @@ async def seed_bank(db: AsyncSession) -> dict:
     ]
 
     inserted = 0
+    refreshed = 0
     relevance_rows = 0
     by_topic_diff: dict[tuple[str, str], list[CodingProblem]] = {}
     catalog_size = 0
@@ -228,6 +315,8 @@ async def seed_bank(db: AsyncSession) -> dict:
                 continue
             if before is None:
                 inserted += 1
+            else:
+                refreshed += 1
             if attach_service:
                 relevance_rows += await _attach_service_relevance(db, problem)
             key = (
@@ -251,6 +340,7 @@ async def seed_bank(db: AsyncSession) -> dict:
     await db.commit()
     return {
         "problems_inserted": inserted,
+        "problems_refreshed": refreshed,
         "problems_touched": sum(len(v) for v in by_topic_diff.values()),
         "topic_assessments": assessments,
         "catalog_size": catalog_size,

@@ -9,12 +9,7 @@ Each entry validates as GeneratedProblemContract.
 from __future__ import annotations
 
 
-def _starter_trio(py_body: str, cpp_body: str, java_body: str) -> list[dict]:
-    return [
-        {"language": "python", "code": py_body.strip() + "\n"},
-        {"language": "cpp", "code": cpp_body.strip() + "\n"},
-        {"language": "java", "code": java_body.strip() + "\n"},
-    ]
+from app.coding_bank.starter_builders import cpp_starter, java_starter, py_starter, starter_trio
 
 
 def _tc(
@@ -40,44 +35,26 @@ def _tc(
 
 _LANGS = ["python", "cpp", "java"]
 
-_PY_STUB = '''
-import sys
+_PY_STUB = py_starter(
+    """    raw = sys.stdin.read().strip()
+    # Parse input (see problem statement) and print the answer.
+    # Common patterns: raw.split(), splitlines(), map(int, ...)
+    pass"""
+)
 
-def solve():
-    data = sys.stdin.read().split()
-    # TODO: implement
-    pass
+_CPP_STUB = cpp_starter(
+    """    // Parse stdin (see problem statement) and print the answer."""
+)
 
-if __name__ == "__main__":
-    solve()
-'''
-
-_CPP_STUB = '''
-#include <bits/stdc++.h>
-using namespace std;
-int main() {
-    ios::sync_with_stdio(false);
-    cin.tie(nullptr);
-    // TODO: implement
-    return 0;
-}
-'''
-
-_JAVA_STUB = '''
-import java.util.*;
-public class Main {
-    public static void main(String[] args) {
-        Scanner sc = new Scanner(System.in);
-        // TODO: implement
-    }
-}
-'''
+_JAVA_STUB = java_starter(
+    """        // Parse stdin (see problem statement) and print the answer."""
+)
 
 
 SERVICE_BANK_V1: list[dict] = [
     # 1 — Reverse sentence tokens
     {
-        "title": "Hostel Notice Word Flip",
+        "title": "Reverse Words in a Sentence",
         "slug": "hostel-notice-word-flip",
         "difficulty": "easy",
         "topics": ["strings"],
@@ -119,7 +96,7 @@ SERVICE_BANK_V1: list[dict] = [
         "expected_time_complexity": "O(n)",
         "expected_space_complexity": "O(n)",
         "supported_languages": _LANGS,
-        "starter_code": _starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
+        "starter_code": starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
         "reference_solutions": [
             {
                 "language": "python",
@@ -144,7 +121,7 @@ SERVICE_BANK_V1: list[dict] = [
     },
     # 2 — Palindrome string
     {
-        "title": "ID Badge Palindrome Check",
+        "title": "Check Palindrome String",
         "slug": "id-badge-palindrome-check",
         "difficulty": "easy",
         "topics": ["strings"],
@@ -179,7 +156,7 @@ SERVICE_BANK_V1: list[dict] = [
         "expected_time_complexity": "O(n)",
         "expected_space_complexity": "O(1)",
         "supported_languages": _LANGS,
-        "starter_code": _starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
+        "starter_code": starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
         "reference_solutions": [
             {
                 "language": "python",
@@ -204,7 +181,7 @@ SERVICE_BANK_V1: list[dict] = [
     },
     # 3 — Character frequency
     {
-        "title": "Lab Attendance Letter Tally",
+        "title": "Character Frequency Count",
         "slug": "lab-attendance-letter-tally",
         "difficulty": "easy",
         "topics": ["strings", "hashing"],
@@ -243,7 +220,7 @@ SERVICE_BANK_V1: list[dict] = [
         "expected_time_complexity": "O(n)",
         "expected_space_complexity": "O(1)",
         "supported_languages": _LANGS,
-        "starter_code": _starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
+        "starter_code": starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
         "reference_solutions": [
             {
                 "language": "python",
@@ -270,7 +247,7 @@ SERVICE_BANK_V1: list[dict] = [
     },
     # 4 — Max occurring character
     {
-        "title": "Feedback Form Dominant Letter",
+        "title": "Most Frequent Character",
         "slug": "feedback-form-dominant-letter",
         "difficulty": "easy",
         "topics": ["strings", "hashing"],
@@ -305,7 +282,7 @@ SERVICE_BANK_V1: list[dict] = [
         "expected_time_complexity": "O(n)",
         "expected_space_complexity": "O(1)",
         "supported_languages": _LANGS,
-        "starter_code": _starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
+        "starter_code": starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
         "reference_solutions": [
             {
                 "language": "python",
@@ -332,7 +309,7 @@ SERVICE_BANK_V1: list[dict] = [
     },
     # 5 — Reverse array
     {
-        "title": "Queue Token Reverse Order",
+        "title": "Reverse an Array",
         "slug": "queue-token-reverse-order",
         "difficulty": "easy",
         "topics": ["arrays"],
@@ -367,7 +344,7 @@ SERVICE_BANK_V1: list[dict] = [
         "expected_time_complexity": "O(n)",
         "expected_space_complexity": "O(1)",
         "supported_languages": _LANGS,
-        "starter_code": _starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
+        "starter_code": starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
         "reference_solutions": [
             {
                 "language": "python",
@@ -393,7 +370,7 @@ SERVICE_BANK_V1: list[dict] = [
     },
     # 6 — Sort array ascending
     {
-        "title": "Club Points Ascending Sort",
+        "title": "Sort Array in Ascending Order",
         "slug": "club-points-ascending-sort",
         "difficulty": "easy",
         "topics": ["arrays"],
@@ -428,7 +405,7 @@ SERVICE_BANK_V1: list[dict] = [
         "expected_time_complexity": "O(n log n)",
         "expected_space_complexity": "O(n)",
         "supported_languages": _LANGS,
-        "starter_code": _starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
+        "starter_code": starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
         "reference_solutions": [
             {
                 "language": "python",
@@ -454,7 +431,7 @@ SERVICE_BANK_V1: list[dict] = [
     },
     # 7 — Min and max
     {
-        "title": "Temperature Logger Extremes",
+        "title": "Find Minimum and Maximum",
         "slug": "temperature-logger-extremes",
         "difficulty": "easy",
         "topics": ["arrays"],
@@ -488,7 +465,7 @@ SERVICE_BANK_V1: list[dict] = [
         "expected_time_complexity": "O(n)",
         "expected_space_complexity": "O(1)",
         "supported_languages": _LANGS,
-        "starter_code": _starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
+        "starter_code": starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
         "reference_solutions": [
             {
                 "language": "python",
@@ -514,7 +491,7 @@ SERVICE_BANK_V1: list[dict] = [
     },
     # 8 — Sum of array
     {
-        "title": "Canteen Bill Total",
+        "title": "Sum of Array Elements",
         "slug": "canteen-bill-total",
         "difficulty": "easy",
         "topics": ["arrays", "math"],
@@ -549,7 +526,7 @@ SERVICE_BANK_V1: list[dict] = [
         "expected_time_complexity": "O(n)",
         "expected_space_complexity": "O(1)",
         "supported_languages": _LANGS,
-        "starter_code": _starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
+        "starter_code": starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
         "reference_solutions": [
             {
                 "language": "python",
@@ -574,7 +551,7 @@ SERVICE_BANK_V1: list[dict] = [
     },
     # 9 — Matrix addition
     {
-        "title": "Two Lab Grid Merge",
+        "title": "Add Two Matrices",
         "slug": "two-lab-grid-merge",
         "difficulty": "easy",
         "topics": ["arrays", "math"],
@@ -611,7 +588,7 @@ SERVICE_BANK_V1: list[dict] = [
         "expected_time_complexity": "O(r*c)",
         "expected_space_complexity": "O(r*c)",
         "supported_languages": _LANGS,
-        "starter_code": _starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
+        "starter_code": starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
         "reference_solutions": [
             {
                 "language": "python",
@@ -644,7 +621,7 @@ SERVICE_BANK_V1: list[dict] = [
     },
     # 10 — Sliding window fixed k sum max/min
     {
-        "title": "Study Streak Window Scores",
+        "title": "Min and Max Window Sum (Size K)",
         "slug": "study-streak-window-scores",
         "difficulty": "medium",
         "topics": ["arrays"],
@@ -682,7 +659,7 @@ SERVICE_BANK_V1: list[dict] = [
         "expected_time_complexity": "O(n)",
         "expected_space_complexity": "O(1)",
         "supported_languages": _LANGS,
-        "starter_code": _starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
+        "starter_code": starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
         "reference_solutions": [
             {
                 "language": "python",
@@ -714,7 +691,7 @@ SERVICE_BANK_V1: list[dict] = [
     },
     # 11 — Remove duplicate characters order preserved
     {
-        "title": "Unique Club Initials Strip",
+        "title": "Remove Duplicate Characters",
         "slug": "unique-club-initials-strip",
         "difficulty": "easy",
         "topics": ["strings", "hashing"],
@@ -749,7 +726,7 @@ SERVICE_BANK_V1: list[dict] = [
         "expected_time_complexity": "O(n)",
         "expected_space_complexity": "O(1)",
         "supported_languages": _LANGS,
-        "starter_code": _starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
+        "starter_code": starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
         "reference_solutions": [
             {
                 "language": "python",
@@ -779,7 +756,7 @@ SERVICE_BANK_V1: list[dict] = [
     },
     # 12 — Anagram check
     {
-        "title": "Team Name Anagram Match",
+        "title": "Check Valid Anagram",
         "slug": "team-name-anagram-match",
         "difficulty": "easy",
         "topics": ["strings", "hashing"],
@@ -817,7 +794,7 @@ SERVICE_BANK_V1: list[dict] = [
         "expected_time_complexity": "O(n)",
         "expected_space_complexity": "O(1)",
         "supported_languages": _LANGS,
-        "starter_code": _starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
+        "starter_code": starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
         "reference_solutions": [
             {
                 "language": "python",
@@ -843,7 +820,7 @@ SERVICE_BANK_V1: list[dict] = [
     },
     # 13 — Digit sum and reverse digits
     {
-        "title": "Roll Number Digit Drill",
+        "title": "Digit Sum and Reverse Number",
         "slug": "roll-number-digit-drill",
         "difficulty": "easy",
         "topics": ["math"],
@@ -875,7 +852,7 @@ SERVICE_BANK_V1: list[dict] = [
         "expected_time_complexity": "O(log N)",
         "expected_space_complexity": "O(1)",
         "supported_languages": _LANGS,
-        "starter_code": _starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
+        "starter_code": starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
         "reference_solutions": [
             {
                 "language": "python",
@@ -910,7 +887,7 @@ SERVICE_BANK_V1: list[dict] = [
     },
     # 14 — Vowels and consonants
     {
-        "title": "Essay Draft Vowel Count",
+        "title": "Count Vowels and Consonants",
         "slug": "essay-draft-vowel-count",
         "difficulty": "easy",
         "topics": ["strings"],
@@ -945,7 +922,7 @@ SERVICE_BANK_V1: list[dict] = [
         "expected_time_complexity": "O(n)",
         "expected_space_complexity": "O(1)",
         "supported_languages": _LANGS,
-        "starter_code": _starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
+        "starter_code": starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
         "reference_solutions": [
             {
                 "language": "python",
@@ -978,7 +955,7 @@ SERVICE_BANK_V1: list[dict] = [
     },
     # 15 — Rotate array left by k
     {
-        "title": "Lab Shift Left Rotate",
+        "title": "Left Rotate Array by K",
         "slug": "lab-shift-left-rotate",
         "difficulty": "easy",
         "topics": ["arrays"],
@@ -1017,7 +994,7 @@ SERVICE_BANK_V1: list[dict] = [
         "expected_time_complexity": "O(n)",
         "expected_space_complexity": "O(n)",
         "supported_languages": _LANGS,
-        "starter_code": _starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
+        "starter_code": starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
         "reference_solutions": [
             {
                 "language": "python",
@@ -1045,7 +1022,7 @@ SERVICE_BANK_V1: list[dict] = [
     },
     # 16 — Second largest
     {
-        "title": "Runner Up Placement Score",
+        "title": "Second Largest Element",
         "slug": "runner-up-placement-score",
         "difficulty": "easy",
         "topics": ["arrays"],
@@ -1084,7 +1061,7 @@ SERVICE_BANK_V1: list[dict] = [
         "expected_time_complexity": "O(n)",
         "expected_space_complexity": "O(1)",
         "supported_languages": _LANGS,
-        "starter_code": _starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
+        "starter_code": starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
         "reference_solutions": [
             {
                 "language": "python",
@@ -1117,7 +1094,7 @@ SERVICE_BANK_V1: list[dict] = [
     },
     # 17 — Prime check
     {
-        "title": "Prime Badge Number Test",
+        "title": "Check Prime Number",
         "slug": "prime-badge-number-test",
         "difficulty": "easy",
         "topics": ["math"],
@@ -1149,7 +1126,7 @@ SERVICE_BANK_V1: list[dict] = [
         "expected_time_complexity": "O(sqrt(N))",
         "expected_space_complexity": "O(1)",
         "supported_languages": _LANGS,
-        "starter_code": _starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
+        "starter_code": starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
         "reference_solutions": [
             {
                 "language": "python",
@@ -1182,7 +1159,7 @@ SERVICE_BANK_V1: list[dict] = [
     },
     # 18 — GCD of array
     {
-        "title": "Batch Size Common Measure",
+        "title": "GCD of Array Elements",
         "slug": "batch-size-common-measure",
         "difficulty": "easy",
         "topics": ["math", "arrays"],
@@ -1218,7 +1195,7 @@ SERVICE_BANK_V1: list[dict] = [
         "expected_time_complexity": "O(n log A)",
         "expected_space_complexity": "O(1)",
         "supported_languages": _LANGS,
-        "starter_code": _starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
+        "starter_code": starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
         "reference_solutions": [
             {
                 "language": "python",
@@ -1248,7 +1225,7 @@ SERVICE_BANK_V1: list[dict] = [
     },
     # 19 — Count target occurrences
     {
-        "title": "Attendance Mark Frequency",
+        "title": "Count Occurrences of Element",
         "slug": "attendance-mark-frequency",
         "difficulty": "easy",
         "topics": ["arrays"],
@@ -1283,7 +1260,7 @@ SERVICE_BANK_V1: list[dict] = [
         "expected_time_complexity": "O(n)",
         "expected_space_complexity": "O(1)",
         "supported_languages": _LANGS,
-        "starter_code": _starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
+        "starter_code": starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
         "reference_solutions": [
             {
                 "language": "python",
@@ -1310,7 +1287,7 @@ SERVICE_BANK_V1: list[dict] = [
     },
     # 20 — Run-length compress
     {
-        "title": "Sensor Run Length Encode",
+        "title": "Run Length Encoding",
         "slug": "sensor-run-length-encode",
         "difficulty": "easy",
         "topics": ["strings"],
@@ -1345,7 +1322,7 @@ SERVICE_BANK_V1: list[dict] = [
         "expected_time_complexity": "O(n)",
         "expected_space_complexity": "O(n)",
         "supported_languages": _LANGS,
-        "starter_code": _starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
+        "starter_code": starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
         "reference_solutions": [
             {
                 "language": "python",
@@ -1378,7 +1355,7 @@ SERVICE_BANK_V1: list[dict] = [
     },
     # 21 — Valid parentheses
     {
-        "title": "Bracket Balance Lab Script",
+        "title": "Valid Parentheses Check",
         "slug": "bracket-balance-lab-script",
         "difficulty": "medium",
         "topics": ["strings"],
@@ -1413,7 +1390,7 @@ SERVICE_BANK_V1: list[dict] = [
         "expected_time_complexity": "O(n)",
         "expected_space_complexity": "O(n)",
         "supported_languages": _LANGS,
-        "starter_code": _starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
+        "starter_code": starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
         "reference_solutions": [
             {
                 "language": "python",
@@ -1449,7 +1426,7 @@ SERVICE_BANK_V1: list[dict] = [
     },
     # 22 — Merge two sorted arrays
     {
-        "title": "Merged Merit Lists Easy",
+        "title": "Merge Two Sorted Arrays",
         "slug": "merged-merit-lists-easy",
         "difficulty": "medium",
         "topics": ["arrays"],
@@ -1492,7 +1469,7 @@ SERVICE_BANK_V1: list[dict] = [
         "expected_time_complexity": "O(n+m)",
         "expected_space_complexity": "O(n+m)",
         "supported_languages": _LANGS,
-        "starter_code": _starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
+        "starter_code": starter_trio(_PY_STUB, _CPP_STUB, _JAVA_STUB),
         "reference_solutions": [
             {
                 "language": "python",
