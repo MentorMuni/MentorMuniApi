@@ -61,6 +61,15 @@ def test_student_portal_allows_student() -> None:
     ensure_login_portal_allowed(user, portal="student", organization_code=None)
 
 
-def test_no_portal_skips_gate() -> None:
+def test_missing_portal_rejected() -> None:
     user = _user(role_code=RoleCode.STUDENT.value)
-    ensure_login_portal_allowed(user, portal=None, organization_code=None)
+    with pytest.raises(AuthError) as exc:
+        ensure_login_portal_allowed(user, portal=None, organization_code=None)
+    assert exc.value.code == "PORTAL_REQUIRED"
+
+
+def test_unknown_portal_rejected() -> None:
+    user = _user(role_code=RoleCode.STUDENT.value)
+    with pytest.raises(AuthError) as exc:
+        ensure_login_portal_allowed(user, portal="marketing", organization_code=None)
+    assert exc.value.code == "INVALID_PORTAL"

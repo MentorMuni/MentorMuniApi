@@ -96,8 +96,12 @@ def ensure_login_portal_allowed(
     organization_code: str | None,
 ) -> None:
     """Reject cross-portal logins and org-portal access without matching college code."""
-    if not portal:
-        return
+    if not portal or not str(portal).strip():
+        raise AuthError(
+            "Portal is required (organization or student).",
+            status_code=422,
+            code="PORTAL_REQUIRED",
+        )
 
     portal_key = portal.strip().lower()
     role_code = user.role.role_code if user.role else None
@@ -138,6 +142,13 @@ def ensure_login_portal_allowed(
                 status_code=403,
                 code="WRONG_PORTAL",
             )
+        return
+
+    raise AuthError(
+        "Unknown portal. Use organization or student.",
+        status_code=422,
+        code="INVALID_PORTAL",
+    )
 
 
 def _hash_token(raw: str) -> str:
