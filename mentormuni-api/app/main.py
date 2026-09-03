@@ -86,6 +86,7 @@ from app.coding.router import router as coding_router
 from app.platform_support.router import router as support_tenant_router
 from app.platform_support.platform_router import router as support_platform_router
 from app.whiteboard.router import router as whiteboard_router
+from app.aptitude_arcade.router import router as aptitude_arcade_router
 from app.media.router import router as media_router
 
 
@@ -149,6 +150,7 @@ app.include_router(company_intelligence_router)
 app.include_router(coding_router)
 app.include_router(support_tenant_router)
 app.include_router(whiteboard_router)
+app.include_router(aptitude_arcade_router)
 # Public media (org logos) — no API key; usable from <img src>
 app.include_router(media_router)
 # MentorMuni Platform Admin portal (tenant provisioning only)

@@ -10,6 +10,13 @@ from typing import Any, Optional
 from openai import AsyncOpenAI
 
 from app.core.config import settings
+from app.org_performance.prompt import (
+    INSIGHT_SYSTEM,
+    STUDENT_INSIGHT_SYSTEM,
+    build_student_insight_user_prompt,
+    scope_is_branch,
+    select_campus_or_branch_prompt,
+)
 from app.org_performance.schemas import (
     DeptPerformanceRow,
     InsightOut,
@@ -24,64 +31,10 @@ from app.student_roadmap.constants import TOOL_META
 
 logger = logging.getLogger(__name__)
 
-CAMPUS_INSIGHT_PROMPT = r"""
-You are Mentor Muni — placement analytics advisor for Indian college TPOs and HODs.
-
-Given ONLY the metrics JSON below, write a decision brief with full clarity for deep student prep understanding.
-
-Rules:
-- Use ONLY the provided numbers. Do not invent departments, students, or scores.
-- Cover readiness bands, test completion (given vs remaining), pillar strengths and preparation gaps,
-  branch-level aptitude/skills/interview comparisons (which department leads each pillar),
-  top performers vs less-prepared students, and shortlist readiness when present.
-- Never call students "weak". Say they are less prepared / need more practice.
-- Be concrete and actionable for campus placement prep (aptitude, skills, interview mocks, shortlisting).
-- Tone: professional Indian English, concise, respectful.
-- Return STRICT JSON only:
-{
-  "summary": "3-5 sentences: how things are going, test progress, who is ready vs less prepared",
-  "going_well": ["bullet", "bullet"],
-  "concerns": ["bullet", "bullet"],
-  "actions": ["action 1", "action 2", "action 3"],
-  "shortlist_notes": ["who/what to shortlist or hold for more prep", "bullet"]
-}
-- going_well / concerns: 2 to 4 short factual bullets each.
-- actions: 3 to MAX_ACTIONS items, each one sentence, imperative ("Assign…", "Run…", "Notify…").
-- shortlist_notes: 1 to 3 bullets for drive shortlisting / hold decisions.
-FOCUS_AREA: FOCUS_LABEL
-
-Audience scope: SCOPE_LABEL
-
-METRICS:
-"""
-
-STUDENT_INSIGHT_PROMPT = r"""
-You are Mentor Muni — placement coach briefing a TPO or HOD about ONE student.
-
-Given ONLY the student metrics JSON below, write a coaching brief for the staff member.
-
-Rules:
-- Use ONLY the provided numbers and names. Do not invent scores, tools, or assessments.
-- going_well: student strengths and positive signals (2 to 4 short bullets).
-- concerns: preparation gaps, inactivity, or risks (2 to 4 short bullets).
-- actions: what TPO/HOD should assign, escalate, or follow up (3 to MAX_ACTIONS imperative bullets).
-- shortlist_notes: drive-readiness verdict plus what the student should do next (1 to 3 bullets).
-- If assessment week is incomplete, name pending checks from step_status.
-- Compare to dept_context averages only when that block is present — do not invent branch stats.
-- Never call the student "weak". Say less prepared / needs more practice.
-- Tone: professional Indian English, concise, respectful.
-- Return STRICT JSON only:
-{
-  "summary": "3-4 sentences: readiness, progress through 8 checks, drive-readiness verdict",
-  "going_well": ["bullet", "bullet"],
-  "concerns": ["bullet", "bullet"],
-  "actions": ["action 1", "action 2", "action 3"],
-  "shortlist_notes": ["drive verdict + student next step", "bullet"]
-}
-FOCUS_AREA: FOCUS_LABEL
-
-STUDENT METRICS:
-"""
+# Deep placement briefs — enough room for structured JSON with named actions.
+_INSIGHT_MAX_TOKENS = 1600
+_STUDENT_INSIGHT_MAX_TOKENS = 1200
+_INSIGHT_TEMPERATURE = 0.25
 
 
 async def generate_insight(
@@ -121,26 +74,25 @@ async def generate_insight(
             insight=heuristic,
         )
 
-    prompt = (
-        CAMPUS_INSIGHT_PROMPT.replace("MAX_ACTIONS", str(body.max_actions))
-        .replace("SCOPE_LABEL", scope_label)
-        .replace("FOCUS_LABEL", focus_label)
-        + json.dumps(metrics, ensure_ascii=True)
+    is_branch = scope_is_branch(summary.scope, summary.department_id)
+    prompt = select_campus_or_branch_prompt(
+        is_branch=is_branch,
+        metrics=metrics,
+        max_actions=body.max_actions,
+        focus_label=focus_label,
+        scope_label=scope_label,
     )
-    model = settings.org_performance_insight_model
+    model = (settings.org_performance_insight_model or "gpt-4.1").strip() or "gpt-4.1"
     try:
         client = AsyncOpenAI(api_key=settings.openai_api_key)
         resp = await client.chat.completions.create(
             model=model,
             messages=[
-                {
-                    "role": "system",
-                    "content": "Return only valid JSON for campus placement analytics briefs.",
-                },
+                {"role": "system", "content": INSIGHT_SYSTEM},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.3,
-            max_tokens=1100,
+            temperature=_INSIGHT_TEMPERATURE,
+            max_tokens=_INSIGHT_MAX_TOKENS,
             response_format={"type": "json_object"},
         )
         content = (resp.choices[0].message.content or "").strip()
@@ -386,25 +338,22 @@ async def generate_student_insight(
             insight=heuristic,
         )
 
-    prompt = (
-        STUDENT_INSIGHT_PROMPT.replace("MAX_ACTIONS", str(body.max_actions))
-        .replace("FOCUS_LABEL", focus_label)
-        + json.dumps(metrics, ensure_ascii=True)
+    prompt = build_student_insight_user_prompt(
+        metrics=metrics,
+        max_actions=body.max_actions,
+        focus_label=focus_label,
     )
-    model = settings.org_performance_insight_model
+    model = (settings.org_performance_insight_model or "gpt-4.1").strip() or "gpt-4.1"
     try:
         client = AsyncOpenAI(api_key=settings.openai_api_key)
         resp = await client.chat.completions.create(
             model=model,
             messages=[
-                {
-                    "role": "system",
-                    "content": "Return only valid JSON for single-student placement coaching briefs.",
-                },
+                {"role": "system", "content": STUDENT_INSIGHT_SYSTEM},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.3,
-            max_tokens=900,
+            temperature=_INSIGHT_TEMPERATURE,
+            max_tokens=_STUDENT_INSIGHT_MAX_TOKENS,
             response_format={"type": "json_object"},
         )
         content = (resp.choices[0].message.content or "").strip()

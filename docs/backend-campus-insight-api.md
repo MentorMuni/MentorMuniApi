@@ -1,8 +1,9 @@
 # TPO / HOD AI deep analysis APIs
 
 **Audience:** Organization Portal frontend (`/Organization/*`)  
-**Backend module:** `app/org_performance/insight.py`  
-**Model default:** `gpt-4.1-mini` (`ORG_PERFORMANCE_INSIGHT_MODEL` env)  
+**Backend module:** `app/org_performance/insight.py` + `prompt.py`  
+**Model default:** `gpt-4.1` (`ORG_PERFORMANCE_INSIGHT_MODEL` env) — deep analysis, not mini  
+**Prompts:** Separate campus (TPO), branch (HOD), and single-student system/user prompts  
 **Fallback:** Rule-based heuristic when `OPENAI_API_KEY` is missing or the call fails
 
 ---
@@ -49,7 +50,7 @@ Optional `department_id` filters campus view to one branch.
 {
   "ok": true,
   "source": "openai",
-  "model": "gpt-4.1-mini",
+  "model": "gpt-4.1",
   "generated_at": "2026-08-31T13:30:00+00:00",
   "cache_ttl_seconds": 900,
   "organization_id": 1,
@@ -110,7 +111,7 @@ Content-Type: application/json
 {
   "ok": true,
   "source": "openai",
-  "model": "gpt-4.1-mini",
+  "model": "gpt-4.1",
   "generated_at": "2026-08-31T13:30:00+00:00",
   "cache_ttl_seconds": 900,
   "organization_id": 1,
@@ -218,5 +219,5 @@ import { StudentAiInsight } from '../organizationPortal';
 
 - Campus / branch brief: ~1 call per refresh (~1100 tokens out)
 - Student brief: ~1 call per student open (~900 tokens out)
-- Use `gpt-4.1-mini` for all org insight (default)
+- Use `gpt-4.1` for all org insight (default; deep analysis)
 - Do **not** auto-poll; regenerate on user action only
